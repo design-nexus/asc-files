@@ -705,7 +705,7 @@ fn reverse(
             still(to, identity)?;
             let (into, name) = parent_and_name(from)?;
             // The name it had: it was valid where it came from.
-            ops::move_as(to, (into, name), NameMode::Keep, cancel, progress)?;
+            ops::move_as(to, (into, name), NameMode::Keep, cancel, progress)?.finished()?;
             let nested = give_names_back(from, to, renamed);
             let identity = Identity::of(from).ok_or_else(changed)?;
             Ok((
@@ -745,7 +745,7 @@ fn reverse(
                 .map(|original| trash_entry(&original.info, &original.identity))
                 .transpose()?;
             let (into, name) = parent_and_name(from)?;
-            ops::move_as(to, (into, name), NameMode::Keep, cancel, progress)?;
+            ops::move_as(to, (into, name), NameMode::Keep, cancel, progress)?.finished()?;
             if let Some(entry) = original {
                 trash::restore(&entry)?;
             }
@@ -885,7 +885,8 @@ fn replay(redo: &Redo, cancel: &Cancel, progress: &Progress) -> Result<Option<St
         Redo::Move { from, to, identity } => {
             still(from, identity)?;
             let (into, name) = parent_and_name(to)?;
-            let moved = ops::move_as(from, (into, name), NameMode::Fix, cancel, progress)?;
+            let moved =
+                ops::move_as(from, (into, name), NameMode::Fix, cancel, progress)?.finished()?;
             Ok(Step::moved(from, (into, &moved)))
         }
         Redo::Trash { original, identity } => {

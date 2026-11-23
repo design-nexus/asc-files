@@ -47,6 +47,11 @@ pub struct MergePlan {
 }
 
 impl MergePlan {
+    /// Whether anything is to be left out.
+    fn skips(&self) -> bool {
+        self.otherwise == Clash::Skip || self.choices.values().any(|clash| *clash == Clash::Skip)
+    }
+
     pub fn choice(&self, relative: &Path) -> Clash {
         self.choices
             .get(relative)
@@ -126,6 +131,8 @@ pub struct Merged {
     pub renamed: Vec<Renamed>,
     /// Entries the destination could not hold, relative to the destination folder.
     pub skipped: Vec<Skipped>,
+    /// Source entries a merging move left in place, and why.
+    pub kept: Vec<ops::Kept>,
     /// Incoming items that failed, the merge going on past each.
     pub failed: Vec<(PathBuf, Error)>,
     pub progress: ProgressSnapshot,
@@ -239,7 +246,8 @@ fn merging(
     match fs::symlink_metadata(&target) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let changes = if moving {
-                let moved = ops::move_as(source, (into, &name), names, cancel, progress)?;
+                let moved =
+                    ops::move_as(source, (into, &name), names, cancel, progress)?.finished()?;
                 merged.done.push(Did::Moved {
                     from: source.to_path_buf(),
                     to: into.join(&moved.name),
@@ -266,8 +274,24 @@ fn merging(
             };
             merged.renamed = changes.renamed;
             merged.skipped = changes.skipped;
+            merged.kept = changes.kept;
         }
         Err(error) => return Err(crate::error::os_io_error(error)),
+        Ok(existing)
+            if moving
+                && existing.is_dir()
+                && fs::symlink_metadata(source).is_ok_and(|meta| meta.is_dir())
+                && !ops::one_mount(source.parent().unwrap_or(source), &target)
+                && !plan.skips() =>
+        {
+            merge_across_drives(
+                source,
+                (into, &name),
+                plan,
+                (names, cancel, progress),
+                &mut merged,
+            )?;
+        }
         Ok(existing)
             if existing.is_dir()
                 && fs::symlink_metadata(source).is_ok_and(|meta| meta.is_dir()) =>
@@ -388,13 +412,17 @@ fn merge_folder(
                 } else {
                     ops::move_item(&incoming, target, names, cancel, progress)
                 };
-                moved.map(|moved| {
+                moved.and_then(|moved| {
                     note_changes(merged, shown, &moved.changes);
+                    if let Some(error) = moved.stopped {
+                        return Err(error);
+                    }
                     merged.done.push(Did::Moved {
                         from: incoming.clone(),
                         to: target.join(&moved.name),
                         renamed: pairs(&moved.changes),
                     });
+                    Ok(())
                 })
             }
             (None | Some(Clash::KeepBoth), false) => {
@@ -415,6 +443,112 @@ fn merge_folder(
         };
         into(result, merged);
     }
+}
+
+/// A merging move to another drive, as legacy did it: originals a Replace takes the place of go
+/// to the Trash, then the engine's merge copies the folder in (keeping both where a name is taken)
+/// and deletes the sources it copied once they are proven unchanged. What it did is read from the
+/// two trees before and after, for undo; an item it numbered is not filed.
+fn merge_across_drives(
+    source: &Path,
+    (into, name): (&Path, &std::ffi::OsStr),
+    plan: &MergePlan,
+    (names, cancel, progress): (NameMode, &Cancel, &Progress),
+    merged: &mut Merged,
+) -> Result<(), Error> {
+    let target = into.join(name);
+    let mut replaced = std::collections::HashMap::new();
+    for clash in clashes(source, into)? {
+        if !clash.existing.is_folder && plan.choice(&clash.path) == Clash::Replace {
+            let original = crate::trash::put(&target.join(&clash.path))?;
+            replaced.insert(clash.path, original);
+        }
+    }
+    let (sources, before) = (tree(source), tree(&target));
+    let folders: Vec<(PathBuf, u32)> = std::iter::once(PathBuf::new())
+        .chain(sources.iter().cloned())
+        .filter_map(|path| {
+            use std::os::unix::fs::PermissionsExt;
+            let at = source.join(&path);
+            let meta = fs::symlink_metadata(&at).ok()?;
+            meta.is_dir()
+                .then(|| (at, meta.permissions().mode() & 0o7777))
+        })
+        .collect();
+    let moved = ops::merge_by_moving(source, (into, name), names, cancel, progress);
+    // An original whose incoming item was left out (a link the drive cannot hold, say) comes
+    // back, so nothing it held is lost to a replacement that never came.
+    replaced.retain(|path, original| {
+        if fs::symlink_metadata(target.join(path)).is_ok() {
+            return true;
+        }
+        if let Some(entry) = crate::trash::list()
+            .into_iter()
+            .find(|entry| entry.info == original.info)
+        {
+            let _ = crate::trash::restore(&entry);
+        }
+        false
+    });
+    let moved = moved?;
+    let after = tree(&target);
+    for path in after.difference(&before) {
+        let topmost = path
+            .parent()
+            .is_none_or(|parent| parent.as_os_str().is_empty() || before.contains(parent));
+        if !topmost || !sources.contains(path) {
+            continue;
+        }
+        let (from, to) = (source.join(path), target.join(path));
+        merged.done.push(match replaced.remove(path) {
+            Some(original) => Did::MovedOver {
+                from,
+                to,
+                original: Some(original),
+            },
+            None => Did::Moved {
+                from,
+                to,
+                renamed: Vec::new(),
+            },
+        });
+    }
+    // Undo makes again the source folders the deletion emptied, before moving back into them.
+    let mut gone: Vec<_> = folders
+        .into_iter()
+        .filter(|(path, _)| fs::symlink_metadata(path).is_err())
+        .collect();
+    gone.sort_by_key(|(path, _)| std::cmp::Reverse(path.components().count()));
+    merged.done.extend(
+        gone.into_iter()
+            .map(|(path, mode)| Did::RemovedFolder { path, mode }),
+    );
+    merged.renamed = moved.changes.renamed;
+    merged.skipped = moved.changes.skipped;
+    merged.kept = moved.changes.kept;
+    if let Some(error) = moved.stopped {
+        merged.failed.push((source.to_path_buf(), error));
+    }
+    Ok(())
+}
+
+/// Every path beneath `root`, relative to it, without following links.
+fn tree(root: &Path) -> std::collections::BTreeSet<PathBuf> {
+    fn walk(root: &Path, relative: &Path, found: &mut std::collections::BTreeSet<PathBuf>) {
+        let Ok(entries) = fs::read_dir(root.join(relative)) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = relative.join(entry.file_name());
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                walk(root, &path, found);
+            }
+            found.insert(path);
+        }
+    }
+    let mut found = std::collections::BTreeSet::new();
+    walk(root, Path::new(""), &mut found);
+    found
 }
 
 /// Removes a source folder a merging move emptied, remembering its mode for undo. A folder that
@@ -453,6 +587,7 @@ fn note_changes(merged: &mut Merged, shown: &Path, changes: &ops::Changes) {
             path: shown.join(&skipped.path),
             kind: skipped.kind,
         }));
+    merged.kept.extend(changes.kept.iter().cloned());
 }
 
 /// Every incoming item whose name is taken inside the folder `source` would merge into, without

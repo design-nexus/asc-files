@@ -96,11 +96,10 @@ pub struct Record {
 pub enum Outcome {
     /// Done; `name` is what the item is called in the destination, or in the Trash. `changes`
     /// lists what was written under another name or left out.
-    Done {
-        name: PathBuf,
-        changes: Changes,
-    },
-    Failed(Error),
+    Done { name: PathBuf, changes: Changes },
+    /// It stopped with `error`; `changes` is what it did before that, such as source entries a
+    /// move had to leave in place.
+    Failed { error: Error, changes: Changes },
     /// The batch was cancelled before this item started.
     NotAttempted,
 }
@@ -242,7 +241,7 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
         steps.extend(step);
         match outcome {
             Outcome::Done { .. } => done += 1,
-            Outcome::Failed(_) => failed += 1,
+            Outcome::Failed { .. } => failed += 1,
             Outcome::NotAttempted => not_attempted += 1,
         }
         send(Event::ItemDone {
@@ -370,7 +369,7 @@ fn run_item(
             }
         });
         let source = item.source.as_path();
-        let plain = |error| (error, Vec::new());
+        let plain = |error| (error, Changes::default(), Vec::new());
         let result = match &item.action {
             // A plain merge keeps both where names clash; it goes through the merge planner so
             // what it makes inside the folder can be undone.
@@ -446,12 +445,21 @@ fn run_item(
                     }
                     _ => ops::move_item(source, into, names, cancel, &progress),
                 };
-                moved
-                    .map(|moved| {
-                        let step = Step::moved(source, (into, &moved));
-                        (into.join(moved.name), moved.changes, Vec::from_iter(step))
-                    })
-                    .map_err(plain)
+                match moved {
+                    // The copy is in place but deleting the sources stopped: nothing is filed,
+                    // as an undo would meet what is left of them.
+                    Ok(ops::Moved {
+                        stopped: Some(error),
+                        changes,
+                        ..
+                    }) => Err((error, changes, Vec::new())),
+                    moved => moved
+                        .map(|moved| {
+                            let step = Step::moved(source, (into, &moved));
+                            (into.join(moved.name), moved.changes, Vec::from_iter(step))
+                        })
+                        .map_err(plain),
+                }
             }
             Action::Replace => match &item.name {
                 Some(name) => ops::replace_as(source, (into, name), names, cancel, &progress),
@@ -479,7 +487,7 @@ fn run_item(
     match result {
         Ok((name, changes, steps)) => (Outcome::Done { name, changes }, steps),
         // A merge that failed part way still files what it did.
-        Err((error, steps)) => (Outcome::Failed(error), steps),
+        Err((error, changes, steps)) => (Outcome::Failed { error, changes }, steps),
     }
 }
 
@@ -491,30 +499,28 @@ fn merged(
     into: &Path,
     plan: &MergePlan,
     (names, moving, cancel, progress): (NameMode, bool, &Cancel, &Progress),
-) -> Result<(PathBuf, Changes, Vec<Step>), (Error, Vec<Step>)> {
+) -> Result<(PathBuf, Changes, Vec<Step>), (Error, Changes, Vec<Step>)> {
     let name = named.or_else(|| source.file_name()).unwrap_or_default();
     let merged = if moving {
         merge::merge_moving_as(source, (into, name), plan, names, cancel, progress)
     } else {
         merge::merge_as(source, (into, name), plan, names, cancel, progress)
     }
-    .map_err(|error| (error, Vec::new()))?;
+    .map_err(|error| (error, Changes::default(), Vec::new()))?;
     let steps = Step::merged(&merged);
+    let changes = Changes {
+        renamed: merged.renamed,
+        skipped: merged.skipped,
+        kept: merged.kept,
+    };
     if let Some((_, first)) = merged.failed.first() {
         let error = match merged.failed.len() - 1 {
             0 => first.clone(),
             more => first.clone().with_more(more),
         };
-        return Err((error, steps));
+        return Err((error, changes, steps));
     }
-    Ok((
-        into.join(&merged.name),
-        Changes {
-            renamed: merged.renamed,
-            skipped: merged.skipped,
-        },
-        steps,
-    ))
+    Ok((into.join(&merged.name), changes, steps))
 }
 
 #[cfg(test)]

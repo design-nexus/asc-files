@@ -1658,9 +1658,10 @@ fn rename_move_or_trash(
     use crate::ops::{self, Cancel, NameMode, Progress};
     let cancel = Cancel::sharing(cancellable.flag());
     let parent = item.parent().unwrap_or(item);
-    // A rename is a move within the folder.
     let (into, name) = match renaming {
-        Renaming::Rename => (parent.to_path_buf(), "renamed"),
+        Renaming::Rename => {
+            return ops::rename(item, "renamed".as_ref(), NameMode::Keep, &cancel).map(drop);
+        }
         Renaming::Move => (parent.join("elsewhere"), "moved"),
         Renaming::Trash => return crate::trash::put(item).map(drop),
     };

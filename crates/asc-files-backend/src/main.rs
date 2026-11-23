@@ -15,6 +15,7 @@ use asc_files_engine::{
     jobs::{self, Action, Event, Item, JobId, Outcome, Record, Request},
     merge::{self, Clash, MergePlan},
     ops::{Cancel, Conflict, NameMode, Progress, RenameCause, SpecialKind},
+    services::{Holder, KeptCause},
     trash,
     undo::{self, Journal},
 };
@@ -477,6 +478,54 @@ fn rename_cause(cause: RenameCause) -> &'static str {
     }
 }
 
+/// What an item did otherwise than asked, or left in place.
+fn changes_json(changes: &asc_files_engine::ops::Changes) -> Value {
+    json!({
+        "renamed": changes.renamed.iter().map(|renamed| json!({
+            "requested": lossy(&renamed.requested),
+            "savedAs": lossy(&renamed.saved_as),
+            "cause": rename_cause(renamed.cause),
+        })).collect::<Vec<_>>(),
+        "skipped": changes.skipped.iter().map(|skipped| json!({
+            "path": lossy(&skipped.path),
+            "kind": special_kind(skipped.kind),
+        })).collect::<Vec<_>>(),
+        "kept": changes.kept.iter().map(|kept| json!({
+            "path": lossy(&kept.path),
+            "cause": kept_cause(&kept.cause),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// Why a move left a source entry in place, as `{reason, ...}`.
+fn kept_cause(cause: &KeptCause) -> Value {
+    match cause {
+        KeptCause::Changed => json!({"reason": "changed"}),
+        KeptCause::ReplacementChanged => json!({"reason": "replacementChanged"}),
+        KeptCause::Undeletable(errno) => json!({
+            "reason": "undeletable",
+            "error": std::io::Error::from_raw_os_error(*errno).to_string(),
+        }),
+        KeptCause::Skipped(kind) => json!({"reason": "skipped", "kind": special_kind(*kind)}),
+        KeptCause::CopyGone => json!({"reason": "copyGone"}),
+        KeptCause::StillOpen(holder) => json!({
+            "reason": "stillOpen",
+            "program": holder.as_ref().map(|holder| match holder {
+                Holder::Program(program) => program.clone(),
+                Holder::Strata => "Files".to_owned(),
+            }),
+        }),
+        KeptCause::NameNotRestored { saved_as, error } => json!({
+            "reason": "nameNotRestored",
+            "savedAs": saved_as.native_path().map(lossy),
+            "error": error,
+        }),
+        KeptCause::OriginalNotRemoved(error) => {
+            json!({"reason": "originalNotRemoved", "error": error})
+        }
+    }
+}
+
 fn special_kind(kind: SpecialKind) -> &'static str {
     match kind {
         SpecialKind::Pipe => "pipe",
@@ -504,20 +553,18 @@ fn notification(event: Event) -> Value {
             outcome,
         } => {
             let outcome = match outcome {
-                Outcome::Done { name, changes } => json!({
-                    "status": "done",
-                    "path": lossy(&name),
-                    "renamed": changes.renamed.iter().map(|renamed| json!({
-                        "requested": lossy(&renamed.requested),
-                        "savedAs": lossy(&renamed.saved_as),
-                        "cause": rename_cause(renamed.cause),
-                    })).collect::<Vec<_>>(),
-                    "skipped": changes.skipped.iter().map(|skipped| json!({
-                        "path": lossy(&skipped.path),
-                        "kind": special_kind(skipped.kind),
-                    })).collect::<Vec<_>>(),
-                }),
-                Outcome::Failed(error) => json!({"status": "failed", "error": error_json(&error)}),
+                Outcome::Done { name, changes } => {
+                    let mut done = changes_json(&changes);
+                    done["status"] = json!("done");
+                    done["path"] = json!(lossy(&name));
+                    done
+                }
+                Outcome::Failed { error, changes } => {
+                    let mut failed = changes_json(&changes);
+                    failed["status"] = json!("failed");
+                    failed["error"] = error_json(&error);
+                    failed
+                }
                 Outcome::NotAttempted => json!({"status": "notAttempted"}),
             };
             (

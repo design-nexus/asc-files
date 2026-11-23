@@ -279,7 +279,10 @@ fn an_item_that_fails_inside_a_merge_ends_only_itself_and_the_rest_is_filed() {
         Event::ItemDone { outcome, .. } => Some(outcome),
         _ => None,
     });
-    assert!(matches!(outcome, Some(Outcome::Failed(_))), "{outcome:?}");
+    assert!(
+        matches!(outcome, Some(Outcome::Failed { .. })),
+        "{outcome:?}"
+    );
     assert!(
         fixture.path("dest/photos/new-folder/d.jpg").exists(),
         "the rest went on"

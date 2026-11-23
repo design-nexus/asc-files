@@ -97,17 +97,26 @@ pub struct Skipped {
     pub kind: SpecialKind,
 }
 
-/// What a copy wrote otherwise than it was asked to: empty unless the destination refused a name
-/// or an entry.
+/// A source entry a move left in place, with why: it changed after its copy read it, it could
+/// not be deleted, or nothing proved it matched its copy. The path is absolute.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Kept {
+    pub path: PathBuf,
+    pub cause: crate::services::KeptCause,
+}
+
+/// What an operation did otherwise than it was asked to: empty unless the destination refused a
+/// name or an entry, or a move kept part of its source.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Changes {
     pub renamed: Vec<Renamed>,
     pub skipped: Vec<Skipped>,
+    pub kept: Vec<Kept>,
 }
 
 impl Changes {
     pub fn is_empty(&self) -> bool {
-        self.renamed.is_empty() && self.skipped.is_empty()
+        self.renamed.is_empty() && self.skipped.is_empty() && self.kept.is_empty()
     }
 
     /// What `copy` noted, for the item published as `published` in the destination folder.
@@ -140,6 +149,7 @@ impl Changes {
                     kind,
                 })
                 .collect(),
+            kept: Vec::new(),
         }
     }
 }
@@ -326,9 +336,23 @@ pub struct Moved {
     /// Source entries kept because they changed after the copy read them, or could not be
     /// proven to match it. They stay where they were; the copy holds what was read.
     pub kept: Vec<(std::path::PathBuf, crate::services::KeptCause)>,
-    /// What the copy across filesystems wrote otherwise than asked; see [`copy`].
+    /// What the copy across filesystems wrote otherwise than asked, and what of the source it
+    /// left in place; see [`copy`].
     pub changes: Changes,
     pub progress: ProgressSnapshot,
+    /// Set when the copy is in place but deleting the sources stopped (cancelled, or failed):
+    /// what is left of them stays, and [`Moved::changes`] says what was kept on purpose.
+    pub stopped: Option<Error>,
+}
+
+impl Moved {
+    /// The move as a whole: an error where deleting its sources stopped.
+    pub fn finished(self) -> Result<Self, Error> {
+        match self.stopped {
+            Some(error) => Err(error),
+            None => Ok(self),
+        }
+    }
 }
 
 /// Moves `source` into the folder `into` under its own name, never replacing what holds it.
@@ -427,11 +451,37 @@ pub fn move_as(
     cancel: &Cancel,
     progress: &Progress,
 ) -> Result<Moved, Error> {
+    moving(source, (into, name), (names, false), cancel, progress)
+}
+
+/// Renames `item` to `name` within its folder, never over what holds that name. A failure gives
+/// its reason, as a rename prompt shows it.
+pub fn rename(item: &Path, name: &OsStr, names: NameMode, cancel: &Cancel) -> Result<Moved, Error> {
+    let folder = item
+        .parent()
+        .ok_or_else(|| crate::error::translated_io_error("The item has no folder"))?;
+    moving(
+        item,
+        (folder, name),
+        (names, true),
+        cancel,
+        &Progress::new(),
+    )
+}
+
+fn moving(
+    source: &Path,
+    (into, name): (&Path, &OsStr),
+    (names, renaming): (NameMode, bool),
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Moved, Error> {
     use super::{Barrier, Published, manifest};
     use crate::adapters::local_operations::{
         fs_ops::Entry,
         placement::{self, PlaceError},
     };
+    let source_path = source.to_path_buf();
 
     plain_name(name)?;
     let name = name.to_os_string();
@@ -443,6 +493,7 @@ pub fn move_as(
             kept: Vec::new(),
             changes: Changes::default(),
             progress: progress.snapshot(),
+            stopped: None,
         });
     }
     if lands_within(source, into) {
@@ -481,30 +532,12 @@ pub fn move_as(
                 kept: Vec::new(),
                 changes: Changes::default(),
                 progress: progress.snapshot(),
+                stopped: None,
             });
         }
-        Err(PlaceError::CrossDevice) => {}
-        Err(PlaceError::Io(errno)) => {
-            return Err(
-                match crate::adapters::local_operations::holders::refused_rename(fs(), from, errno)
-                {
-                    // A rename in place says why; a move to another folder says what it moved.
-                    Some(why) if in_its_own_folder(source, into) => {
-                        crate::error::Error::new(crate::error::ErrorKind::Busy, &why)
-                    }
-                    Some(why) => crate::error::Error::new(
-                        crate::error::ErrorKind::Busy,
-                        &rust_i18n::t!(
-                            "Could not move %{name}: %{error}",
-                            name = source_name.to_string_lossy(),
-                            error = why
-                        ),
-                    ),
-                    None => placement::place_error(PlaceError::Io(errno)),
-                },
-            );
-        }
-        Err(error) => return Err(placement::place_error(error)),
+        // No rename can place it here: it is copied, and the source deleted once proven.
+        Err(PlaceError::CrossDevice | PlaceError::Unsupported) => {}
+        Err(error) => return Err(move_failure(source, renaming, from, error)),
     }
 
     // Opened before anything is written beneath `into`, so reaching it covers the whole copy.
@@ -539,7 +572,7 @@ pub fn move_as(
     .map_err(|failure| failure.into_error(&source.name))?;
     barrier.reach(fs(), false).map_err(|error| {
         crate::error::io_error(rust_i18n::t!(
-            "The copy could not be confirmed on its drive, so the original was kept: %{error}",
+            "The device could not finish writing: %{error}. Earlier writes may still be pending; wait for safe eject before unplugging.",
             error = crate::adapters::local_operations::native_fs::os_error_text(error)
         ))
     })?;
@@ -555,13 +588,163 @@ pub fn move_as(
         Arc::new(super::Unlinks::default()),
         cancel.0.clone(),
     );
-    deleted?;
+    let mut changes = Changes::of(&copy, &published_name);
+    let folder = source_path.parent().unwrap_or(Path::new("/"));
+    changes.kept = kept
+        .iter()
+        .map(|(path, cause)| Kept {
+            path: if path.is_absolute() {
+                path.clone()
+            } else {
+                folder.join(path)
+            },
+            cause: cause.clone(),
+        })
+        .collect();
     Ok(Moved {
-        changes: Changes::of(&copy, &published_name),
+        changes,
+        stopped: deleted.err(),
         name: published_name,
         copied: true,
         kept,
         progress: progress.snapshot(),
+    })
+}
+
+/// Why a move failed, as legacy worded it: a move says what it moved, a rename gives the reason
+/// alone. The kind stays the placement's.
+fn move_failure(
+    source: &Path,
+    renaming: bool,
+    from: crate::adapters::local_operations::fs_ops::Entry<'_>,
+    error: crate::adapters::local_operations::placement::PlaceError,
+) -> Error {
+    use crate::adapters::local_operations::{
+        holders::refused_rename,
+        placement::{self, PlaceError},
+        placement_error_kind, placement_reason,
+    };
+    let name = source.file_name().unwrap_or_default().to_string_lossy();
+    let (kind, reason) = match error {
+        PlaceError::Io(errno) => match refused_rename(fs(), from, errno) {
+            Some(why) => (crate::error::ErrorKind::Busy, why),
+            None => (placement_error_kind(error), placement_reason(error)),
+        },
+        PlaceError::IntoItself => return placement::place_error(error),
+        PlaceError::Changed => {
+            return Error::new(
+                crate::error::ErrorKind::Failed,
+                &rust_i18n::t!(
+                    "%{name} changed while the operation was in progress",
+                    name = name
+                ),
+            );
+        }
+        error => (placement_error_kind(error), placement_reason(error)),
+    };
+    if renaming {
+        return Error::new(kind, &reason);
+    }
+    Error::new(
+        kind,
+        &rust_i18n::t!(
+            "Could not move %{name}: %{error}",
+            name = name,
+            error = crate::services::error_detail(reason)
+        ),
+    )
+}
+
+/// Whether a rename could take an item from folder `one` to folder `other`: both on one mount,
+/// as the engine's filesystem sees them. Linux refuses a rename between two mounts even of one
+/// filesystem.
+pub(crate) fn one_mount(one: &Path, other: &Path) -> bool {
+    use crate::adapters::local_operations::native_fs::open_local_parent_directory;
+    let key = |folder: &Path| {
+        open_local_parent_directory(folder)
+            .ok()
+            .map(|dir| fs().mount_key(dir.as_fd()))
+    };
+    key(one).is_some_and(|one| key(other) == Some(one))
+}
+
+/// Merges the folder `source` into the folder `name` in `into` on another drive by moving: the
+/// engine's merge copies it in, keeping both where a name is taken, and once the copy is on the
+/// drive the source entries it copied are deleted while they are still what it read. Anything
+/// changed, added or left out meanwhile stays, and is reported in [`Changes::kept`].
+pub(crate) fn merge_by_moving(
+    source: &Path,
+    (into, name): (&Path, &OsStr),
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Moved, Error> {
+    use super::{Barrier, manifest};
+    let folder = source.parent().unwrap_or(Path::new("/")).to_path_buf();
+    let barrier = Barrier::open(fs(), into)?;
+    let root = manifest::Folder::root();
+    let (source_parent, source_name) = split(source)?;
+    let source = Source {
+        parent: source_parent,
+        name: source_name,
+        recorded_in: Some(root.clone()),
+    };
+    let options = Options {
+        manifest: true,
+        durable: true,
+        ..with_names(names)
+    };
+    let copy = Copy::new(
+        fs(),
+        source.name.clone(),
+        cancel.0.clone(),
+        progress.0.clone(),
+        true,
+        options,
+        Deadline::default(),
+    );
+    let (nested, published) = merge(&copy, &source, &into.join(name), None, None)
+        .map_err(|failure| failure.into_error(&source.name))?;
+    for barrier in std::iter::once(&barrier).chain(&nested) {
+        barrier.reach(fs(), false).map_err(|error| {
+            crate::error::io_error(rust_i18n::t!(
+                "The device could not finish writing: %{error}. Earlier writes may still be pending; wait for safe eject before unplugging.",
+                error = crate::adapters::local_operations::native_fs::os_error_text(error)
+            ))
+        })?;
+    }
+    let mut sources = manifest::of(source.parent.clone(), root);
+    for copied in std::mem::take(&mut *lock(&copy.copies)) {
+        sources.copied_to(copied);
+    }
+    if let Some(published) = published {
+        sources.copied_to(published);
+    }
+    let (kept, deleted) = manifest::delete(
+        fs(),
+        sources,
+        Arc::new(super::Unlinks::default()),
+        cancel.0.clone(),
+    );
+    let mut changes = Changes::of(&copy, name);
+    changes.kept = kept
+        .iter()
+        .map(|(path, cause)| Kept {
+            path: if path.is_absolute() {
+                path.clone()
+            } else {
+                folder.join(path)
+            },
+            cause: cause.clone(),
+        })
+        .collect();
+    Ok(Moved {
+        name: name.to_os_string(),
+        copied: true,
+        kept,
+        changes,
+        progress: progress.snapshot(),
+        stopped: deleted.err(),
     })
 }
 
@@ -633,7 +816,7 @@ pub fn move_replacing_as(
         return Err(placement::place_error(placement::PlaceError::IntoItself));
     }
     if std::fs::symlink_metadata(&target).is_err() {
-        let moved = move_as(source, (into, &name), names, cancel, progress)?;
+        let moved = move_as(source, (into, &name), names, cancel, progress)?.finished()?;
         return Ok(Replaced {
             name: moved.name,
             original: None,
@@ -673,7 +856,7 @@ pub fn move_replacing_as(
         };
     }
     let original = crate::trash::put(&target)?;
-    match move_as(source, (into, &name), names, cancel, progress) {
+    match move_as(source, (into, &name), names, cancel, progress).and_then(Moved::finished) {
         Ok(moved) => Ok(Replaced {
             name: moved.name,
             original: Some(original),

@@ -19,6 +19,7 @@ use std::{
         unix::{ffi::OsStringExt, fs::PermissionsExt},
     },
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -49,6 +50,7 @@ mod conflicts;
 mod file_copy;
 mod folder_copy;
 pub(crate) mod fs_quirks;
+mod moves;
 mod naming;
 mod paths;
 mod placement;
@@ -678,7 +680,14 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
                     }
                     completed.push(Location::local(&name));
                 }
-                Outcome::Failed(error) => {
+                Outcome::Failed { error, changes } => {
+                    let report = changes_report(&into, changes);
+                    if !report.is_empty() {
+                        events.push(OperationEvent::ItemsReported {
+                            request_id: id,
+                            report,
+                        });
+                    }
                     failure.get_or_insert(error.message().to_owned());
                 }
                 Outcome::NotAttempted => {}
@@ -743,6 +752,14 @@ fn changes_report(into: &Path, changes: crate::ops::Changes) -> TransferReport {
             .map(|skipped| SkippedItem {
                 location: Location::local(into.join(skipped.path)),
                 kind: skipped.kind,
+            })
+            .collect(),
+        kept: changes
+            .kept
+            .into_iter()
+            .map(|kept| crate::services::KeptItem {
+                location: Location::local(kept.path),
+                cause: kept.cause,
             })
             .collect(),
         ..TransferReport::default()
@@ -811,4 +828,42 @@ fn drive_until_transfer_settles<T: ?Sized>(_events: &T) {}
 /// The kind of error the engine reports for `errno`, as legacy compared against GIO's mapping.
 fn kind_of(errno: rustix::io::Errno) -> ErrorKind {
     crate::error::os_io_error(io::Error::from_raw_os_error(errno.raw_os_error())).kind()
+}
+
+fn pump_until_transfer<T: ?Sized>(_events: &T) {}
+
+/// Legacy's move of one item to the new path `target`, through the engine's public move.
+fn move_local(
+    source: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+    taken: Taken,
+    cancellable: Cancellable,
+    progress: Option<()>,
+    names: NamePolicy,
+) -> Result<PathBuf, EngineError> {
+    let _ = progress;
+    let target = target.as_ref();
+    let (into, name) = (
+        target.parent().expect("a target folder"),
+        target.file_name().expect("a target name"),
+    );
+    let cancel = crate::ops::Cancel::sharing(cancellable.flag());
+    let progress = crate::ops::Progress::new();
+    let moved = match taken {
+        Taken::Number => crate::ops::move_keeping_both_as(
+            source.as_ref(),
+            (into, name),
+            names.mode,
+            &cancel,
+            &progress,
+        ),
+        _ => crate::ops::move_as(
+            source.as_ref(),
+            (into, name),
+            names.mode,
+            &cancel,
+            &progress,
+        ),
+    }?;
+    Ok(into.join(moved.name))
 }

@@ -18,17 +18,25 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `conflicts.rs` | 20 | 15 | 0 | 5 |
 | `file_copy.rs` | 29 | 28 | 1 | 0 |
 | `folder_copy.rs` | 22 | 21 | 1 (upstream: run by another test) | 0 |
+| `moves.rs` | 51 | 42 | 0 | 9 |
 | `naming.rs` | 21 | 17 | 0 | 4 |
 | `paths.rs` | 3 | 2 | 0 | 1 |
 | `placement.rs` | 39 | 37 | 0 | 2 |
-| **So far** | **146** | **128** | **2** | **16** |
-| Remaining 13 files | 346 | – | – | – |
+| **So far** | **197** | **170** | **2** | **25** |
+| Remaining 12 files | 295 | – | – | – |
 
 ## Ignored
 
 | Test | Why |
 |---|---|
 | `file_copy::selected_names_of_a_linked_file_on_an_smb_share_are_opened_one_at_a_time` | Needs many small top-level items copied in parallel. Legacy's paste had a bulk path for this; `jobs` copies top-level items one at a time (the engine's parallel walk applies inside folders). **Gap:** a bulk path in `jobs`. |
+
+## Rows skipped inside ported tests
+
+| Test, row | Why |
+|---|---|
+| `moves::a_moved_source_stays_when_its_copy_is_gone_before_the_deletion`, Replace published by exchange | A replacing move across drives sends the original to the Trash and then moves (`ops::move_replacing`); legacy staged a copy and exchanged it in. No exchange happens, so the row's racer cannot fire; the rows racing the sync cover the copy going. |
+| `moves::moves_compare_inode_numbers_only_where_the_source_keeps_them`, the two "linked to an item moved first" rows | Legacy copied every item of a paste before deleting any source; jobs finish each item first. The lookalike the row puts in place lands before the folder is copied, so moving it is right. |
 
 ## Not ported
 
@@ -49,6 +57,15 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `conflicts::the_prompt_sees_the_name_a_paste_gives_each_item_and_what_has_it` | Paste planning for the conflict prompt. |
 | `placement::a_case_only_rename_is_not_refused_as_taken_where_each_spelling_has_its_own_number` | Typed-name check for rename (`typed_names::rename_taken`); returns with rename. |
 | `placement::a_hard_link_is_never_taken_for_a_case_alias` | Same. |
+| `moves::moving_a_directory_falls_back_to_a_safe_copy_when_the_move_needs_one` | Legacy's injectable move attempt (`MoveAttempt`), an orchestration seam. `ops::move_as` renames and copies where no rename can place the item (cross-device or unsupported); `items_no_step_can_place_are_moved_by_copying` covers it. |
+| `moves::a_failed_move_attempt_is_returned_without_falling_back` | Same seam. |
+| `moves::a_successful_move_attempt_is_used_without_falling_back_to_copy` | Same seam. |
+| `moves::same_filesystem_rename_is_not_held_for_the_removable_flush` | Legacy's per-paste device flush (`owed.rs`), replaced by durable batches (A7). |
+| `moves::same_filesystem_replacing_move_renames_without_waiting_for_the_flush` | Same. |
+| `moves::a_move_through_gio_keeps_the_links_it_leaves_out_at_the_source` | GIO remote copy: the remote/GVfs adapter. |
+| `moves::deleting_a_source_gio_moved_keeps_the_links_it_left_out` | Same. |
+| `moves::moving_to_a_remote_target_keeps_a_source_entry_changed_during_the_copy` | Remote target: the remote adapter. |
+| `moves::moving_from_a_share_to_a_remote_target_right_after_a_paste_there_deletes_its_sources` | Same. |
 | `paths::validated_children_are_confined_to_native_and_uri_parents` | A typed name may not leave its folder; returns with rename/new folder. The URI half belongs to the remote adapter. |
 
 ## Gaps the port found, and what was done
@@ -68,8 +85,17 @@ ported with a reason. This list must be empty, or every entry justified, before 
   the same, through a restored `trash` hook in the engine's filesystem seam.
 - **Fixed:** every system error had the kind `Failed`; errors now carry the kind their errno names (not found,
   permission denied, no space, busy, …), as legacy got from GIO. Placement errors too.
-- **Open:** a bulk path for many small items; rename (beyond `move_as` within a folder), new folder and new file
-  with typed-name validation; a paste-planning call.
+- **Fixed:** a move whose copy landed but whose source deletion stopped lost what it had kept; `Moved::stopped`
+  and `Changes::kept` carry it, and a failed job item now reports its changes (`Outcome::Failed { error,
+  changes }`, `kept` on `job.itemDone`). Before, sources a move left in place were never reported at all.
+- **Fixed:** a merging move to another drive is now the engine's tree merge with proven deletion, as in legacy,
+  so entries changed or added meanwhile stay; an original a Replace sent to the Trash comes back if its
+  replacement was left out (a link FAT cannot hold, say), which would otherwise have lost it.
+- **Fixed:** a move no rename can place on its own drive is copied, as legacy did; a failed final sync says that
+  writes may still be pending.
+- **Added:** `ops::rename`, which reports a reason as a rename prompt shows it.
+- **Open:** a bulk path for many small items; `rename` on the protocol, new folder and new file with typed-name
+  validation; a paste-planning call.
 
 ## Archives (legacy: 225 tests)
 

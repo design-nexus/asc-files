@@ -102,7 +102,7 @@ fn a_failed_item_ends_only_itself() {
     let outcomes = outcomes(&events);
     assert!(matches!(outcomes[0], Outcome::Done { .. }));
     assert!(
-        matches!(outcomes[1], Outcome::Failed(error) if error.kind() == ErrorKind::Exists),
+        matches!(outcomes[1], Outcome::Failed { error, .. } if error.kind() == ErrorKind::Exists),
         "{:?}",
         outcomes[1]
     );
