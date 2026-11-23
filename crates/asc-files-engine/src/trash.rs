@@ -43,7 +43,15 @@ pub struct Entry {
     pub deleted: String,
     /// The Trash folder holding it (the one with `files/` and `info/`).
     pub trash: PathBuf,
-    identity: (u64, u64),
+    identity: Identity,
+}
+
+/// Device and inode, which a filesystem may hand to a new file the moment the old one goes, so
+/// with the status-change time too: a file made since has a later one.
+type Identity = (u64, u64, i64, i64);
+
+fn identity(meta: &std::fs::Metadata) -> Identity {
+    (meta.dev(), meta.ino(), meta.ctime(), meta.ctime_nsec())
 }
 
 /// Moves `item` to the Trash on its own drive, never copying between drives.
@@ -258,7 +266,7 @@ pub fn delete_all(entries: impl IntoIterator<Item = Entry>) -> (usize, Vec<(Entr
 
 fn still_listed(entry: &Entry) -> Result<(), Error> {
     let current = std::fs::symlink_metadata(&entry.file).map_err(os_io_error)?;
-    if (current.dev(), current.ino()) != entry.identity || !entry.info.is_file() {
+    if identity(&current) != entry.identity || !entry.info.is_file() {
         return Err(crate::error::translated_io_error(
             "This item changed in the Trash since it was shown",
         ));
@@ -281,7 +289,7 @@ fn read_trash(trash: &Path, top: Option<&Path>) -> Vec<Entry> {
             let file = trash.join("files").join(OsString::from_vec(stored));
             let identity = std::fs::symlink_metadata(&file)
                 .ok()
-                .map(|m| (m.dev(), m.ino()))?;
+                .map(|meta| identity(&meta))?;
             let (path, deleted) = parse_record(&std::fs::read(&info).ok()?)?;
             let original = match top {
                 Some(top) if path.is_relative() => top.join(&path),
