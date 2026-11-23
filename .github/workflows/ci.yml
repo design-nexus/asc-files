@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: fedora:43
+    env:
+      # Keep caches, temp files and the test home on the bind-mounted workspace, not the
+      # container's overlayfs, which may refuse RENAME_EXCHANGE and other calls the engine tests use.
+      XDG_CACHE_HOME: ${{ github.workspace }}/.ci-cache
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Tools
+        run: dnf install -y --setopt=install_weak_deps=False gcc git rustup
+      - uses: actions/checkout@v4
+      - name: Rust toolchain from rust-toolchain.toml
+        run: |
+          rustup-init -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Build
+        run: cargo build --workspace --locked
+      - name: No GLib, GTK, Qt or GPUI in the engine or backend
+        run: scripts/check-no-glib.sh
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Tests
+        run: scripts/test.sh

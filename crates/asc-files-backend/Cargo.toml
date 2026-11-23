@@ -1,0 +1,16 @@
+[package]
+name = "asc-files-backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "The Files backend process: JSON-RPC 2.0 over stdio."
+
+[dependencies]
+asc-files-engine = { path = "../asc-files-engine" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"

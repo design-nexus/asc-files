@@ -1,0 +1,24 @@
+[package]
+name = "asc-files-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "The Files copy, move and trash engine, with no GLib or Qt dependency."
+
+[dependencies]
+futures-channel = "0.3.31"
+libc = "0.2"
+ring = "0.17.14"
+rust-i18n = "4.2.4"
+rustix = { version = "1.1.5", features = ["fs", "process", "event", "net", "mount", "thread", "stdio", "pipe", "runtime", "time"] }
+serde = { version = "1.0", features = ["derive"] }
+tracing = "0.1.41"
+unicode-normalization = "0.1.25"
+unicode-segmentation = "1.12"
+
+[dev-dependencies]
+rustix = { version = "1.1.5", features = ["fs"] }
+futures-lite = "2.6.1"
+tempfile = "3.27.0"
