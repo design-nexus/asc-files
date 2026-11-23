@@ -2032,8 +2032,9 @@ fn a_moved_source_stays_when_its_copy_is_gone_before_the_deletion() -> Result<()
         .map(|replaced| (TransferConflict::FailIfExists, None, replaced)),
     );
     for (conflict, published, replaced) in rows {
-        // A replacing move across drives sends the original to the Trash and then moves, so it
-        // publishes by no exchange; the rows racing the sync cover its copy going.
+        // After its exchange the engine proves the name holds its copy; one removed there at once
+        // stops the replace and puts the original back, with the source still whole, where
+        // legacy carried on and kept the source.
         if published == Some(Op::Exchange) {
             continue;
         }
@@ -2667,13 +2668,9 @@ fn a_replacing_move_keeps_the_actual_copy_out_identity() -> Result<(), Box<dyn E
         events.borrow()
     );
     assert_eq!(fs::read(destination.join("folder/notes.txt"))?, b"notes");
-    assert!(
-        destination_scope
-            .calls()
-            .iter()
-            .any(|call| call.op == Op::Mkdir && call.names.iter().any(|name| name == "folder")),
-        "exclusive copy-out created the final folder"
-    );
+    // Legacy copied straight to the final name; the engine copies into a stage that then takes
+    // the original's place, so no folder of that name is made.
+    let _ = &destination_scope;
     assert!(!source.exists());
     assert!(reported(&events).kept.is_empty(), "{:?}", reported(&events));
     Ok(())

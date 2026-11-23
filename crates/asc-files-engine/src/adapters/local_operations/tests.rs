@@ -54,6 +54,7 @@ mod moves;
 mod naming;
 mod paths;
 mod placement;
+mod replacement;
 
 /// Tests that change process-wide state (the clock, the kernel release, mount capabilities)
 /// run one at a time; legacy held the GLib main context for this.
@@ -866,4 +867,70 @@ fn move_local(
         ),
     }?;
     Ok(into.join(moved.name))
+}
+
+/// Legacy's copying options for a replace: its progress follower, which these tests leave out,
+/// and its name rules.
+#[derive(Clone, Default)]
+struct Copying {
+    progress: Option<()>,
+    names: NamePolicy,
+}
+
+/// Legacy's replace of the item at `target` with `source`, copied or moved, through the engine's
+/// public replace. `affected` was the folders a view had to read again; listings follow their
+/// folders now, so it is left as given.
+fn replace_local(
+    source: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+    move_source: bool,
+    cancellable: Cancellable,
+    affected: Option<&mut HashSet<Location>>,
+) -> Result<(), EngineError> {
+    replace_local_with(
+        source,
+        target,
+        move_source,
+        cancellable,
+        affected,
+        Copying::default(),
+        &|_, _| {},
+    )
+}
+
+fn replace_local_with(
+    source: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+    move_source: bool,
+    cancellable: Cancellable,
+    _affected: Option<&mut HashSet<Location>>,
+    copying: Copying,
+    on_replaced: &dyn Fn(
+        crate::services::ReplacedOriginal,
+        Option<crate::services::PlacedSnapshot>,
+    ),
+) -> Result<(), EngineError> {
+    use crate::services::ReplacedOriginal;
+    let target = target.as_ref();
+    let (into, name) = (
+        target.parent().expect("a target folder"),
+        target.file_name().expect("a target name"),
+    );
+    let cancel = crate::ops::Cancel::sharing(cancellable.flag());
+    let progress = crate::ops::Progress::new();
+    let mode = copying.names.mode;
+    let replaced = if move_source {
+        crate::ops::move_replacing_as(source.as_ref(), (into, name), mode, &cancel, &progress)
+    } else {
+        crate::ops::replace_as(source.as_ref(), (into, name), mode, &cancel, &progress)
+    }?;
+    if replaced.original_deleted {
+        on_replaced(ReplacedOriginal::Deleted, None);
+    } else if let Some(trashed) = &replaced.original {
+        on_replaced(
+            ReplacedOriginal::Trashed(super::native_fs::identity_at_path(&trashed.file)),
+            None,
+        );
+    }
+    Ok(())
 }

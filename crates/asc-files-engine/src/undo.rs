@@ -246,7 +246,12 @@ impl Step {
         })
     }
 
+    /// None where the original was deleted for want of a Trash: undoing would discard the only
+    /// version left.
     pub fn replaced(source: &Path, (into, replaced): (&Path, &ops::Replaced)) -> Option<Self> {
+        if replaced.original_deleted {
+            return None;
+        }
         let target = into.join(&replaced.name);
         let original = match &replaced.original {
             Some(trashed) => Some(TrashedOriginal {
@@ -264,6 +269,9 @@ impl Step {
     }
 
     pub fn moved_over(source: &Path, (into, replaced): (&Path, &ops::Replaced)) -> Option<Self> {
+        if replaced.original_deleted {
+            return None;
+        }
         let to = into.join(&replaced.name);
         Some(Self::MovedOver {
             from: source.to_path_buf(),

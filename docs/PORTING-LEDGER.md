@@ -22,8 +22,9 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `naming.rs` | 21 | 17 | 0 | 4 |
 | `paths.rs` | 3 | 2 | 0 | 1 |
 | `placement.rs` | 39 | 37 | 0 | 2 |
-| **So far** | **197** | **170** | **2** | **25** |
-| Remaining 12 files | 295 | – | – | – |
+| `replacement.rs` | 28 | 25 | 0 | 3 |
+| **So far** | **225** | **195** | **2** | **28** |
+| Remaining 11 files | 267 | – | – | – |
 
 ## Ignored
 
@@ -37,6 +38,12 @@ ported with a reason. This list must be empty, or every entry justified, before 
 |---|---|
 | `moves::a_moved_source_stays_when_its_copy_is_gone_before_the_deletion`, Replace published by exchange | A replacing move across drives sends the original to the Trash and then moves (`ops::move_replacing`); legacy staged a copy and exchanged it in. No exchange happens, so the row's racer cannot fire; the rows racing the sync cover the copy going. |
 | `moves::moves_compare_inode_numbers_only_where_the_source_keeps_them`, the two "linked to an item moved first" rows | Legacy copied every item of a paste before deleting any source; jobs finish each item first. The lookalike the row puts in place lands before the folder is copied, so moving it is right. |
+| `moves::a_moved_source_stays_when_its_copy_is_gone_before_the_deletion`, Replace published by exchange | After its exchange the engine proves the name holds its copy; one removed there at once stops the replace and puts the original back, with the source whole, where legacy carried on and kept the source. |
+| `replacement::replacement_stops_before_exchanging_a_substituted_target`, the OpenAt row | Legacy held the target open before staging; the engine reads it by identity instead, so there is no open to substitute at. The row during the copy runs. |
+| `replacement::a_target_is_replaced_only_while_its_mount_still_knows_it`, the Evicted rows (FAT, SFTP, SMB once inode numbers went) | **Open gap.** Where a mount renumbers an evicted original, legacy still knew it and replaced it; the engine refuses. The safe way round: every row that must be refused runs and is refused. |
+| Same test, ReplacedLonger on a path-keyed SFTP mount | **Open gap.** Refused as it must be, but the item put in the original's place is left set aside (and named in the error) instead of put back. |
+| `replacement::rejected_exchange_falls_back_to_aside_and_is_remembered`, the exchange count | Legacy skipped the exchange for a read-only staged folder; the engine tries it, is refused, and falls back. The outcome and what is remembered are checked. |
+| `replacement::a_failed_publication_puts_the_original_back`, the FAT row | Re-aimed at the engine's publish (its second rename at the name on FAT; legacy's was its fourth). |
 
 ## Not ported
 
@@ -66,6 +73,9 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `moves::deleting_a_source_gio_moved_keeps_the_links_it_left_out` | Same. |
 | `moves::moving_to_a_remote_target_keeps_a_source_entry_changed_during_the_copy` | Remote target: the remote adapter. |
 | `moves::moving_from_a_share_to_a_remote_target_right_after_a_paste_there_deletes_its_sources` | Same. |
+| `replacement::replacement_publication_preserves_concurrent_arrivals` | Legacy `replacement.rs` publication internals (`publish_staged_replacement`), superseded by `ops::replace`'s own staging, exchange and set-aside. |
+| `replacement::replacement_publication_reports_a_stage_it_cannot_remove` | Same. |
+| `replacement::replace_falls_back_to_aside_when_trash_lies` | GIO's `g_file_trash` reporting success without moving (GLib #4060); the native Trash moves by rename, which cannot. |
 | `paths::validated_children_are_confined_to_native_and_uri_parents` | A typed name may not leave its folder; returns with rename/new folder. The URI half belongs to the remote adapter. |
 
 ## Gaps the port found, and what was done
@@ -94,6 +104,24 @@ ported with a reason. This list must be empty, or every entry justified, before 
 - **Fixed:** a move no rename can place on its own drive is copied, as legacy did; a failed final sync says that
   writes may still be pending.
 - **Added:** `ops::rename`, which reports a reason as a rename prompt shows it.
+- **Changed, to legacy's behaviour:** on a drive with no Trash, Replace deletes the original once its replacement
+  is confirmed on the drive (`Replaced::original_deleted`, and no undo entry, since undo cannot bring it back);
+  A3 refused instead. A Trash that exists but cannot be used still refuses. If the sync before the deletion
+  fails, the replacement stays and the original is kept aside, named in the error.
+- **Fixed:** a replacing move on one drive is now the item itself trading places with the original (or the
+  original set aside), with no copy; across drives it copies into a stage, publishes it, and deletes the source
+  only after, as legacy did; the version in between deleted the source first.
+- **Fixed, safety:** a replacing move that set the original aside published whatever was at the source path,
+  even a file swapped in meanwhile; it is now placed by identity. After an exchange, the name must hold the
+  item itself, and an undo that cannot trade back puts the original straight back or says where it is.
+- **Fixed, safety:** Replace compared the original by inode only, so on SMB, once server inode numbers went, a
+  lookalike swapped in was replaced; it is now proven as deletion proves an item (identity traits, size,
+  times), and the mount-aware comparison applies to the set-aside step too.
+- **Fixed:** a replace now refuses before copying anything where neither strategy is safe; a cancel as the copy
+  finished is honoured; a staged copy left by a failure is removed; a merge on a drive without a Trash sets
+  clashing originals aside and deletes them once replaced, or puts them back.
+- **Fixed:** a hard link under another name is replaced like any item; only the same name in the same folder
+  (differing at most in case) is the item itself.
 - **Open:** a bulk path for many small items; `rename` on the protocol, new folder and new file with typed-name
   validation; a paste-planning call.
 

@@ -221,15 +221,38 @@ fn plain_name(name: &OsStr) -> Result<(), Error> {
     Ok(())
 }
 
-/// Whether two paths name the same item, by device and inode, without following a link.
+/// Whether two paths name the same item, by identity, without following a link, as the engine's
+/// filesystem sees them: a case-insensitive drive takes `photo.txt` for its `Photo.txt`.
 fn same_item(one: &Path, other: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    let identity = |path: &Path| {
-        std::fs::symlink_metadata(path)
-            .ok()
-            .map(|meta| (meta.dev(), meta.ino()))
+    use crate::adapters::local_operations::{
+        fs_ops::Entry, native_fs::open_local_parent_directory,
     };
-    identity(one).is_some_and(|one| identity(other) == Some(one))
+    let identity = |path: &Path| {
+        let (folder, name) = (path.parent()?, path.file_name()?);
+        let dir = open_local_parent_directory(folder).ok()?;
+        fs().stat(Entry::new(&dir, name), false)
+            .ok()
+            .map(|stat| stat.identity)
+    };
+    // A hard link elsewhere has the same identity but is another name: only the same folder and
+    // a name differing at most in case is the item itself.
+    let folder = |path: &Path| path.parent().and_then(|parent| identity_of_folder(parent));
+    let spelled_alike = match (one.file_name(), other.file_name()) {
+        (Some(a), Some(b)) => {
+            a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+        }
+        _ => false,
+    };
+    spelled_alike
+        && folder(one).is_some_and(|one| folder(other) == Some(one))
+        && identity(one).is_some_and(|one| identity(other) == Some(one))
+}
+
+fn identity_of_folder(folder: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(folder)
+        .ok()
+        .map(|meta| (meta.dev(), meta.ino()))
 }
 
 /// Whether `into` is the folder `source` is in, by identity, so another spelling of the same
@@ -800,7 +823,7 @@ pub fn move_replacing_as(
     cancel: &Cancel,
     progress: &Progress,
 ) -> Result<Replaced, Error> {
-    use crate::adapters::local_operations::{fs_ops::Entry, placement};
+    use crate::adapters::local_operations::placement;
     plain_name(name)?;
     let name = name.to_os_string();
     let target = into.join(&name);
@@ -808,6 +831,7 @@ pub fn move_replacing_as(
         return Ok(Replaced {
             name,
             original: None,
+            original_deleted: false,
             changes: Changes::default(),
             progress: progress.snapshot(),
         });
@@ -820,73 +844,240 @@ pub fn move_replacing_as(
         return Ok(Replaced {
             name: moved.name,
             original: None,
+            original_deleted: false,
             changes: moved.changes,
             progress: moved.progress,
         });
     }
     let (source_parent, source_name) = split(source)?;
     let (target_parent, target_name) = split(&target)?;
-    let one_filesystem =
-        crate::drives::device(source.parent().unwrap_or(source)) == crate::drives::device(into);
-    if one_filesystem
-        && placement::exchange_allowed(fs(), target_parent.as_fd())
+    if one_mount(source.parent().unwrap_or(source), into) {
+        return replace_by_moving(
+            (&source_parent, &source_name),
+            (&target_parent, into, &target_name),
+            progress,
+        );
+    }
+    // Across mounts, as legacy: the item is copied into a stage beside the target, the stage takes
+    // the target's place within its mount, and only then are the sources deleted, while they are
+    // still what the copy read. Until that last step the source is whole.
+    copy_then_replace(
+        (source, &source_parent, &source_name),
+        (into, &target_parent, &target_name),
+        names,
+        cancel,
+        progress,
+    )
+}
+
+/// The replacing move across mounts; see [`move_replacing_as`].
+fn copy_then_replace(
+    (source_path, source_parent, source_name): (&Path, &Arc<std::os::fd::OwnedFd>, &OsString),
+    (into, target_parent, target_name): (&Path, &Arc<std::os::fd::OwnedFd>, &OsString),
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Replaced, Error> {
+    use super::{Barrier, Published, manifest};
+    let barrier = Barrier::open(fs(), into)?;
+    let root = manifest::Folder::root();
+    let source = Source {
+        parent: source_parent.clone(),
+        name: source_name.clone(),
+        recorded_in: Some(root.clone()),
+    };
+    let options = Options {
+        manifest: true,
+        durable: true,
+        ..with_names(names)
+    };
+    let copy = Copy::new(
+        fs(),
+        source.name.clone(),
+        cancel.0.clone(),
+        progress.0.clone(),
+        true,
+        options,
+        Deadline::default(),
+    );
+    let stage = crate::model::hidden_names::HiddenName::Replacement.fresh();
+    let (stage, ownership) = copy_new(
+        &copy,
+        &source,
+        (target_parent, &stage),
+        super::NewItem::Published(Taken::Fail),
+        None,
+    )
+    .map_err(|failure| failure.into_error(&source.name))?;
+    let staged = fs()
+        .stat(
+            crate::adapters::local_operations::fs_ops::Entry::new(&**target_parent, &stage),
+            false,
+        )
+        .map_err(crate::error::os_io_error)?
+        .identity;
+    let discard_stage = || discard(target_parent, &stage, staged);
+    if cancel.is_cancelled() {
+        discard_stage();
+        return Err(crate::error::cancelled());
+    }
+    let replaced = match replace_by_moving(
+        (target_parent, &stage),
+        (target_parent, into, target_name),
+        progress,
+    ) {
+        Ok(replaced) => replaced,
+        Err(error) => {
+            discard_stage();
+            return Err(error);
+        }
+    };
+    barrier.reach(fs(), false).map_err(|error| {
+        crate::error::io_error(rust_i18n::t!(
+            "The device could not finish writing: %{error}. Earlier writes may still be pending; wait for safe eject before unplugging.",
+            error = crate::adapters::local_operations::native_fs::os_error_text(error)
+        ))
+    })?;
+    let mut sources = manifest::of(source.parent.clone(), root);
+    sources.copied_to(Published::proven(
+        target_parent.clone(),
+        target_name.clone(),
+        ownership,
+    ));
+    let (kept, deleted) = manifest::delete(
+        fs(),
+        sources,
+        Arc::new(super::Unlinks::default()),
+        cancel.0.clone(),
+    );
+    deleted?;
+    let mut changes = Changes::of(&copy, target_name);
+    let folder = source_path.parent().unwrap_or(Path::new("/"));
+    changes.kept = kept
+        .into_iter()
+        .map(|(path, cause)| Kept {
+            path: if path.is_absolute() {
+                path
+            } else {
+                folder.join(path)
+            },
+            cause,
+        })
+        .collect();
+    Ok(Replaced {
+        changes,
+        ..replaced
+    })
+}
+
+/// The replacing move within one mount: the item itself is the replacement, so nothing is
+/// copied. Where the drive can trade two names it does, and the original then goes from where the
+/// item was; elsewhere the original is set aside and the item takes its name. Either way the
+/// original goes to the Trash, or is deleted where the drive has none, and every step is undone
+/// if a later one fails.
+fn replace_by_moving(
+    (source_dir, source_name): (&Arc<std::os::fd::OwnedFd>, &OsString),
+    (parent, into, target): (&Arc<std::os::fd::OwnedFd>, &Path, &OsString),
+    progress: &Progress,
+) -> Result<Replaced, Error> {
+    use crate::adapters::local_operations::{
+        fs_ops::Entry,
+        placement::{self, PlaceError},
+    };
+    let stat = |dir: &Arc<std::os::fd::OwnedFd>, name: &OsStr| {
+        fs().stat(Entry::new(&**dir, name), false)
+            .map_err(crate::error::os_io_error)
+    };
+    let moving = stat(source_dir, source_name)?.identity;
+    let found = stat(parent, target)?;
+    let original = found.identity;
+    let barrier = super::Barrier::open(fs(), into)?;
+    let target_path = into.join(target);
+    let source_path = crate::adapters::local_operations::native_fs::opened_path(source_dir.as_fd())
+        .map_err(crate::error::io_error)?
+        .join(source_name);
+    let gone = if placement::exchange_allowed(fs(), parent.as_fd())
         && placement::exchange(
             fs(),
-            Entry::new(&*source_parent, &source_name),
-            Entry::new(&*target_parent, &target_name),
+            Entry::new(&**source_dir, source_name),
+            Entry::new(&**parent, target),
         )
         .is_ok_and(|swapped| swapped)
     {
-        // The original now sits where the moved item was.
-        return match crate::trash::put_recording(source, Some(&target)) {
-            Ok(trashed) => Ok(Replaced {
-                name,
-                original: Some(trashed),
-                changes: Changes::default(),
-                progress: progress.snapshot(),
-            }),
-            Err(error) => {
-                let _ = placement::exchange(
+        // Undoes the swap. Where the name was emptied meanwhile there is nothing to trade with,
+        // so the original is moved straight back to it; if even that fails, the error says where
+        // it is.
+        let swap_back = |error: Error| -> Error {
+            let traded = placement::exchange(
+                fs(),
+                Entry::new(&**source_dir, source_name),
+                Entry::new(&**parent, target),
+            )
+            .is_ok_and(|swapped| swapped);
+            let restored = traded
+                || placement::place(
                     fs(),
-                    Entry::new(&*source_parent, &source_name),
-                    Entry::new(&*target_parent, &target_name),
-                );
-                Err(error)
+                    Entry::new(&**source_dir, source_name),
+                    Entry::new(&**parent, target),
+                    Some(original),
+                )
+                .is_ok();
+            if restored {
+                error
+            } else {
+                kept_at(&source_path, &error)
             }
         };
-    }
-    let original = crate::trash::put(&target)?;
-    match move_as(source, (into, &name), names, cancel, progress).and_then(Moved::finished) {
-        Ok(moved) => Ok(Replaced {
-            name: moved.name,
-            original: Some(original),
-            changes: moved.changes,
-            progress: moved.progress,
-        }),
-        Err(error) => {
-            let restored = crate::trash::list()
-                .into_iter()
-                .find(|entry| entry.info == original.info)
-                .map(|entry| crate::trash::restore(&entry));
-            Err(match restored {
-                Some(Ok(_)) => error,
-                _ => crate::error::after_cleanup(
-                    error,
-                    Err(crate::error::translated_io_error(
-                        "The item it was to replace is in the Trash",
-                    )),
-                ),
-            })
+        // The original now sits where the item was, and the item at the name: prove both are
+        // the ones confirmed, so a source swapped in meanwhile is never what replaces it.
+        if !stat(source_dir, source_name).is_ok_and(|stat| stat.identity == original)
+            || !stat(parent, target).is_ok_and(|stat| stat.identity == moving)
+        {
+            return Err(swap_back(placement::place_error(PlaceError::Changed)));
         }
-    }
+        let folder = source_path.parent().unwrap_or(Path::new("/"));
+        match dispose(
+            (source_dir, folder),
+            (source_name, original),
+            &target_path,
+            &barrier,
+        ) {
+            Ok(gone) => gone,
+            Err(error) => return Err(swap_back(error)),
+        }
+    } else {
+        let is_folder = found.kind == rustix::fs::FileType::Directory;
+        replace_by_setting_aside(
+            (parent, into),
+            (source_dir, source_name, moving),
+            (target, original, found.file_attributes()),
+            (is_folder, true),
+            (&|| {}, &barrier),
+        )?
+    };
+    let (original, original_deleted) = match gone {
+        Gone::Trashed(trashed) => (Some(trashed), false),
+        Gone::Deleted => (None, true),
+        Gone::Kept(error) => return Err(error),
+    };
+    Ok(Replaced {
+        name: target.clone(),
+        original,
+        original_deleted,
+        changes: Changes::default(),
+        progress: progress.snapshot(),
+    })
 }
 
 /// A finished replace.
 #[derive(Debug)]
 pub struct Replaced {
     pub name: OsString,
-    /// Where the replaced original went, or None when nothing held the name.
+    /// Where the replaced original went, or None when nothing held the name or it was deleted.
     pub original: Option<Trashed>,
+    /// The drive has no Trash, so the original was deleted once its replacement was on the
+    /// drive. Undo cannot bring it back, so a replace like this is not filed.
+    pub original_deleted: bool,
     /// What the copy wrote otherwise than asked; see [`copy`].
     pub changes: Changes,
     pub progress: ProgressSnapshot,
@@ -943,6 +1134,7 @@ pub fn replace_as(
         return Ok(Replaced {
             name,
             original: None,
+            original_deleted: false,
             changes: Changes::default(),
             progress: progress.snapshot(),
         });
@@ -962,6 +1154,7 @@ pub fn replace_as(
             return Ok(Replaced {
                 name: copied.name,
                 original: None,
+                original_deleted: false,
                 changes: copied.changes,
                 progress: copied.progress,
             });
@@ -970,6 +1163,23 @@ pub fn replace_as(
     };
     let original = found.identity;
 
+    // Refused before anything is copied where neither strategy is safe on this drive.
+    let is_folder = found.kind == rustix::fs::FileType::Directory;
+    if !placement::exchange_allowed(fs(), parent.as_fd())
+        && placement::can_set_aside(fs(), parent.as_fd(), is_folder)
+            .is_ok_and(|feasible| feasible == placement::Feasibility::No)
+    {
+        return Err(Error::new(
+            crate::error::ErrorKind::NotSupported,
+            &rust_i18n::t!(
+                "“%{name}” can’t be replaced safely at this location. Delete or rename it first, then try again.",
+                name = name.to_string_lossy()
+            ),
+        ));
+    }
+    // Opened before the copy is written, so reaching it covers the replacement; it is reached
+    // only where an original has to be deleted for want of a Trash.
+    let barrier = super::Barrier::open(fs(), into)?;
     let stage = HiddenName::Replacement.fresh();
     let (source_parent, source_name) = split(source)?;
     let source = Source {
@@ -999,11 +1209,19 @@ pub fn replace_as(
         .map_err(os_io_error)?
         .identity;
     let discard_stage = || discard(&parent, &stage, staged);
+    // A cancel that came as the copy finished is honoured before anything is replaced.
+    if cancel.is_cancelled() {
+        discard_stage();
+        return Err(crate::error::cancelled());
+    }
     let target_path = into.join(&target);
 
+    // Where the mount renumbers an evicted entry (FAT, some FUSE and SMB), it is still the original
+    // while the mount cannot tell it apart; one it can tell apart has changed.
+    let mount = super::Mount::new(fs(), parent.as_fd());
     let still_original = fs()
         .stat(Entry::new(&*parent, &target), false)
-        .is_ok_and(|stat| stat.identity == original);
+        .is_ok_and(|stat| mount.is_still(parent.as_fd(), &found, &stat));
     if !still_original {
         discard_stage();
         return Err(placement::place_error(PlaceError::Changed));
@@ -1027,38 +1245,60 @@ pub fn replace_as(
         // The original now sits at the stage name. Prove it is still the item that was confirmed.
         let swapped_is_original = fs()
             .stat(Entry::new(&*parent, &stage), false)
-            .is_ok_and(|stat| stat.identity == original);
+            .is_ok_and(|stat| mount.is_still(parent.as_fd(), &found, &stat));
         let trashed = if swapped_is_original {
-            crate::trash::put_recording(&into.join(&stage), Some(&target_path))
+            dispose((&parent, into), (&stage, original), &target_path, &barrier)
         } else {
             Err(placement::place_error(PlaceError::Changed))
         };
-        if trashed.is_err()
-            && placement::exchange(
-                fs(),
-                Entry::new(&*parent, &stage),
-                Entry::new(&*parent, &target),
-            )
-            .is_ok_and(|swapped| swapped)
-        {
-            // The original is back at its name; the copy returned to the stage.
-            discard_stage();
+        match trashed {
+            Ok(gone) => gone,
+            Err(error) => {
+                let swapped_back = placement::exchange(
+                    fs(),
+                    Entry::new(&*parent, &stage),
+                    Entry::new(&*parent, &target),
+                )
+                .is_ok_and(|swapped| swapped);
+                if swapped_back {
+                    // The original is back at its name; the copy returned to the stage.
+                    discard_stage();
+                    return Err(error);
+                }
+                // Where the name was emptied meanwhile, the original goes straight back to it.
+                let restored = placement::place(
+                    fs(),
+                    Entry::new(&*parent, &stage),
+                    Entry::new(&*parent, &target),
+                    Some(original),
+                )
+                .is_ok();
+                return Err(if restored {
+                    error
+                } else {
+                    kept_at(&into.join(&stage), &error)
+                });
+            }
         }
-        trashed?
     } else {
-        let is_folder = found.kind == rustix::fs::FileType::Directory;
         replace_by_setting_aside(
             (&parent, into),
-            (&stage, staged),
-            (&target, original),
-            is_folder,
-            &discard_stage,
+            (&parent, &stage, staged),
+            (&target, original, found.file_attributes()),
+            (is_folder, false),
+            (&discard_stage, &barrier),
         )?
+    };
+    let (original, original_deleted) = match trashed {
+        Gone::Trashed(trashed) => (Some(trashed), false),
+        Gone::Deleted => (None, true),
+        Gone::Kept(error) => return Err(error),
     };
     Ok(Replaced {
         changes: Changes::of(&copy, &target),
         name: target,
-        original: Some(trashed),
+        original,
+        original_deleted,
         progress: progress.snapshot(),
     })
 }
@@ -1067,17 +1307,19 @@ pub fn replace_as(
 /// stage at its name, trash the original. Undoes in reverse on any failure.
 fn replace_by_setting_aside(
     (parent, into): (&Arc<std::os::fd::OwnedFd>, &Path),
-    (stage, staged): (
+    (stage_dir, stage, staged): (
+        &Arc<std::os::fd::OwnedFd>,
         &OsString,
         crate::adapters::local_operations::native_fs::LocalFileIdentity,
     ),
-    (target, original): (
+    (target, original, attributes): (
         &OsString,
         crate::adapters::local_operations::native_fs::LocalFileIdentity,
+        Option<crate::services::Attributes>,
     ),
-    is_folder: bool,
-    discard_stage: &dyn Fn(),
-) -> Result<Trashed, Error> {
+    (is_folder, moving): (bool, bool),
+    (discard_stage, barrier): (&dyn Fn(), &super::Barrier),
+) -> Result<Gone, Error> {
     use crate::adapters::local_operations::{
         fs_ops::Entry,
         placement::{self, Feasibility, RenameFailure},
@@ -1101,47 +1343,76 @@ fn replace_by_setting_aside(
             return Err(placement::place_error(error));
         }
     }
-    let aside = match placement::set_aside(fs(), Entry::new(&**parent, target), original, None) {
-        Ok(aside) => aside,
-        Err(RenameFailure::Place(error)) => {
-            discard_stage();
-            return Err(placement::place_error(error));
-        }
-        Err(RenameFailure::Stranded { temporary, error }) => {
-            discard_stage();
-            return Err(kept_at(
-                &into.join(temporary),
-                &placement::place_error(error),
-            ));
-        }
-    };
+    // With its size and times, so a mount that renumbers an evicted entry still knows it.
+    let aside =
+        match placement::set_aside(fs(), Entry::new(&**parent, target), original, attributes) {
+            Ok(aside) => aside,
+            Err(RenameFailure::Place(error)) => {
+                discard_stage();
+                return Err(placement::place_error(error));
+            }
+            Err(RenameFailure::Stranded { temporary, error }) => {
+                discard_stage();
+                return Err(kept_at(
+                    &into.join(temporary),
+                    &placement::place_error(error),
+                ));
+            }
+        };
     let aside_path = into.join(&aside.originals.name).join(&aside.name);
     let put_back = || placement::put_back(fs(), parent.as_fd(), &aside, target).is_ok();
 
-    if let Err(error) = placement::publish_staged(
-        fs(),
-        Entry::new(&**parent, stage),
-        Entry::new(&**parent, target),
-        staged,
-    ) {
+    // A moved item is anyone's to swap meanwhile, so it is placed by its identity; a stage is
+    // this operation's own.
+    let published = if moving {
+        placement::place(
+            fs(),
+            Entry::new(&**stage_dir, stage),
+            Entry::new(&**parent, target),
+            Some(staged),
+        )
+    } else {
+        placement::publish_staged(
+            fs(),
+            Entry::new(&**stage_dir, stage),
+            Entry::new(&**parent, target),
+            staged,
+        )
+    };
+    if let Err(error) = published {
         let error = placement::place_error(error);
         if !put_back() {
+            // The original stays aside, said where; the copy in the stage is only a copy.
+            discard_stage();
             return Err(kept_at(&aside_path, &error));
         }
         discard_stage();
         return Err(error);
     }
-    match crate::trash::put_recording(&aside_path, Some(&into.join(target))) {
-        Ok(trashed) => {
+    let originals = crate::adapters::local_operations::native_fs::open_local_parent_directory(
+        &into.join(&aside.originals.name),
+    )
+    .map(Arc::new)
+    .map_err(crate::error::io_error);
+    let gone = originals.and_then(|originals| {
+        dispose(
+            (&originals, &into.join(&aside.originals.name)),
+            (&aside.name, original),
+            &into.join(target),
+            barrier,
+        )
+    });
+    match gone {
+        Ok(gone) => {
             let _ = std::fs::remove_dir(into.join(&aside.originals.name));
-            Ok(trashed)
+            Ok(gone)
         }
         Err(error) => {
             // The copy goes back to its stage, then the original back to its name.
             let copy_back = placement::place(
                 fs(),
                 Entry::new(&**parent, target),
-                Entry::new(&**parent, stage),
+                Entry::new(&**stage_dir, stage),
                 Some(staged),
             )
             .is_ok();
@@ -1172,6 +1443,17 @@ fn discard(
     name: &OsStr,
     identity: crate::adapters::local_operations::native_fs::LocalFileIdentity,
 ) {
+    if let Err(error) = remove_pinned(parent, name, identity) {
+        tracing::warn!(?name, %error, "could not remove a replace stage");
+    }
+}
+
+/// Deletes `name` in `parent`, a whole tree, only while it is still the item `identity` names.
+fn remove_pinned(
+    parent: &Arc<std::os::fd::OwnedFd>,
+    name: &OsStr,
+    identity: crate::adapters::local_operations::native_fs::LocalFileIdentity,
+) -> Result<(), Error> {
     use crate::adapters::local_operations::{
         deletion::{
             PinnedEntry, local_delete_worker_count, parallel_delete_local_blocking_with_workers,
@@ -1187,13 +1469,51 @@ fn discard(
         }),
     }];
     let workers = local_delete_worker_count(&roots);
-    if let Err(error) = parallel_delete_local_blocking_with_workers(
+    parallel_delete_local_blocking_with_workers(
         roots,
         Arc::new(AtomicBool::new(false)),
         workers,
         &Deadline::default(),
-    ) {
-        tracing::warn!(?name, %error, "could not remove a replace stage");
+    )
+    .map_err(crate::error::io_error)
+}
+
+/// What became of an original a replace took the place of.
+enum Gone {
+    Trashed(Trashed),
+    Deleted,
+    /// Its drive has no Trash and could not confirm the replacement, so the original was kept
+    /// where it waited; the error says where. The replacement stays: undoing it would only write
+    /// more to a drive that just failed.
+    Kept(Error),
+}
+
+/// Sends the original at `name` in `parent` to the Trash, recorded under `recorded` (the path it
+/// had). Where its drive has no Trash it is deleted, as legacy did, once `barrier` says its
+/// replacement is on the drive, and only while it is still the original.
+fn dispose(
+    (parent, into): (&Arc<std::os::fd::OwnedFd>, &Path),
+    (name, identity): (
+        &OsStr,
+        crate::adapters::local_operations::native_fs::LocalFileIdentity,
+    ),
+    recorded: &Path,
+    barrier: &super::Barrier,
+) -> Result<Gone, Error> {
+    match crate::trash::put_recording(&into.join(name), Some(recorded)) {
+        Ok(trashed) => Ok(Gone::Trashed(trashed)),
+        Err(error) if error.kind() == crate::error::ErrorKind::NotSupported => {
+            if let Err(error) = barrier.reach(fs(), false) {
+                let error = crate::error::io_error(rust_i18n::t!(
+                    "The device could not finish writing: %{error}. Earlier writes may still be pending; wait for safe eject before unplugging.",
+                    error = crate::adapters::local_operations::native_fs::os_error_text(error)
+                ));
+                return Ok(Gone::Kept(kept_at(&into.join(name), &error)));
+            }
+            remove_pinned(parent, name, identity)?;
+            Ok(Gone::Deleted)
+        }
+        Err(error) => Err(error),
     }
 }
 

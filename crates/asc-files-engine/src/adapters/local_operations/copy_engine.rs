@@ -1377,6 +1377,21 @@ impl Mount {
         compare(self.identity, recorded, None, current) != Proof::Different
     }
 
+    /// Whether `current` is still the entry `recorded` was, with what the mount keeps of a file
+    /// (size and times) as evidence where its numbers are renewed: a file renumbered after
+    /// eviction is still itself, a lookalike put in its place is not.
+    fn is_still(&self, dir: BorrowedFd<'_>, recorded: &EntryStat, current: &EntryStat) -> bool {
+        super::native_fs::removable(
+            super::native_fs::Recorded {
+                identity: recorded.identity,
+                attributes: recorded.file_attributes(),
+            },
+            current,
+            || self.identity_now(fs(), dir),
+            recorded.is_directory(),
+        )
+    }
+
     fn capabilities(&self) -> MountCapabilities {
         mount_capabilities(self.key)
     }

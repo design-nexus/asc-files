@@ -458,9 +458,24 @@ fn merge_across_drives(
 ) -> Result<(), Error> {
     let target = into.join(name);
     let mut replaced = std::collections::HashMap::new();
+    // Where the drive has no Trash, originals wait in a hidden folder, as legacy set them aside,
+    // and are deleted once their replacements are in place.
+    let aside = target.join(crate::model::hidden_names::HiddenName::Originals.fresh());
     for clash in clashes(source, into)? {
         if !clash.existing.is_folder && plan.choice(&clash.path) == Clash::Replace {
-            let original = crate::trash::put(&target.join(&clash.path))?;
+            let at = target.join(&clash.path);
+            let original = match crate::trash::put(&at) {
+                Ok(trashed) => Original::Trashed(trashed),
+                Err(error) if error.kind() == ErrorKind::NotSupported => {
+                    let kept = aside.join(&clash.path);
+                    if let Some(folder) = kept.parent() {
+                        fs::create_dir_all(folder).map_err(crate::error::os_io_error)?;
+                    }
+                    fs::rename(&at, &kept).map_err(crate::error::os_io_error)?;
+                    Original::Aside(kept)
+                }
+                Err(error) => return Err(error),
+            };
             replaced.insert(clash.path, original);
         }
     }
@@ -479,17 +494,29 @@ fn merge_across_drives(
     // An original whose incoming item was left out (a link the drive cannot hold, say) comes
     // back, so nothing it held is lost to a replacement that never came.
     replaced.retain(|path, original| {
-        if fs::symlink_metadata(target.join(path)).is_ok() {
-            return true;
+        let at = target.join(path);
+        let placed = fs::symlink_metadata(&at).is_ok();
+        match original {
+            Original::Trashed(trashed) if !placed => {
+                if let Some(entry) = crate::trash::list()
+                    .into_iter()
+                    .find(|entry| entry.info == trashed.info)
+                {
+                    let _ = crate::trash::restore(&entry);
+                }
+            }
+            Original::Aside(kept) if !placed => {
+                let _ = fs::rename(&*kept, &at);
+            }
+            // merge_by_moving reached the drive's barrier, so the replacement is stored.
+            Original::Aside(kept) => {
+                let _ = fs::remove_file(&*kept).or_else(|_| fs::remove_dir_all(&*kept));
+            }
+            Original::Trashed(_) => {}
         }
-        if let Some(entry) = crate::trash::list()
-            .into_iter()
-            .find(|entry| entry.info == original.info)
-        {
-            let _ = crate::trash::restore(&entry);
-        }
-        false
+        placed
     });
+    let _ = fs::remove_dir_all(&aside);
     let moved = moved?;
     let after = tree(&target);
     for path in after.difference(&before) {
@@ -504,7 +531,10 @@ fn merge_across_drives(
             Some(original) => Did::MovedOver {
                 from,
                 to,
-                original: Some(original),
+                original: match original {
+                    Original::Trashed(trashed) => Some(trashed),
+                    Original::Aside(_) => None,
+                },
             },
             None => Did::Moved {
                 from,
@@ -530,6 +560,12 @@ fn merge_across_drives(
         merged.failed.push((source.to_path_buf(), error));
     }
     Ok(())
+}
+
+/// Where an original a merge replaces went before the merge.
+enum Original {
+    Trashed(Trashed),
+    Aside(PathBuf),
 }
 
 /// Every path beneath `root`, relative to it, without following links.

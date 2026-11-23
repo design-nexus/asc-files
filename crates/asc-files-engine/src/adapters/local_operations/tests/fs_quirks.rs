@@ -2625,6 +2625,11 @@ impl FsOps for Scoped {
                 {
                     return Err(Errno::ACCESS);
                 }
+                match scope.quirk(|quirks| quirks.trash) {
+                    Trash::Unsupported | Trash::Refused => return Err(Errno::OPNOTSUPP),
+                    Trash::ProtocolRefused | Trash::FalseWithoutError => return Err(Errno::IO),
+                    Trash::Supported | Trash::SucceedsWithoutMoving => {}
+                }
                 System.rename(from, to, RenameFlags::NOREPLACE)
             }),
             None => System.rename(from, to, RenameFlags::NOREPLACE),
