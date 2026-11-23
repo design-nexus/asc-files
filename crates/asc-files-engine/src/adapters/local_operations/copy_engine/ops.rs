@@ -231,7 +231,7 @@ pub fn copy(
 /// Whether `into` is `source` or beneath it, by device and inode, so bind mounts, symlinked
 /// paths and case-insensitive aliases are caught. The legacy app checked this while planning a
 /// paste; the engine checks it itself, since a copy into itself never ends.
-fn lands_within(source: &Path, into: &Path) -> bool {
+pub(crate) fn lands_within(source: &Path, into: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
     let Ok(source) = std::fs::symlink_metadata(source) else {
         return false;
@@ -378,6 +378,21 @@ pub fn move_as(
         kept,
         progress: progress.snapshot(),
     })
+}
+
+/// A sync point for everything a batch writes into one folder's drive. Opened before the batch
+/// writes; reaching it returns once the drive says all of it is stored, so a removable drive can
+/// then be unplugged.
+pub struct Settle(super::Barrier);
+
+impl Settle {
+    pub fn open(into: &Path) -> Result<Self, Error> {
+        super::Barrier::open(fs(), into).map(Self)
+    }
+
+    pub fn reach(&self) -> Result<(), Error> {
+        self.0.reach(fs(), true).map_err(crate::error::os_io_error)
+    }
 }
 
 pub use crate::trash::Trashed;

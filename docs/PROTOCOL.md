@@ -45,21 +45,34 @@ Notifications:
 
 | Method | Params | Result |
 |---|---|---|
-| `jobs.start` | `into`, `names?: "fix"\|"keep"` (fix), `label?` (what undo calls it; default from the actions, e.g. "Move 2 items"), `items: [{source, action: "copy"\|"move"\|"replace"\|"trash", conflict?: "fail"\|"keepBoth"\|"merge"}]` | `{job}` |
+| `jobs.start` | `into`, `names?: "fix"\|"keep"` (fix), `label?` (what undo calls it; default from the actions, e.g. "Move 2 items"), `durable?` (sync the drive before finishing; default: when it is removable), `items: [{source, action: "copy"\|"merge"\|"move"\|"replace"\|"trash", conflict?: "fail"\|"keepBoth"\|"merge", choices?, otherwise?}]` | `{job}` |
 | `jobs.cancel` | `job` | `null` |
+| `jobs.clashes` | `into`, `sources` | `{items: [{source, clashes: [{path, incoming, existing}]}]}`, each side `{isFolder, size, modified}`; or `{source, error}` |
+
+A `merge` item merges a folder into the folder of its name in `into` (a plain copy where there is none). Folders
+on both sides merge in turn; for any other clash, `choices` maps its path inside the merged folder (as
+`jobs.clashes` gives it) to `"keepBoth"` (copied in as `name (1)`), `"replace"` (copied over it; the original goes
+to the Trash once the copy holds the name) or `"skip"`; `otherwise` (default `"keepBoth"`) covers the rest. A copy
+with `conflict: "merge"` is a merge keeping both everywhere. A merge goes on past an item that fails; its outcome is
+then `failed`, with the first error, and what it did is still filed for undo.
+
+Batches writing to the same drive run one after another, in the order they were started; a batch that has to
+wait sends `job.queued {job, ahead}` before `job.started`. Batches for different drives run side by side.
 
 `names: "fix"` saves a name the destination drive cannot store under the closest one it can; `"keep"` fails such
 an item instead (meant for undo). Notifications: `job.started {job, total}`, `job.progress {job, item, bytes, files}`,
-`job.itemDone {job, index, outcome}`, `job.finished {job, done, failed, notAttempted, cancelled, undo}`, where `undo` is the batch's history entry, or
-`null` when nothing it did can be undone (with `undoError` if the history could not be written). Every item gets
+`job.itemDone {job, index, outcome}`, `job.finished {job, done, failed, notAttempted, cancelled, undo, durable, settled?}`, where `undo` is the batch's
+history entry, or `null` when nothing it did can be undone (with `undoError` if the history could not be
+written), and for a durable batch `settled` says whether the drive confirmed everything was written
+(`settleError` if not): only then is a removable drive safe to unplug. Every item gets
 exactly one `job.itemDone`; its outcome is `{status: "done", path, renamed: [{requested, savedAs, cause}],
 skipped: [{path, kind}]}`, `{status: "failed", error}` or `{status: "notAttempted"}`.
 
 ## Undo
 
 One history per session, shared by every Files process (`$XDG_RUNTIME_DIR/asc-files/undo-journal`), 50 entries deep.
-Every batch is filed when it finishes, even a cancelled or partly failed one. A merge into a folder that was
-already there is done but not filed: undoing it as a whole would trash the folder it merged into.
+Every batch is filed when it finishes, even a cancelled or partly failed one. A merge is filed item by item:
+what it copied in and what it replaced; the folder merged into is never undone.
 
 | Method | Params | Result |
 |---|---|---|

@@ -10,7 +10,6 @@ use std::{
 };
 
 use asc_files_engine::{
-    error::ErrorKind,
     jobs::{self, Action, Event, Item, Record, Request},
     ops::{Cancel, Conflict, NameMode, Progress},
     trash,
@@ -61,6 +60,7 @@ impl Fixture {
                     journal: self.journal.clone(),
                     label: label.to_owned(),
                 }),
+                durable: None,
             },
             send,
         )
@@ -250,28 +250,31 @@ fn an_item_changed_since_is_left_and_reported_while_the_rest_is_undone() {
 }
 
 #[test]
-fn a_merge_into_a_folder_that_was_there_is_done_but_not_filed() {
+fn a_merge_into_a_folder_that_was_there_is_undone_without_touching_that_folder() {
     let fixture = Fixture::new();
     fs::create_dir(fixture.path("source/photos")).unwrap();
     fs::write(fixture.path("source/photos/new.jpg"), b"n").unwrap();
     fs::create_dir(fixture.path("dest/photos")).unwrap();
     fs::write(fixture.path("dest/photos/mine.jpg"), b"m").unwrap();
+    let folder = fs::metadata(fixture.path("dest/photos")).unwrap().ino();
 
     let id = fixture.run(
         "Copy",
         vec![(fixture.path("source/photos"), Action::Copy(Conflict::Merge))],
     );
-
-    assert_eq!(
-        id, None,
-        "undo would have trashed the folder it merged into"
-    );
+    assert!(id.is_some(), "a merge is filed item by item");
     assert!(fixture.path("dest/photos/new.jpg").exists());
-    let error = fixture
-        .journal
-        .undo(&Cancel::new(), &Progress::new())
-        .expect_err("nothing to undo");
-    assert_eq!(error.kind(), ErrorKind::NotFound);
+
+    assert_eq!(fixture.undo().done, 1);
+    assert!(!fixture.path("dest/photos/new.jpg").exists());
+    assert_eq!(
+        fs::metadata(fixture.path("dest/photos")).unwrap().ino(),
+        folder
+    );
+    assert_eq!(
+        fs::read(fixture.path("dest/photos/mine.jpg")).unwrap(),
+        b"m"
+    );
 }
 
 #[test]
@@ -357,6 +360,7 @@ fn a_move_across_drives_is_undone_across_them() {
                 journal: fixture.journal.clone(),
                 label: "Move".to_owned(),
             }),
+            durable: None,
         },
         send,
     )

@@ -67,6 +67,7 @@ fn replace_in_a_batch_where_only_some_items_clash_places_every_item() {
             items,
             names: NameMode::Keep,
             record: None,
+            durable: None,
         });
 
         assert!(
@@ -98,6 +99,7 @@ fn a_failed_item_ends_only_itself() {
             .to_vec(),
         names: NameMode::Keep,
         record: None,
+        durable: None,
     });
 
     let outcomes = outcomes(&events);
@@ -148,8 +150,17 @@ fn events_start_once_report_each_item_once_and_finish_last() {
         items,
         names: NameMode::Keep,
         record: None,
+        durable: None,
     });
 
+    // Another test writing to the same drive may hold it: then one Queued comes first.
+    let events = match events.first() {
+        Some(Event::Queued { ahead, .. }) => {
+            assert!(*ahead >= 1);
+            &events[1..]
+        }
+        _ => &events[..],
+    };
     assert!(matches!(
         events.first(),
         Some(Event::Started { total: 5, .. })
@@ -169,7 +180,8 @@ fn events_start_once_report_each_item_once_and_finish_last() {
     let jobs: std::collections::HashSet<_> = events
         .iter()
         .map(|event| match event {
-            Event::Started { job, .. }
+            Event::Queued { job, .. }
+            | Event::Started { job, .. }
             | Event::Progress { job, .. }
             | Event::ItemDone { job, .. }
             | Event::Finished { job, .. } => *job,
@@ -201,6 +213,7 @@ fn cancelling_reports_the_rest_as_not_attempted() {
             items,
             names: NameMode::Keep,
             record: None,
+            durable: None,
         },
         tx,
     );
@@ -281,6 +294,7 @@ fn progress_never_goes_backwards_within_an_item() {
         items: vec![item(&big, Action::Copy(Conflict::Fail))],
         names: NameMode::Keep,
         record: None,
+        durable: None,
     });
 
     let samples: Vec<u64> = events
@@ -297,4 +311,40 @@ fn progress_never_goes_backwards_within_an_item() {
     );
     let outcome = outcomes(&events)[0];
     assert!(matches!(outcome, Outcome::Done { .. }), "{outcome:?}");
+}
+
+#[test]
+fn a_durable_batch_is_synced_before_it_finishes() {
+    let root = isolated_home_dir();
+    let (source, dest) = (root.path().join("source"), root.path().join("dest"));
+    fs::create_dir_all(&source).unwrap();
+    fs::create_dir_all(&dest).unwrap();
+    fs::write(source.join("a.txt"), b"a").unwrap();
+    let settled = |durable, action: Action| {
+        let events = run(Request {
+            into: dest.clone(),
+            items: vec![item(&source.join("a.txt"), action)],
+            names: NameMode::Fix,
+            record: None,
+            durable,
+        });
+        events.into_iter().find_map(|event| match event {
+            Event::Finished { settled, .. } => Some(settled),
+            _ => None,
+        })
+    };
+
+    assert_eq!(
+        settled(Some(true), Action::Copy(Conflict::KeepBoth)),
+        Some(Some(Ok(())))
+    );
+    assert_eq!(
+        settled(Some(false), Action::Copy(Conflict::KeepBoth)),
+        Some(None)
+    );
+    assert_eq!(
+        settled(Some(true), Action::Trash),
+        Some(None),
+        "a batch that only trashes writes nothing to its destination"
+    );
 }

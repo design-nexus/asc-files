@@ -61,6 +61,19 @@ impl Error {
     pub fn message(&self) -> &str {
         &self.message
     }
+
+    /// This error, saying `more` other items failed too.
+    pub(crate) fn with_more(self, more: usize) -> Self {
+        let message = rust_i18n::t!(
+            "%{error} (and %{count} more items failed)",
+            error = self.message,
+            count = more
+        );
+        Self {
+            kind: self.kind,
+            message: message.into_owned(),
+        }
+    }
 }
 
 impl fmt::Display for Error {
@@ -125,5 +138,20 @@ pub(crate) fn after_cleanup(copy_error: Error, cleanup: Result<(), Error>) -> Er
             error = message(&copy_error),
             cleanup_error = detail(&cleanup_error)
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_error_can_say_how_many_more_failed() {
+        let error = Error::new(ErrorKind::PermissionDenied, "a.jpg could not be read").with_more(2);
+        assert_eq!(
+            error.message(),
+            "a.jpg could not be read (and 2 more items failed)"
+        );
+        assert_eq!(error.kind(), ErrorKind::PermissionDenied);
     }
 }

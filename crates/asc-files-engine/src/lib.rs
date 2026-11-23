@@ -5,11 +5,14 @@
 rust_i18n::i18n!("locales", fallback = "en");
 
 pub mod adapters;
+pub mod drives;
 pub mod error;
 pub mod i18n;
 pub mod jobs;
 pub mod listing;
+pub mod merge;
 pub mod model;
+pub(crate) mod serde_path;
 pub mod services;
 pub mod trash;
 pub mod undo;

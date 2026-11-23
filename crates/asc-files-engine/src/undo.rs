@@ -13,13 +13,9 @@
 //! unchanged file is deleted, and anything else is left in place and reported.
 
 use std::{
-    ffi::OsString,
     fs,
     io::Write,
-    os::unix::{
-        ffi::{OsStrExt, OsStringExt},
-        fs::{DirBuilderExt, MetadataExt},
-    },
+    os::unix::fs::{DirBuilderExt, MetadataExt},
     path::{Component, Path, PathBuf},
 };
 
@@ -101,9 +97,9 @@ impl Identity {
 pub enum Step {
     /// `copy` was made from `source`.
     Copied {
-        #[serde(with = "path_bytes")]
+        #[serde(with = "crate::serde_path")]
         source: PathBuf,
-        #[serde(with = "path_bytes")]
+        #[serde(with = "crate::serde_path")]
         copy: PathBuf,
         conflict: Conflict,
         identity: Identity,
@@ -111,27 +107,27 @@ pub enum Step {
     /// The item that was at `from` is at `to`. `renamed` holds names inside it the destination
     /// could not store, as (asked, saved) paths relative to `to`'s folder.
     Moved {
-        #[serde(with = "path_bytes")]
+        #[serde(with = "crate::serde_path")]
         from: PathBuf,
-        #[serde(with = "path_bytes")]
+        #[serde(with = "crate::serde_path")]
         to: PathBuf,
         identity: Identity,
-        #[serde(with = "path_pairs")]
+        #[serde(with = "crate::serde_path::pairs")]
         renamed: Vec<(PathBuf, PathBuf)>,
     },
     /// The item from `original` is in the Trash, recorded by `info`.
     Trashed {
-        #[serde(with = "path_bytes")]
+        #[serde(with = "crate::serde_path")]
         original: PathBuf,
-        #[serde(with = "path_bytes")]
+        #[serde(with = "crate::serde_path")]
         info: PathBuf,
         identity: Identity,
     },
     /// A copy of `source` took the place of `target`; what held it went to the Trash.
     Replaced {
-        #[serde(with = "path_bytes")]
+        #[serde(with = "crate::serde_path")]
         source: PathBuf,
-        #[serde(with = "path_bytes")]
+        #[serde(with = "crate::serde_path")]
         target: PathBuf,
         identity: Identity,
         original: Option<TrashedOriginal>,
@@ -140,7 +136,7 @@ pub enum Step {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TrashedOriginal {
-    #[serde(with = "path_bytes")]
+    #[serde(with = "crate::serde_path")]
     pub info: PathBuf,
     pub identity: Identity,
 }
@@ -149,30 +145,30 @@ pub struct TrashedOriginal {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Redo {
     Copy {
-        #[serde(with = "path_bytes")]
+        #[serde(with = "crate::serde_path")]
         source: PathBuf,
-        #[serde(with = "path_bytes")]
+        #[serde(with = "crate::serde_path")]
         into: PathBuf,
         conflict: Conflict,
     },
     /// `identity` is the item undo put back at `from`.
     Move {
-        #[serde(with = "path_bytes")]
+        #[serde(with = "crate::serde_path")]
         from: PathBuf,
-        #[serde(with = "path_bytes")]
+        #[serde(with = "crate::serde_path")]
         to: PathBuf,
         identity: Identity,
     },
     Trash {
-        #[serde(with = "path_bytes")]
+        #[serde(with = "crate::serde_path")]
         original: PathBuf,
         identity: Identity,
     },
     /// `original` is what undo put back at `target`, or None when it left the name empty.
     Replace {
-        #[serde(with = "path_bytes")]
+        #[serde(with = "crate::serde_path")]
         source: PathBuf,
-        #[serde(with = "path_bytes")]
+        #[serde(with = "crate::serde_path")]
         target: PathBuf,
         original: Option<Identity>,
     },
@@ -237,6 +233,41 @@ impl Step {
             target,
             original,
         })
+    }
+
+    /// The steps of a merge: each item it made and each it replaced, in the order it did them.
+    /// The folder merged into stays, whatever is undone.
+    pub fn merged(merged: &crate::merge::Merged) -> Vec<Self> {
+        let created = merged
+            .created
+            .iter()
+            .filter_map(|(copy, source, conflict)| {
+                Some(Self::Copied {
+                    source: source.clone(),
+                    identity: Identity::of(copy)?,
+                    copy: copy.clone(),
+                    conflict: *conflict,
+                })
+            });
+        let replaced = merged
+            .replaced
+            .iter()
+            .filter_map(|(target, source, original)| {
+                let original = match original {
+                    Some(trashed) => Some(TrashedOriginal {
+                        info: trashed.info.clone(),
+                        identity: Identity::of(&trashed.file)?,
+                    }),
+                    None => None,
+                };
+                Some(Self::Replaced {
+                    source: source.clone(),
+                    identity: Identity::of(target)?,
+                    target: target.clone(),
+                    original,
+                })
+            });
+        created.chain(replaced).collect()
     }
 
     /// The path a user would recognise this step by.
@@ -776,72 +807,10 @@ fn replay(redo: &Redo, cancel: &Cancel, progress: &Progress) -> Result<Option<St
     }
 }
 
-/// Paths as their bytes when they are not UTF-8, so no name is lost on the way to the file.
-mod path_bytes {
-    use super::*;
-
-    #[derive(Serialize, Deserialize)]
-    #[serde(untagged)]
-    pub(super) enum Stored {
-        Text(String),
-        Bytes { bytes: Vec<u8> },
-    }
-
-    pub(super) fn stored(path: &Path) -> Stored {
-        match path.to_str() {
-            Some(text) => Stored::Text(text.to_owned()),
-            None => Stored::Bytes {
-                bytes: path.as_os_str().as_bytes().to_vec(),
-            },
-        }
-    }
-
-    pub(super) fn loaded(stored: Stored) -> PathBuf {
-        match stored {
-            Stored::Text(text) => PathBuf::from(text),
-            Stored::Bytes { bytes } => PathBuf::from(OsString::from_vec(bytes)),
-        }
-    }
-
-    pub(super) fn serialize<S: serde::Serializer>(path: &Path, to: S) -> Result<S::Ok, S::Error> {
-        stored(path).serialize(to)
-    }
-
-    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
-        from: D,
-    ) -> Result<PathBuf, D::Error> {
-        Stored::deserialize(from).map(loaded)
-    }
-}
-
-mod path_pairs {
-    use super::{path_bytes::Stored, *};
-
-    pub(super) fn serialize<S: serde::Serializer>(
-        pairs: &[(PathBuf, PathBuf)],
-        to: S,
-    ) -> Result<S::Ok, S::Error> {
-        pairs
-            .iter()
-            .map(|(a, b)| (path_bytes::stored(a), path_bytes::stored(b)))
-            .collect::<Vec<_>>()
-            .serialize(to)
-    }
-
-    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
-        from: D,
-    ) -> Result<Vec<(PathBuf, PathBuf)>, D::Error> {
-        Vec::<(Stored, Stored)>::deserialize(from).map(|pairs| {
-            pairs
-                .into_iter()
-                .map(|(a, b)| (path_bytes::loaded(a), path_bytes::loaded(b)))
-                .collect()
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
     use super::*;
 
     #[test]

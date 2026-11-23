@@ -13,6 +13,7 @@ use std::{
 use asc_files_engine::{
     error::Error,
     jobs::{self, Action, Event, Item, JobId, Outcome, Record, Request},
+    merge::{self, Clash, MergePlan},
     ops::{Cancel, Conflict, NameMode, Progress, RenameCause, SpecialKind},
     trash,
     undo::{self, Journal},
@@ -77,7 +78,8 @@ struct Session {
     forwarders: Vec<thread::JoinHandle<()>>,
     /// The session's undo history, shared with every other Files process; None without one.
     journal: Option<Journal>,
-    undoing: Vec<thread::JoinHandle<()>>,
+    /// Undo, redo and clash lookups running off the loop; waited for at shutdown.
+    workers: Vec<thread::JoinHandle<()>>,
 }
 
 impl Session {
@@ -94,7 +96,7 @@ impl Session {
                     eprintln!("asc-files-backend: no undo history: {}", error.message());
                 })
                 .ok(),
-            undoing: Vec::new(),
+            workers: Vec::new(),
         }
     }
 
@@ -113,6 +115,11 @@ impl Session {
             Err((INVALID_REQUEST, "initialize first".to_owned()))
         } else if let Some(direction) = method.strip_prefix("undo.").filter(|d| *d != "history") {
             match self.start_undo(direction, id.clone().unwrap_or(Value::Null)) {
+                Ok(()) => return None,
+                Err(error) => Err(error),
+            }
+        } else if method == "jobs.clashes" {
+            match self.start_clashes(id.clone().unwrap_or(Value::Null), &params) {
                 Ok(()) => return None,
                 Err(error) => Err(error),
             }
@@ -228,9 +235,36 @@ impl Session {
             let _ = forwarder.join();
         }
         // An undo in progress finishes: stopping it halfway would leave its entry half done.
-        for undoing in self.undoing.drain(..) {
-            let _ = undoing.join();
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
         }
+    }
+
+    /// Lists the clashes a merge of each source into `into` would meet, on a thread of its own:
+    /// it walks folders, which on a slow drive takes a while.
+    fn start_clashes(&mut self, id: Value, params: &Value) -> Result<(), (i64, String)> {
+        let into = path_param(params, "into")?;
+        let sources = params
+            .get("sources")
+            .and_then(Value::as_array)
+            .ok_or((INVALID_PARAMS, "sources must be an array".to_owned()))?
+            .iter()
+            .map(|source| {
+                source
+                    .as_str()
+                    .map(PathBuf::from)
+                    .ok_or((INVALID_PARAMS, "sources must be string paths".to_owned()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let out = self.out.clone();
+        self.workers.push(thread::spawn(move || {
+            let items: Vec<Value> = sources
+                .iter()
+                .map(|source| clashes_json(source, &into))
+                .collect();
+            let _ = out.send(json!({"jsonrpc": "2.0", "id": id, "result": {"items": items}}));
+        }));
+        Ok(())
     }
 
     /// Runs `undo.undo` or `undo.redo` on a thread of its own; it answers `id` when done.
@@ -242,7 +276,7 @@ impl Session {
         };
         let journal = self.journal.clone().ok_or_else(no_history)?;
         let out = self.out.clone();
-        self.undoing.push(thread::spawn(move || {
+        self.workers.push(thread::spawn(move || {
             let (cancel, progress) = (Cancel::new(), Progress::new());
             let outcome = if redo {
                 journal.redo(&cancel, &progress)
@@ -280,6 +314,7 @@ fn job_request(params: &Value) -> Result<Request, (i64, String)> {
                         return Err((INVALID_PARAMS, format!("unknown conflict {other}")));
                     }
                 }),
+                Some("merge") => Action::Merge(merge_plan(item)?),
                 Some("move") => Action::Move,
                 Some("replace") => Action::Replace,
                 Some("trash") => Action::Trash,
@@ -293,12 +328,62 @@ fn job_request(params: &Value) -> Result<Request, (i64, String)> {
         Some("keep") => NameMode::Keep,
         Some(other) => return Err((INVALID_PARAMS, format!("unknown names {other}"))),
     };
+    let durable = match params.get("durable") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_bool()
+                .ok_or((INVALID_PARAMS, "durable must be a boolean".to_owned()))?,
+        ),
+    };
     Ok(Request {
         into,
         items,
         names,
         record: None,
+        durable,
     })
+}
+
+/// `choices: {"<path in the folder>": "keepBoth"|"replace"|"skip"}` and `otherwise`.
+fn merge_plan(item: &Value) -> Result<MergePlan, (i64, String)> {
+    let clash = |value: &Value| match value.as_str() {
+        Some("keepBoth") => Ok(Clash::KeepBoth),
+        Some("replace") => Ok(Clash::Replace),
+        Some("skip") => Ok(Clash::Skip),
+        _ => Err((INVALID_PARAMS, format!("unknown clash choice {value}"))),
+    };
+    let choices = match item.get("choices") {
+        None => Default::default(),
+        Some(Value::Object(choices)) => choices
+            .iter()
+            .map(|(path, choice)| Ok((PathBuf::from(path), clash(choice)?)))
+            .collect::<Result<_, (i64, String)>>()?,
+        Some(_) => return Err((INVALID_PARAMS, "choices must be an object".to_owned())),
+    };
+    let otherwise = match item.get("otherwise") {
+        None => Clash::KeepBoth,
+        Some(value) => clash(value)?,
+    };
+    Ok(MergePlan { choices, otherwise })
+}
+
+fn clashes_json(source: &std::path::Path, into: &std::path::Path) -> Value {
+    let side = |side: &merge::Side| json!({"isFolder": side.is_folder, "size": side.size, "modified": side.modified});
+    match merge::clashes(source, into) {
+        Ok(clashes) => json!({
+            "source": lossy(source),
+            "clashes": clashes
+                .iter()
+                .map(|clash| json!({
+                    "path": lossy(&clash.path),
+                    "incoming": side(&clash.incoming),
+                    "existing": side(&clash.existing),
+                }))
+                .collect::<Vec<_>>(),
+        }),
+        Err(error) => json!({"source": lossy(source), "error": error_json(&error)}),
+    }
 }
 
 fn capabilities(undo: bool) -> Vec<&'static str> {
@@ -309,6 +394,8 @@ fn capabilities(undo: bool) -> Vec<&'static str> {
         "jobs.move",
         "jobs.replace",
         "jobs.trash",
+        "jobs.merge",
+        "jobs.durable",
         "trash",
     ];
     if undo {
@@ -327,7 +414,7 @@ fn no_history() -> (i64, String) {
 /// What a batch is called in the history when the client names it nothing.
 fn default_label(items: &[Item]) -> String {
     let verb = |action: &Action| match action {
-        Action::Copy(_) => "Copy",
+        Action::Copy(_) | Action::Merge(_) => "Copy",
         Action::Move => "Move",
         Action::Replace => "Replace",
         Action::Trash => "Move to Trash",
@@ -374,6 +461,7 @@ fn special_kind(kind: SpecialKind) -> &'static str {
 
 fn notification(event: Event) -> Value {
     let (method, params) = match event {
+        Event::Queued { job, ahead } => ("job.queued", json!({"job": id(job), "ahead": ahead})),
         Event::Started { job, total } => ("job.started", json!({"job": id(job), "total": total})),
         Event::Progress {
             job,
@@ -417,6 +505,7 @@ fn notification(event: Event) -> Value {
             not_attempted,
             cancelled,
             undo,
+            settled,
         } => {
             let mut params = json!({"job": id(job), "done": done, "failed": failed, "notAttempted": not_attempted, "cancelled": cancelled});
             match undo {
@@ -424,6 +513,13 @@ fn notification(event: Event) -> Value {
                 Err(error) => {
                     params["undo"] = Value::Null;
                     params["undoError"] = error_json(&error);
+                }
+            }
+            params["durable"] = json!(settled.is_some());
+            if let Some(settled) = settled {
+                params["settled"] = json!(settled.is_ok());
+                if let Err(error) = settled {
+                    params["settleError"] = error_json(&error);
                 }
             }
             ("job.finished", params)

@@ -420,3 +420,81 @@ fn a_batch_is_filed_for_undo_and_undone_and_redone_over_the_wire() {
     assert_eq!(shutdown["result"], Value::Null);
     assert!(backend.child.wait().unwrap().success());
 }
+
+#[test]
+fn a_merge_is_planned_from_its_clashes_and_done_as_planned() {
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    backend.call("initialize", json!({}), &mut notes);
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    for (path, content) in [
+        ("source/photos/a.jpg", "new a"),
+        ("source/photos/b.jpg", "new b"),
+        ("source/photos/c.jpg", "new c"),
+        ("dest/photos/a.jpg", "old a"),
+        ("dest/photos/b.jpg", "old b"),
+        ("dest/photos/c.jpg", "old c"),
+    ] {
+        let path = root.path().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+    let (source, dest) = (root.path().join("source/photos"), root.path().join("dest"));
+
+    let clashes = backend.call(
+        "jobs.clashes",
+        json!({"into": dest, "sources": [source]}),
+        &mut notes,
+    );
+    let paths: Vec<&str> = clashes["result"]["items"][0]["clashes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|clash| clash["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["a.jpg", "b.jpg", "c.jpg"], "{clashes}");
+
+    let start = backend.call(
+        "jobs.start",
+        json!({"into": dest, "durable": true, "items": [{
+            "source": source,
+            "action": "merge",
+            "choices": {"a.jpg": "replace", "b.jpg": "skip"},
+            "otherwise": "keepBoth",
+        }]}),
+        &mut notes,
+    );
+    let job = start["result"]["job"].clone();
+    backend.until(&mut notes, |n| {
+        n["method"] == "job.finished" && n["params"]["job"] == job
+    });
+    let finished = notes
+        .iter()
+        .find(|n| n["method"] == "job.finished" && n["params"]["job"] == job)
+        .unwrap();
+    assert_eq!(finished["params"]["done"], 1, "{finished}");
+    assert_eq!(finished["params"]["durable"], true);
+    assert_eq!(finished["params"]["settled"], true, "{finished}");
+    let read = |name: &str| fs::read_to_string(dest.join("photos").join(name)).unwrap();
+    assert_eq!(read("a.jpg"), "new a");
+    assert_eq!(read("b.jpg"), "old b");
+    assert_eq!(read("c.jpg"), "old c");
+    assert_eq!(read("c (1).jpg"), "new c");
+
+    let bad = backend.call(
+        "jobs.start",
+        json!({"into": dest, "items": [{"source": source, "action": "merge", "otherwise": "shred"}]}),
+        &mut notes,
+    );
+    assert_eq!(bad["error"]["code"], -32602, "{bad}");
+
+    let undone = backend.call("undo.undo", json!({}), &mut notes);
+    assert_eq!(undone["result"]["done"], 2, "{undone}");
+    assert_eq!(read("a.jpg"), "old a");
+    assert!(!dest.join("photos/c (1).jpg").exists());
+
+    // The merge's replaced original went to the test home's Trash and came back; nothing is left there.
+    let shutdown = backend.call("shutdown", json!({}), &mut notes);
+    assert_eq!(shutdown["result"], Value::Null);
+    assert!(backend.child.wait().unwrap().success());
+}
