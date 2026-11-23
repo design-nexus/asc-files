@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! Spike: the legacy Nyx Files copy/move engine, built with no GLib dependency.
+//! The Files engine: copy, move, replace, Trash, jobs and listings on native paths, with no
+//! GLib, Qt or UI dependency.
 
 rust_i18n::i18n!("locales", fallback = "en");
 
@@ -7,6 +8,7 @@ pub mod adapters;
 pub mod error;
 pub mod i18n;
 pub mod jobs;
+pub mod listing;
 pub mod model;
 pub mod services;
 pub mod trash;

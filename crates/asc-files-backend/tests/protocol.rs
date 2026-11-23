@@ -255,3 +255,100 @@ fn the_protocol_end_to_end() {
     let status = backend.child.wait().unwrap();
     assert!(status.success(), "clean exit: {status}");
 }
+
+#[test]
+fn a_listing_follows_its_folder_and_answers_on_its_own() {
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    backend.call("initialize", json!({}), &mut notes);
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    let folder = root.path().join("watched");
+    fs::create_dir(&folder).unwrap();
+    for name in ["b", "a", ".dot"] {
+        fs::write(folder.join(name), name).unwrap();
+    }
+
+    let open = backend.call(
+        "list.open",
+        json!({"path": folder, "sort": {"key": "name", "descending": true}}),
+        &mut notes,
+    );
+    let result = &open["result"];
+    assert_eq!(
+        (
+            &result["count"],
+            &result["generation"],
+            &result["followsChanges"]
+        ),
+        (&json!(2), &json!(1), &json!(true)),
+        "{open}"
+    );
+    let listing = result["listing"].clone();
+    let names = |backend: &mut Backend, notes: &mut Vec<Value>| -> Vec<String> {
+        let window = backend.call(
+            "list.window",
+            json!({"listing": listing, "start": 0, "count": 50}),
+            notes,
+        );
+        window["result"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(names(&mut backend, &mut notes), ["b", "a"]);
+
+    // Reordering keeps what the request leaves out: still descending, now with hidden names.
+    let reordered = backend.call(
+        "list.reorder",
+        json!({"listing": listing, "showHidden": true}),
+        &mut notes,
+    );
+    assert_eq!(reordered["result"]["generation"], 2, "{reordered}");
+    assert_eq!(names(&mut backend, &mut notes), ["b", "a", ".dot"]);
+    let bad = backend.call(
+        "list.reorder",
+        json!({"listing": listing, "sort": {"key": "colour"}}),
+        &mut notes,
+    );
+    assert_eq!(bad["error"]["code"], -32602, "{bad}");
+
+    // An outside change is read again and told as a new generation.
+    fs::write(folder.join("c"), "c").unwrap();
+    backend.until(&mut notes, |n| {
+        n["method"] == "list.changed" && n["params"]["listing"] == listing
+    });
+    let changed = notes
+        .iter()
+        .find(|n| n["method"] == "list.changed")
+        .unwrap();
+    assert_eq!(changed["params"]["count"], 4, "{changed}");
+    assert!(changed["params"]["generation"].as_u64().unwrap() >= 3);
+    assert_eq!(names(&mut backend, &mut notes), ["c", "b", "a", ".dot"]);
+
+    // The folder going sends the view to the nearest folder left.
+    fs::remove_dir_all(&folder).unwrap();
+    backend.until(&mut notes, |n| n["method"] == "list.gone");
+    let gone = notes.iter().find(|n| n["method"] == "list.gone").unwrap();
+    assert_eq!(gone["params"]["nearest"], json!(root.path()), "{gone}");
+
+    let closed = backend.call("list.close", json!({"listing": listing}), &mut notes);
+    assert_eq!(closed["result"], Value::Null);
+    let after = backend.call(
+        "list.window",
+        json!({"listing": listing, "start": 0, "count": 1}),
+        &mut notes,
+    );
+    assert_eq!(after["error"]["code"], -32602, "{after}");
+    let missing = backend.call(
+        "list.open",
+        json!({"path": root.path().join("missing")}),
+        &mut notes,
+    );
+    assert_eq!(missing["error"]["code"], 1, "{missing}");
+
+    let shutdown = backend.call("shutdown", json!({}), &mut notes);
+    assert_eq!(shutdown["result"], Value::Null);
+    assert!(backend.child.wait().unwrap().success());
+}

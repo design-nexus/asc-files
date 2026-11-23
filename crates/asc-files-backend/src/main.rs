@@ -79,10 +79,10 @@ struct Session {
 impl Session {
     fn new(out: Sender<Value>) -> Self {
         Self {
+            listings: listing::Listings::new(out.clone()),
             out,
             initialized: false,
             shutting_down: false,
-            listings: listing::Listings::default(),
             jobs: HashMap::new(),
             forwarders: Vec::new(),
         }
@@ -101,6 +101,16 @@ impl Session {
         let params = message.get("params").cloned().unwrap_or(Value::Null);
         let result = if !self.initialized && method != "initialize" {
             Err((INVALID_REQUEST, "initialize first".to_owned()))
+        } else if method.starts_with("list.") {
+            // A listing answers on its own thread; a request without an id still runs.
+            match self
+                .listings
+                .handle(method, id.clone().unwrap_or(Value::Null), &params)
+            {
+                Ok(None) => return None,
+                Ok(Some(result)) => Ok(result),
+                Err(error) => Err(error),
+            }
         } else {
             self.dispatch(method, &params)
         };
@@ -118,27 +128,8 @@ impl Session {
                 Ok(json!({
                     "protocolVersion": PROTOCOL_VERSION,
                     "server": "asc-files-backend",
-                    "capabilities": ["list", "jobs.copy", "jobs.move", "jobs.replace", "jobs.trash", "trash"],
+                    "capabilities": ["list", "list.watch", "jobs.copy", "jobs.move", "jobs.replace", "jobs.trash", "trash"],
                 }))
-            }
-            "list.open" => {
-                let path = path_param(params, "path")?;
-                let (listing, count) = self.listings.open(&path).map_err(operation_error)?;
-                Ok(json!({"listing": listing, "count": count}))
-            }
-            "list.window" => {
-                let listing = u64_param(params, "listing")?;
-                let start = u64_param(params, "start")? as usize;
-                let count = u64_param(params, "count")? as usize;
-                let rows = self
-                    .listings
-                    .window(listing, start, count)
-                    .ok_or((INVALID_PARAMS, "unknown listing".to_owned()))?;
-                Ok(json!({"listing": listing, "start": start, "rows": rows}))
-            }
-            "list.close" => {
-                self.listings.close(u64_param(params, "listing")?);
-                Ok(Value::Null)
             }
             "jobs.start" => {
                 let request = job_request(params)?;
@@ -196,6 +187,7 @@ impl Session {
 
     /// Stops what is still running and waits until every job has sent its last event.
     fn finish(&mut self) {
+        self.listings.close_all();
         for handle in self.jobs.values() {
             handle.cancel();
         }

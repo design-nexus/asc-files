@@ -10,5 +10,5 @@ backend. The Qt app arrives in Phase B.
 Build: `cargo build --workspace --locked`. Test: `scripts/test.sh`, which uses a private home and XDG dirs and caps
 memory at 4 GB; run tests only through it. Dependency guard: `scripts/check-no-glib.sh`.
 
-Plan and status: `NYX-FILES-2.0-PLAN.md` (Phase A). Provenance: `docs/PROVENANCE.md`. Tests still to port:
+Plan and status: `NYX-FILES-2.0-PLAN.md` (Phase A). Backend protocol: `docs/PROTOCOL.md`. Provenance: `docs/PROVENANCE.md`. Tests still to port:
 `docs/PORTING-LEDGER.md`.
