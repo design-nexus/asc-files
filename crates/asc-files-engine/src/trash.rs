@@ -343,6 +343,18 @@ fn parse_record(bytes: &[u8]) -> Option<(PathBuf, String)> {
 /// The spec's `directorysizes` cache must not keep a line for an entry that left the Trash.
 fn forget_size(entry: &Entry) {
     let cache = entry.trash.join("directorysizes");
+    // Read, changed and replaced under a lock on the Trash folder itself, so two deletes at once
+    // cannot each write back what the other removed. No other file appears in the Trash.
+    let Ok(folder) = rustix::fs::open(
+        &entry.trash,
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    ) else {
+        return;
+    };
+    if rustix::fs::flock(&folder, rustix::fs::FlockOperation::LockExclusive).is_err() {
+        return;
+    }
     let Ok(text) = std::fs::read(&cache) else {
         return;
     };
