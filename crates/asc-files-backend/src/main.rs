@@ -12,9 +12,10 @@ use std::{
 
 use asc_files_engine::{
     error::Error,
-    jobs::{self, Action, Event, Item, JobId, Outcome, Request},
-    ops::{Conflict, NameMode, RenameCause, SpecialKind},
+    jobs::{self, Action, Event, Item, JobId, Outcome, Record, Request},
+    ops::{Cancel, Conflict, NameMode, Progress, RenameCause, SpecialKind},
     trash,
+    undo::{self, Journal},
 };
 use serde_json::{Value, json};
 
@@ -74,6 +75,9 @@ struct Session {
     listings: listing::Listings,
     jobs: HashMap<u64, jobs::Handle>,
     forwarders: Vec<thread::JoinHandle<()>>,
+    /// The session's undo history, shared with every other Files process; None without one.
+    journal: Option<Journal>,
+    undoing: Vec<thread::JoinHandle<()>>,
 }
 
 impl Session {
@@ -85,6 +89,12 @@ impl Session {
             shutting_down: false,
             jobs: HashMap::new(),
             forwarders: Vec::new(),
+            journal: Journal::session()
+                .inspect_err(|error| {
+                    eprintln!("asc-files-backend: no undo history: {}", error.message());
+                })
+                .ok(),
+            undoing: Vec::new(),
         }
     }
 
@@ -101,6 +111,11 @@ impl Session {
         let params = message.get("params").cloned().unwrap_or(Value::Null);
         let result = if !self.initialized && method != "initialize" {
             Err((INVALID_REQUEST, "initialize first".to_owned()))
+        } else if let Some(direction) = method.strip_prefix("undo.").filter(|d| *d != "history") {
+            match self.start_undo(direction, id.clone().unwrap_or(Value::Null)) {
+                Ok(()) => return None,
+                Err(error) => Err(error),
+            }
         } else if method.starts_with("list.") {
             // A listing answers on its own thread; a request without an id still runs.
             match self
@@ -128,11 +143,26 @@ impl Session {
                 Ok(json!({
                     "protocolVersion": PROTOCOL_VERSION,
                     "server": "asc-files-backend",
-                    "capabilities": ["list", "list.watch", "jobs.copy", "jobs.move", "jobs.replace", "jobs.trash", "trash"],
+                    "capabilities": capabilities(self.journal.is_some()),
                 }))
             }
+            "undo.history" => {
+                let journal = self.journal.as_ref().ok_or_else(no_history)?;
+                let history = journal.history().map_err(operation_error)?;
+                let entry = |entry: Option<(u64, String)>| {
+                    entry.map(|(id, label)| json!({"id": id, "label": label}))
+                };
+                Ok(json!({"undo": entry(history.undo), "redo": entry(history.redo)}))
+            }
             "jobs.start" => {
-                let request = job_request(params)?;
+                let mut request = job_request(params)?;
+                request.record = self.journal.clone().map(|journal| Record {
+                    journal,
+                    label: params
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .map_or_else(|| default_label(&request.items), str::to_owned),
+                });
                 let (tx, rx) = mpsc::channel();
                 let handle = jobs::start(request, tx);
                 let job = handle.id.0;
@@ -197,6 +227,38 @@ impl Session {
         for forwarder in self.forwarders.drain(..) {
             let _ = forwarder.join();
         }
+        // An undo in progress finishes: stopping it halfway would leave its entry half done.
+        for undoing in self.undoing.drain(..) {
+            let _ = undoing.join();
+        }
+    }
+
+    /// Runs `undo.undo` or `undo.redo` on a thread of its own; it answers `id` when done.
+    fn start_undo(&mut self, direction: &str, id: Value) -> Result<(), (i64, String)> {
+        let redo = match direction {
+            "undo" => false,
+            "redo" => true,
+            other => return Err((METHOD_NOT_FOUND, format!("unknown method undo.{other}"))),
+        };
+        let journal = self.journal.clone().ok_or_else(no_history)?;
+        let out = self.out.clone();
+        self.undoing.push(thread::spawn(move || {
+            let (cancel, progress) = (Cancel::new(), Progress::new());
+            let outcome = if redo {
+                journal.redo(&cancel, &progress)
+            } else {
+                journal.undo(&cancel, &progress)
+            };
+            let reply = match outcome {
+                Ok(outcome) => json!({"jsonrpc": "2.0", "id": id, "result": undo_json(&outcome)}),
+                Err(error) => {
+                    let (code, message) = operation_error(error);
+                    error_reply(id, code, &message)
+                }
+            };
+            let _ = out.send(reply);
+        }));
+        Ok(())
     }
 }
 
@@ -231,7 +293,65 @@ fn job_request(params: &Value) -> Result<Request, (i64, String)> {
         Some("keep") => NameMode::Keep,
         Some(other) => return Err((INVALID_PARAMS, format!("unknown names {other}"))),
     };
-    Ok(Request { into, items, names })
+    Ok(Request {
+        into,
+        items,
+        names,
+        record: None,
+    })
+}
+
+fn capabilities(undo: bool) -> Vec<&'static str> {
+    let mut capabilities = vec![
+        "list",
+        "list.watch",
+        "jobs.copy",
+        "jobs.move",
+        "jobs.replace",
+        "jobs.trash",
+        "trash",
+    ];
+    if undo {
+        capabilities.push("undo");
+    }
+    capabilities
+}
+
+fn no_history() -> (i64, String) {
+    operation_error(Error::new(
+        asc_files_engine::error::ErrorKind::NotSupported,
+        "There is no undo history in this session",
+    ))
+}
+
+/// What a batch is called in the history when the client names it nothing.
+fn default_label(items: &[Item]) -> String {
+    let verb = |action: &Action| match action {
+        Action::Copy(_) => "Copy",
+        Action::Move => "Move",
+        Action::Replace => "Replace",
+        Action::Trash => "Move to Trash",
+    };
+    let first = items.first().map_or("Operation", |item| verb(&item.action));
+    let same = items.iter().all(|item| verb(&item.action) == first);
+    match (same, items.len()) {
+        (true, 1) => first.to_owned(),
+        (true, n) => format!("{first} {n} items"),
+        (false, n) => format!("{n} operations"),
+    }
+}
+
+fn undo_json(outcome: &undo::Outcome) -> Value {
+    json!({
+        "id": outcome.id,
+        "label": outcome.label,
+        "done": outcome.done,
+        "left": outcome
+            .left
+            .iter()
+            .map(|(path, error)| json!({"path": lossy(path), "error": error_json(error)}))
+            .collect::<Vec<_>>(),
+    })
 }
 
 fn rename_cause(cause: RenameCause) -> &'static str {
@@ -296,10 +416,18 @@ fn notification(event: Event) -> Value {
             failed,
             not_attempted,
             cancelled,
-        } => (
-            "job.finished",
-            json!({"job": id(job), "done": done, "failed": failed, "notAttempted": not_attempted, "cancelled": cancelled}),
-        ),
+            undo,
+        } => {
+            let mut params = json!({"job": id(job), "done": done, "failed": failed, "notAttempted": not_attempted, "cancelled": cancelled});
+            match undo {
+                Ok(entry) => params["undo"] = json!(entry),
+                Err(error) => {
+                    params["undo"] = Value::Null;
+                    params["undoError"] = error_json(&error);
+                }
+            }
+            ("job.finished", params)
+        }
     };
     json!({"jsonrpc": "2.0", "method": method, "params": params})
 }

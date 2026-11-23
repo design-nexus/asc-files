@@ -12,6 +12,7 @@ pub mod listing;
 pub mod model;
 pub mod services;
 pub mod trash;
+pub mod undo;
 pub(crate) mod util;
 
 /// The public operations API.

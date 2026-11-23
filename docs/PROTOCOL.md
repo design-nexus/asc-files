@@ -45,14 +45,34 @@ Notifications:
 
 | Method | Params | Result |
 |---|---|---|
-| `jobs.start` | `into`, `names?: "fix"\|"keep"` (fix), `items: [{source, action: "copy"\|"move"\|"replace"\|"trash", conflict?: "fail"\|"keepBoth"\|"merge"}]` | `{job}` |
+| `jobs.start` | `into`, `names?: "fix"\|"keep"` (fix), `label?` (what undo calls it; default from the actions, e.g. "Move 2 items"), `items: [{source, action: "copy"\|"move"\|"replace"\|"trash", conflict?: "fail"\|"keepBoth"\|"merge"}]` | `{job}` |
 | `jobs.cancel` | `job` | `null` |
 
 `names: "fix"` saves a name the destination drive cannot store under the closest one it can; `"keep"` fails such
 an item instead (meant for undo). Notifications: `job.started {job, total}`, `job.progress {job, item, bytes, files}`,
-`job.itemDone {job, index, outcome}`, `job.finished {job, done, failed, notAttempted, cancelled}`. Every item gets
+`job.itemDone {job, index, outcome}`, `job.finished {job, done, failed, notAttempted, cancelled, undo}`, where `undo` is the batch's history entry, or
+`null` when nothing it did can be undone (with `undoError` if the history could not be written). Every item gets
 exactly one `job.itemDone`; its outcome is `{status: "done", path, renamed: [{requested, savedAs, cause}],
 skipped: [{path, kind}]}`, `{status: "failed", error}` or `{status: "notAttempted"}`.
+
+## Undo
+
+One history per session, shared by every Files process (`$XDG_RUNTIME_DIR/asc-files/undo-journal`), 50 entries deep.
+Every batch is filed when it finishes, even a cancelled or partly failed one. A merge into a folder that was
+already there is done but not filed: undoing it as a whole would trash the folder it merged into.
+
+| Method | Params | Result |
+|---|---|---|
+| `undo.history` | – | `{undo: {id, label} \| null, redo: {id, label} \| null}` |
+| `undo.undo` | – | `{id, label, done, left: [{path, error}]}` |
+| `undo.redo` | – | the same |
+
+Undo reverses the newest entry, newest step first: a copy goes to the Trash (or, on a drive without one, an
+unchanged file is deleted), a move goes back under its old name, a trashed item is restored, and a replace puts
+the original back and the copy in the Trash. A step whose item changed since is left as it is and listed in
+`left`; the rest still run. Redo does the entry again and never replaces what holds a name. Nothing to undo or
+redo is a code-1 error of kind `NotFound`; without a session folder, kind `NotSupported`, and `initialize` does
+not list the `undo` capability.
 
 ## Trash
 

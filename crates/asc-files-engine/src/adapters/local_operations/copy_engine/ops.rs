@@ -64,7 +64,7 @@ impl Progress {
 }
 
 /// What a copy does when the name it wants is taken.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Conflict {
     /// Refuse, leaving what holds the name untouched.
     Fail,
@@ -272,16 +272,28 @@ pub fn move_item(
     cancel: &Cancel,
     progress: &Progress,
 ) -> Result<Moved, Error> {
+    let name = source
+        .file_name()
+        .ok_or_else(|| crate::error::translated_io_error("The item has no name"))?;
+    move_as(source, (into, name), names, cancel, progress)
+}
+
+/// Moves `source` into the folder `into` under `name`, as [`move_item`] does under its own; undo
+/// uses it to give an item back the name it had.
+pub fn move_as(
+    source: &Path,
+    (into, name): (&Path, &OsStr),
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Moved, Error> {
     use super::{Barrier, Published, manifest};
     use crate::adapters::local_operations::{
         fs_ops::Entry,
         placement::{self, PlaceError},
     };
 
-    let name = source
-        .file_name()
-        .ok_or_else(|| crate::error::translated_io_error("The item has no name"))?
-        .to_os_string();
+    let name = name.to_os_string();
     if lands_within(source, into) {
         return Err(placement::place_error(PlaceError::IntoItself));
     }

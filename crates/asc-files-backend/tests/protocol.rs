@@ -13,6 +13,8 @@ use serde_json::{Value, json};
 
 struct Backend {
     child: Child,
+    /// Its own session folder, so tests running side by side keep separate undo histories.
+    _runtime: tempfile::TempDir,
     stdin: ChildStdin,
     lines: mpsc::Receiver<Value>,
     next: u64,
@@ -25,7 +27,9 @@ impl Backend {
             data.contains("asc-files-test-home"),
             "refusing to touch a real Trash: {data}"
         );
+        let runtime = tempfile::tempdir_in(std::env::var("XDG_RUNTIME_DIR").unwrap()).unwrap();
         let mut child = Command::new(env!("CARGO_BIN_EXE_asc-files-backend"))
+            .env("XDG_RUNTIME_DIR", runtime.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -43,6 +47,7 @@ impl Backend {
         });
         Self {
             child,
+            _runtime: runtime,
             stdin,
             lines,
             next: 0,
@@ -347,6 +352,69 @@ fn a_listing_follows_its_folder_and_answers_on_its_own() {
         &mut notes,
     );
     assert_eq!(missing["error"]["code"], 1, "{missing}");
+
+    let shutdown = backend.call("shutdown", json!({}), &mut notes);
+    assert_eq!(shutdown["result"], Value::Null);
+    assert!(backend.child.wait().unwrap().success());
+}
+
+#[test]
+fn a_batch_is_filed_for_undo_and_undone_and_redone_over_the_wire() {
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    let init = backend.call("initialize", json!({}), &mut notes);
+    assert!(
+        init["result"]["capabilities"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("undo")),
+        "{init}"
+    );
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    let (source, dest) = (root.path().join("source"), root.path().join("dest"));
+    fs::create_dir_all(&source).unwrap();
+    fs::create_dir_all(&dest).unwrap();
+    fs::write(source.join("a.txt"), b"a").unwrap();
+    fs::write(source.join("b.txt"), b"b").unwrap();
+
+    let empty = backend.call("undo.undo", json!({}), &mut notes);
+    assert_eq!(empty["error"]["code"], 1, "{empty}");
+
+    let start = backend.call(
+        "jobs.start",
+        json!({"into": dest, "items": [
+            {"source": source.join("a.txt"), "action": "move"},
+            {"source": source.join("b.txt"), "action": "move"},
+        ]}),
+        &mut notes,
+    );
+    let job = start["result"]["job"].clone();
+    backend.until(&mut notes, |n| {
+        n["method"] == "job.finished" && n["params"]["job"] == job
+    });
+    let finished = notes
+        .iter()
+        .find(|n| n["method"] == "job.finished")
+        .unwrap();
+    let entry = finished["params"]["undo"].clone();
+    assert!(entry.is_u64(), "{finished}");
+
+    let history = backend.call("undo.history", json!({}), &mut notes);
+    assert_eq!(
+        history["result"],
+        json!({"undo": {"id": entry, "label": "Move 2 items"}, "redo": null}),
+        "{history}"
+    );
+
+    let undone = backend.call("undo.undo", json!({}), &mut notes);
+    assert_eq!(undone["result"]["done"], 2, "{undone}");
+    assert_eq!(undone["result"]["left"], json!([]));
+    assert!(source.join("a.txt").exists() && source.join("b.txt").exists());
+    assert!(!dest.join("a.txt").exists());
+
+    let redone = backend.call("undo.redo", json!({}), &mut notes);
+    assert_eq!(redone["result"]["done"], 2, "{redone}");
+    assert!(dest.join("a.txt").exists() && !source.join("a.txt").exists());
 
     let shutdown = backend.call("shutdown", json!({}), &mut notes);
     assert_eq!(shutdown["result"], Value::Null);

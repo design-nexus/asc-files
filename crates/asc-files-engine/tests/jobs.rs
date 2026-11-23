@@ -66,6 +66,7 @@ fn replace_in_a_batch_where_only_some_items_clash_places_every_item() {
             into: dest.clone(),
             items,
             names: NameMode::Keep,
+            record: None,
         });
 
         assert!(
@@ -96,6 +97,7 @@ fn a_failed_item_ends_only_itself() {
             .map(|n| item(&source.join(n), Action::Copy(Conflict::Fail)))
             .to_vec(),
         names: NameMode::Keep,
+        record: None,
     });
 
     let outcomes = outcomes(&events);
@@ -145,6 +147,7 @@ fn events_start_once_report_each_item_once_and_finish_last() {
         into: dest,
         items,
         names: NameMode::Keep,
+        record: None,
     });
 
     assert!(matches!(
@@ -197,6 +200,7 @@ fn cancelling_reports_the_rest_as_not_attempted() {
             into: dest.clone(),
             items,
             names: NameMode::Keep,
+            record: None,
         },
         tx,
     );
@@ -276,6 +280,7 @@ fn progress_never_goes_backwards_within_an_item() {
         into: other.path().to_path_buf(),
         items: vec![item(&big, Action::Copy(Conflict::Fail))],
         names: NameMode::Keep,
+        record: None,
     });
 
     let samples: Vec<u64> = events
