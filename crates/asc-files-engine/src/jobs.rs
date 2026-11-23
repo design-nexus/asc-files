@@ -43,6 +43,10 @@ pub enum Action {
     Move,
     /// Move, taking the next free "name (n)" where the name is taken.
     MoveKeepingBoth,
+    /// Move, replacing what holds the name; the original goes to the Trash.
+    MoveReplacing,
+    /// Merge a folder into the one of its name by moving its contents; see [`merge::merge_moving`].
+    MergeMoving(MergePlan),
     /// Copy, replacing what holds the name; the original goes to the Trash.
     Replace,
     Trash,
@@ -371,12 +375,38 @@ fn run_item(
             // A plain merge keeps both where names clash; it goes through the merge planner so
             // what it makes inside the folder can be undone.
             Action::Copy(Conflict::Merge) => merged(
-                source,
+                (source, item.name.as_deref()),
                 into,
                 &MergePlan::default(),
-                (names, cancel, &progress),
+                (names, false, cancel, &progress),
             ),
-            Action::Merge(plan) => merged(source, into, plan, (names, cancel, &progress)),
+            Action::Merge(plan) => merged(
+                (source, item.name.as_deref()),
+                into,
+                plan,
+                (names, false, cancel, &progress),
+            ),
+            Action::MergeMoving(plan) => merged(
+                (source, item.name.as_deref()),
+                into,
+                plan,
+                (names, true, cancel, &progress),
+            ),
+            Action::MoveReplacing => match &item.name {
+                Some(name) => {
+                    ops::move_replacing_as(source, (into, name), names, cancel, &progress)
+                }
+                None => ops::move_replacing(source, into, names, cancel, &progress),
+            }
+            .map(|replaced| {
+                let step = Step::moved_over(source, (into, &replaced));
+                (
+                    into.join(replaced.name),
+                    replaced.changes,
+                    Vec::from_iter(step),
+                )
+            })
+            .map_err(plain),
             &Action::Copy(conflict) => {
                 let copy = |conflict| match &item.name {
                     Some(name) => {
@@ -401,6 +431,9 @@ fn run_item(
                     ops::move_keeping_both(&item.source, into, names, cancel, &progress)
                 };
                 let moved = match (&item.action, &item.name) {
+                    (Action::MoveKeepingBoth, Some(name)) => {
+                        ops::move_keeping_both_as(source, (into, name), names, cancel, &progress)
+                    }
                     (_, Some(name)) => ops::move_as(source, (into, name), names, cancel, &progress),
                     (Action::MoveKeepingBoth, None) => keeping_both(item),
                     _ if aliased_by_an_earlier(item, into, earlier) => {
@@ -420,16 +453,19 @@ fn run_item(
                     })
                     .map_err(plain)
             }
-            Action::Replace => ops::replace(source, into, names, cancel, &progress)
-                .map(|replaced| {
-                    let step = Step::replaced(source, (into, &replaced));
-                    (
-                        into.join(replaced.name),
-                        replaced.changes,
-                        Vec::from_iter(step),
-                    )
-                })
-                .map_err(plain),
+            Action::Replace => match &item.name {
+                Some(name) => ops::replace_as(source, (into, name), names, cancel, &progress),
+                None => ops::replace(source, into, names, cancel, &progress),
+            }
+            .map(|replaced| {
+                let step = Step::replaced(source, (into, &replaced));
+                (
+                    into.join(replaced.name),
+                    replaced.changes,
+                    Vec::from_iter(step),
+                )
+            })
+            .map_err(plain),
             Action::Trash => ops::trash(source)
                 .map(|trashed| {
                     let step = Step::trashed(source, &trashed);
@@ -451,13 +487,18 @@ fn run_item(
 /// otherwise; either way its steps are what it made and replaced.
 #[allow(clippy::type_complexity)]
 fn merged(
-    source: &Path,
+    (source, named): (&Path, Option<&std::ffi::OsStr>),
     into: &Path,
     plan: &MergePlan,
-    (names, cancel, progress): (NameMode, &Cancel, &Progress),
+    (names, moving, cancel, progress): (NameMode, bool, &Cancel, &Progress),
 ) -> Result<(PathBuf, Changes, Vec<Step>), (Error, Vec<Step>)> {
-    let merged = merge::merge(source, into, plan, names, cancel, progress)
-        .map_err(|error| (error, Vec::new()))?;
+    let name = named.or_else(|| source.file_name()).unwrap_or_default();
+    let merged = if moving {
+        merge::merge_moving_as(source, (into, name), plan, names, cancel, progress)
+    } else {
+        merge::merge_as(source, (into, name), plan, names, cancel, progress)
+    }
+    .map_err(|error| (error, Vec::new()))?;
     let steps = Step::merged(&merged);
     if let Some((_, first)) = merged.failed.first() {
         let error = match merged.failed.len() - 1 {

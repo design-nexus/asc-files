@@ -123,6 +123,21 @@ pub enum Step {
         info: PathBuf,
         identity: Identity,
     },
+    /// The item that was at `from` was moved over what was at `to`, which went to the Trash.
+    MovedOver {
+        #[serde(with = "crate::serde_path")]
+        from: PathBuf,
+        #[serde(with = "crate::serde_path")]
+        to: PathBuf,
+        identity: Identity,
+        original: Option<TrashedOriginal>,
+    },
+    /// A folder a merging move emptied was removed; undo makes it again for what moves back.
+    RemovedFolder {
+        #[serde(with = "crate::serde_path")]
+        path: PathBuf,
+        mode: u32,
+    },
     /// A copy of `source` took the place of `target`; what held it went to the Trash.
     Replaced {
         #[serde(with = "crate::serde_path")]
@@ -163,6 +178,19 @@ pub enum Redo {
         #[serde(with = "crate::serde_path")]
         original: PathBuf,
         identity: Identity,
+    },
+    /// `identity` is the item undo put back at `from`, `original` what it put back at `to`.
+    MoveOver {
+        #[serde(with = "crate::serde_path")]
+        from: PathBuf,
+        #[serde(with = "crate::serde_path")]
+        to: PathBuf,
+        identity: Identity,
+        original: Option<Identity>,
+    },
+    RemoveFolder {
+        #[serde(with = "crate::serde_path")]
+        path: PathBuf,
     },
     /// `original` is what undo put back at `target`, or None when it left the name empty.
     Replace {
@@ -235,39 +263,62 @@ impl Step {
         })
     }
 
-    /// The steps of a merge: each item it made and each it replaced, in the order it did them.
-    /// The folder merged into stays, whatever is undone.
+    pub fn moved_over(source: &Path, (into, replaced): (&Path, &ops::Replaced)) -> Option<Self> {
+        let to = into.join(&replaced.name);
+        Some(Self::MovedOver {
+            from: source.to_path_buf(),
+            identity: Identity::of(&to)?,
+            to,
+            original: trashed_original(replaced.original.as_ref())?,
+        })
+    }
+
+    /// The steps of a merge, in the order it took them. The folder merged into stays, whatever
+    /// is undone.
     pub fn merged(merged: &crate::merge::Merged) -> Vec<Self> {
-        let created = merged
-            .created
+        use crate::merge::Did;
+        merged
+            .done
             .iter()
-            .filter_map(|(copy, source, conflict)| {
-                Some(Self::Copied {
+            .filter_map(|did| match did {
+                Did::Copied {
+                    copy,
+                    source,
+                    conflict,
+                } => Some(Self::Copied {
                     source: source.clone(),
                     identity: Identity::of(copy)?,
                     copy: copy.clone(),
                     conflict: *conflict,
-                })
-            });
-        let replaced = merged
-            .replaced
-            .iter()
-            .filter_map(|(target, source, original)| {
-                let original = match original {
-                    Some(trashed) => Some(TrashedOriginal {
-                        info: trashed.info.clone(),
-                        identity: Identity::of(&trashed.file)?,
-                    }),
-                    None => None,
-                };
-                Some(Self::Replaced {
+                }),
+                Did::Replaced {
+                    target,
+                    source,
+                    original,
+                } => Some(Self::Replaced {
                     source: source.clone(),
                     identity: Identity::of(target)?,
                     target: target.clone(),
-                    original,
-                })
-            });
-        created.chain(replaced).collect()
+                    original: trashed_original(original.as_ref())?,
+                }),
+                Did::Moved { from, to, renamed } => Some(Self::Moved {
+                    from: from.clone(),
+                    identity: Identity::of(to)?,
+                    to: to.clone(),
+                    renamed: renamed.clone(),
+                }),
+                Did::MovedOver { from, to, original } => Some(Self::MovedOver {
+                    from: from.clone(),
+                    identity: Identity::of(to)?,
+                    to: to.clone(),
+                    original: trashed_original(original.as_ref())?,
+                }),
+                Did::RemovedFolder { path, mode } => Some(Self::RemovedFolder {
+                    path: path.clone(),
+                    mode: *mode,
+                }),
+            })
+            .collect()
     }
 
     /// The path a user would recognise this step by.
@@ -276,8 +327,23 @@ impl Step {
             Self::Copied { copy, .. } => copy,
             Self::Moved { to, .. } => to,
             Self::Trashed { original, .. } => original,
+            Self::MovedOver { to, .. } => to,
+            Self::RemovedFolder { path, .. } => path,
             Self::Replaced { target, .. } => target,
         }
+    }
+}
+
+/// What undo needs of an original that went to the Trash: None inside means nothing was there;
+/// None outside, that its record could not be read.
+#[allow(clippy::option_option)]
+fn trashed_original(trashed: Option<&trash::Trashed>) -> Option<Option<TrashedOriginal>> {
+    match trashed {
+        None => Some(None),
+        Some(trashed) => Some(Some(TrashedOriginal {
+            info: trashed.info.clone(),
+            identity: Identity::of(&trashed.file)?,
+        })),
     }
 }
 
@@ -287,6 +353,8 @@ impl Redo {
             Self::Copy { source, .. } => source,
             Self::Move { from, .. } => from,
             Self::Trash { original, .. } => original,
+            Self::MoveOver { from, .. } => from,
+            Self::RemoveFolder { path } => path,
             Self::Replace { target, .. } => target,
         }
     }
@@ -665,6 +733,41 @@ fn reverse(
                 Vec::new(),
             ))
         }
+        Step::MovedOver {
+            from,
+            to,
+            identity,
+            original,
+        } => {
+            still(to, identity)?;
+            let original = original
+                .as_ref()
+                .map(|original| trash_entry(&original.info, &original.identity))
+                .transpose()?;
+            let (into, name) = parent_and_name(from)?;
+            ops::move_as(to, (into, name), NameMode::Keep, cancel, progress)?;
+            if let Some(entry) = original {
+                trash::restore(&entry)?;
+            }
+            Ok((
+                Redo::MoveOver {
+                    from: from.clone(),
+                    to: to.clone(),
+                    identity: Identity::of(from).ok_or_else(changed)?,
+                    original: Identity::of(to),
+                },
+                Vec::new(),
+            ))
+        }
+        Step::RemovedFolder { path, mode } => {
+            use std::os::unix::fs::PermissionsExt;
+            if fs::symlink_metadata(path).is_err() {
+                fs::create_dir(path).map_err(crate::error::os_io_error)?;
+                fs::set_permissions(path, fs::Permissions::from_mode(*mode))
+                    .map_err(crate::error::os_io_error)?;
+            }
+            Ok((Redo::RemoveFolder { path: path.clone() }, Vec::new()))
+        }
         Step::Replaced {
             source,
             target,
@@ -789,6 +892,32 @@ fn replay(redo: &Redo, cancel: &Cancel, progress: &Progress) -> Result<Option<St
             still(original, identity)?;
             let trashed = trash::put(original)?;
             Ok(Step::trashed(original, &trashed))
+        }
+        Redo::MoveOver {
+            from,
+            to,
+            identity,
+            original,
+        } => {
+            still(from, identity)?;
+            match (original, Identity::of(to)) {
+                (None, None) => {}
+                (Some(was), Some(now)) if now.same_item(was) => {}
+                _ => return Err(changed()),
+            }
+            let (into, _) = parent_and_name(to)?;
+            let replaced = ops::move_replacing(from, into, NameMode::Fix, cancel, progress)?;
+            Ok(Step::moved_over(from, (into, &replaced)))
+        }
+        // An emptied folder goes again only while it is still empty.
+        Redo::RemoveFolder { path } => {
+            let mode = fs::symlink_metadata(path).map_err(crate::error::os_io_error)?;
+            fs::remove_dir(path).map_err(crate::error::os_io_error)?;
+            use std::os::unix::fs::PermissionsExt;
+            Ok(Some(Step::RemovedFolder {
+                path: path.clone(),
+                mode: mode.permissions().mode() & 0o7777,
+            }))
         }
         Redo::Replace {
             source,

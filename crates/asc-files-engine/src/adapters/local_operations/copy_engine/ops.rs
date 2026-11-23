@@ -29,6 +29,11 @@ impl Cancel {
         Self::default()
     }
 
+    /// A cancel that reads `flag`, which the caller may set.
+    pub(crate) fn sharing(flag: Arc<AtomicBool>) -> Self {
+        Self(flag)
+    }
+
     pub fn cancel(&self) {
         self.0.store(true, Ordering::Release);
     }
@@ -188,6 +193,35 @@ pub fn copy(
     copy_as(source, (into, name), conflict, names, cancel, progress)
 }
 
+/// A name given for an item must be one plain name: not empty, `.` or `..`, and without `/`.
+fn plain_name(name: &OsStr) -> Result<(), Error> {
+    use std::os::unix::ffi::OsStrExt;
+    let bytes = name.as_bytes();
+    if bytes.is_empty()
+        || bytes == b"."
+        || bytes == b".."
+        || bytes.contains(&b'/')
+        || bytes.contains(&0)
+    {
+        return Err(crate::error::Error::new(
+            crate::error::ErrorKind::InvalidFilename,
+            &crate::i18n::tr("A name must be a single name, not a path"),
+        ));
+    }
+    Ok(())
+}
+
+/// Whether two paths name the same item, by device and inode, without following a link.
+fn same_item(one: &Path, other: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let identity = |path: &Path| {
+        std::fs::symlink_metadata(path)
+            .ok()
+            .map(|meta| (meta.dev(), meta.ino()))
+    };
+    identity(one).is_some_and(|one| identity(other) == Some(one))
+}
+
 /// Whether `into` is the folder `source` is in, by identity, so another spelling of the same
 /// folder counts.
 fn in_its_own_folder(source: &Path, into: &Path) -> bool {
@@ -213,6 +247,7 @@ pub fn copy_as(
     cancel: &Cancel,
     progress: &Progress,
 ) -> Result<Copied, Error> {
+    plain_name(name)?;
     if lands_within(source, into) {
         return Err(crate::adapters::local_operations::placement::place_error(
             crate::adapters::local_operations::placement::PlaceError::IntoItself,
@@ -326,11 +361,22 @@ pub fn move_keeping_both(
     let name = source
         .file_name()
         .ok_or_else(|| crate::error::translated_io_error("The item has no name"))?;
+    move_keeping_both_as(source, (into, name), names, cancel, progress)
+}
+
+/// Moves `source` into `into` as `name`, or the next free "name (n)" where that is taken.
+pub fn move_keeping_both_as(
+    source: &Path,
+    (into, name): (&Path, &OsStr),
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Moved, Error> {
     match move_as(source, (into, name), names, cancel, progress) {
         Err(error) if error.kind() == crate::error::ErrorKind::Exists => {}
         moved => return moved,
     }
-    move_numbered(source, into, names, cancel, progress)
+    move_numbered_as(source, (into, name), names, cancel, progress)
 }
 
 /// Moves `source` into the folder `into` under the first free "name (n)", where its own name is
@@ -342,10 +388,21 @@ pub fn move_numbered(
     cancel: &Cancel,
     progress: &Progress,
 ) -> Result<Moved, Error> {
-    use crate::adapters::local_operations::{mount_profile, names::numbered_names};
     let name = source
         .file_name()
         .ok_or_else(|| crate::error::translated_io_error("The item has no name"))?;
+    move_numbered_as(source, (into, name), names, cancel, progress)
+}
+
+/// Moves `source` into `into` under the first free "name (n)" after `name`.
+pub fn move_numbered_as(
+    source: &Path,
+    (into, name): (&Path, &OsStr),
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Moved, Error> {
+    use crate::adapters::local_operations::{mount_profile, names::numbered_names};
     let exists = |error: &Error| error.kind() == crate::error::ErrorKind::Exists;
     let folder = crate::adapters::local_operations::native_fs::open_local_parent_directory(into)
         .map_err(crate::error::io_error)?;
@@ -376,7 +433,18 @@ pub fn move_as(
         placement::{self, PlaceError},
     };
 
+    plain_name(name)?;
     let name = name.to_os_string();
+    // Moving an item to where it already is changes nothing, as cutting and pasting in one folder.
+    if same_item(source, &into.join(&name)) && source.file_name() == Some(name.as_os_str()) {
+        return Ok(Moved {
+            name,
+            copied: false,
+            kept: Vec::new(),
+            changes: Changes::default(),
+            progress: progress.snapshot(),
+        });
+    }
     if lands_within(source, into) {
         return Err(placement::place_error(PlaceError::IntoItself));
     }
@@ -386,12 +454,26 @@ pub fn move_as(
         .stat(Entry::new(&*source_parent, &source_name), false)
         .map_err(crate::error::os_io_error)?
         .identity;
-    match placement::place(
+    let from = Entry::new(&*source_parent, &source_name);
+    // An SMB folder is refused while a file below it waits for the client's deferred close; the
+    // rename is tried again until that closes.
+    let placed = crate::adapters::local_operations::deferred_close::retry_folder_rename(
         fs(),
-        Entry::new(&*source_parent, &source_name),
-        Entry::new(&*target_parent, &target_name),
-        Some(expected),
-    ) {
+        from,
+        &Deadline::default(),
+        &|| cancel.is_cancelled(),
+        |error: &PlaceError| matches!(error, PlaceError::Io(rustix::io::Errno::ACCESS)),
+        || {
+            placement::place(
+                fs(),
+                from,
+                Entry::new(&*target_parent, &target_name),
+                Some(expected),
+            )
+        },
+    )
+    .map_err(|_| crate::error::cancelled())?;
+    match placed {
         Ok(_) => {
             return Ok(Moved {
                 name: target_name,
@@ -402,6 +484,26 @@ pub fn move_as(
             });
         }
         Err(PlaceError::CrossDevice) => {}
+        Err(PlaceError::Io(errno)) => {
+            return Err(
+                match crate::adapters::local_operations::holders::refused_rename(fs(), from, errno)
+                {
+                    // A rename in place says why; a move to another folder says what it moved.
+                    Some(why) if in_its_own_folder(source, into) => {
+                        crate::error::Error::new(crate::error::ErrorKind::Busy, &why)
+                    }
+                    Some(why) => crate::error::Error::new(
+                        crate::error::ErrorKind::Busy,
+                        &rust_i18n::t!(
+                            "Could not move %{name}: %{error}",
+                            name = source_name.to_string_lossy(),
+                            error = why
+                        ),
+                    ),
+                    None => placement::place_error(PlaceError::Io(errno)),
+                },
+            );
+        }
         Err(error) => return Err(placement::place_error(error)),
     }
 
@@ -485,6 +587,117 @@ pub fn trash(item: &Path) -> Result<Trashed, Error> {
     crate::trash::put(item)
 }
 
+/// Moves `source` into `into`, replacing the item that holds its name; the original goes to the
+/// Trash, recorded under its own path.
+///
+/// On one filesystem the moved item and the original trade names in one step
+/// (`RENAME_EXCHANGE`), and the original then goes to the Trash; if the Trash refuses, they
+/// trade back. Elsewhere the original goes to the Trash first and the item is then moved in; if
+/// that move fails, the original is restored, and if even that fails, the error says it is in
+/// the Trash. An item moved onto itself stays as it is.
+pub fn move_replacing(
+    source: &Path,
+    into: &Path,
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Replaced, Error> {
+    let name = source
+        .file_name()
+        .ok_or_else(|| crate::error::translated_io_error("The item has no name"))?;
+    move_replacing_as(source, (into, name), names, cancel, progress)
+}
+
+/// Moves `source` into `into` over the item called `name`, as [`move_replacing`] does over the
+/// one of its own name.
+pub fn move_replacing_as(
+    source: &Path,
+    (into, name): (&Path, &OsStr),
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Replaced, Error> {
+    use crate::adapters::local_operations::{fs_ops::Entry, placement};
+    plain_name(name)?;
+    let name = name.to_os_string();
+    let target = into.join(&name);
+    if same_item(source, &target) {
+        return Ok(Replaced {
+            name,
+            original: None,
+            changes: Changes::default(),
+            progress: progress.snapshot(),
+        });
+    }
+    if lands_within(source, into) {
+        return Err(placement::place_error(placement::PlaceError::IntoItself));
+    }
+    if std::fs::symlink_metadata(&target).is_err() {
+        let moved = move_as(source, (into, &name), names, cancel, progress)?;
+        return Ok(Replaced {
+            name: moved.name,
+            original: None,
+            changes: moved.changes,
+            progress: moved.progress,
+        });
+    }
+    let (source_parent, source_name) = split(source)?;
+    let (target_parent, target_name) = split(&target)?;
+    let one_filesystem =
+        crate::drives::device(source.parent().unwrap_or(source)) == crate::drives::device(into);
+    if one_filesystem
+        && placement::exchange_allowed(fs(), target_parent.as_fd())
+        && placement::exchange(
+            fs(),
+            Entry::new(&*source_parent, &source_name),
+            Entry::new(&*target_parent, &target_name),
+        )
+        .is_ok_and(|swapped| swapped)
+    {
+        // The original now sits where the moved item was.
+        return match crate::trash::put_recording(source, Some(&target)) {
+            Ok(trashed) => Ok(Replaced {
+                name,
+                original: Some(trashed),
+                changes: Changes::default(),
+                progress: progress.snapshot(),
+            }),
+            Err(error) => {
+                let _ = placement::exchange(
+                    fs(),
+                    Entry::new(&*source_parent, &source_name),
+                    Entry::new(&*target_parent, &target_name),
+                );
+                Err(error)
+            }
+        };
+    }
+    let original = crate::trash::put(&target)?;
+    match move_as(source, (into, &name), names, cancel, progress) {
+        Ok(moved) => Ok(Replaced {
+            name: moved.name,
+            original: Some(original),
+            changes: moved.changes,
+            progress: moved.progress,
+        }),
+        Err(error) => {
+            let restored = crate::trash::list()
+                .into_iter()
+                .find(|entry| entry.info == original.info)
+                .map(|entry| crate::trash::restore(&entry));
+            Err(match restored {
+                Some(Ok(_)) => error,
+                _ => crate::error::after_cleanup(
+                    error,
+                    Err(crate::error::translated_io_error(
+                        "The item it was to replace is in the Trash",
+                    )),
+                ),
+            })
+        }
+    }
+}
+
 /// A finished replace.
 #[derive(Debug)]
 pub struct Replaced {
@@ -514,6 +727,21 @@ pub fn replace(
     cancel: &Cancel,
     progress: &Progress,
 ) -> Result<Replaced, Error> {
+    let name = source
+        .file_name()
+        .ok_or_else(|| crate::error::translated_io_error("The item has no name"))?;
+    replace_as(source, (into, name), names, cancel, progress)
+}
+
+/// Copies `source` into `into` over the item called `name`, as [`replace`] does over the one of
+/// its own name: the name a conflict prompt showed, say.
+pub fn replace_as(
+    source: &Path,
+    (into, name): (&Path, &OsStr),
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Replaced, Error> {
     use crate::{
         adapters::local_operations::{
             fs_ops::Entry,
@@ -523,18 +751,31 @@ pub fn replace(
         model::hidden_names::HiddenName,
     };
 
-    let name = source
-        .file_name()
-        .ok_or_else(|| crate::error::translated_io_error("The item has no name"))?
-        .to_os_string();
+    plain_name(name)?;
+    let name = name.to_os_string();
     if lands_within(source, into) {
         return Err(placement::place_error(PlaceError::IntoItself));
+    }
+    if same_item(source, &into.join(&name)) {
+        return Ok(Replaced {
+            name,
+            original: None,
+            changes: Changes::default(),
+            progress: progress.snapshot(),
+        });
     }
     let (parent, target) = split(&into.join(&name))?;
     let found = match fs().stat(Entry::new(&*parent, &target), false) {
         Ok(stat) => stat,
         Err(rustix::io::Errno::NOENT) => {
-            let copied = copy(source, into, Conflict::Fail, names, cancel, progress)?;
+            let copied = copy_as(
+                source,
+                (into, &name),
+                Conflict::Fail,
+                names,
+                cancel,
+                progress,
+            )?;
             return Ok(Replaced {
                 name: copied.name,
                 original: None,

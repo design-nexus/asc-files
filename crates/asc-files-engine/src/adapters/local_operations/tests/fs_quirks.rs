@@ -2614,6 +2614,23 @@ impl FsOps for Scoped {
         }
     }
 
+    /// The item's own drive may refuse, as legacy's GIO trash did; the move itself is real, as
+    /// the Trash it goes to lies outside any simulated drive.
+    fn trash(&self, from: Entry<'_>, to: Entry<'_>) -> Result<(), Errno> {
+        assert_off_main_thread();
+        match scope_for(from.dir) {
+            Some(scope) => scope.run(Op::Trash, &[from.name], |scope| {
+                if let Some(folder) = path_of(from.dir).map(|dir| dir.join(from.name))
+                    && scope.refuses_folder_rename(&folder)
+                {
+                    return Err(Errno::ACCESS);
+                }
+                System.rename(from, to, RenameFlags::NOREPLACE)
+            }),
+            None => System.rename(from, to, RenameFlags::NOREPLACE),
+        }
+    }
+
     fn link(&self, from: Entry<'_>, to: Entry<'_>) -> Result<(), Errno> {
         assert_off_main_thread();
         let source = scope_for(from.dir);

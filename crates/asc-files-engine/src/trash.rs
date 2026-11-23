@@ -146,7 +146,7 @@ pub(crate) fn put_recording(item: &Path, original: Option<&Path>) -> Result<Tras
             return Err(os_io_error(error));
         }
         let file_path = files.join(&stored);
-        match rename_noreplace(&item, &file_path) {
+        match move_in(&item, &file_path) {
             Ok(()) => {
                 return Ok(Trashed {
                     file: file_path,
@@ -158,7 +158,7 @@ pub(crate) fn put_recording(item: &Path, original: Option<&Path>) -> Result<Tras
             }
             Err(error) => {
                 let _ = std::fs::remove_file(&info_path);
-                return Err(os_io_error(error));
+                return Err(refused(&item, error));
             }
         }
     }
@@ -208,7 +208,7 @@ pub fn restore(entry: &Entry) -> Result<PathBuf, Error> {
             &crate::i18n::tr("The folder this item came from no longer exists"),
         ));
     }
-    match rename_noreplace(&entry.file, &entry.original) {
+    match move_out(&entry.file, &entry.original) {
         Ok(()) => {}
         Err(rustix::io::Errno::EXIST) => {
             return Err(Error::new(
@@ -485,7 +485,8 @@ fn topdir_trash(top: &Path, create: bool) -> Option<PathBuf> {
     private(&top.join(format!(".Trash-{uid}")), create)
 }
 
-fn rename_noreplace(from: &Path, to: &Path) -> Result<(), rustix::io::Errno> {
+/// Out of a Trash, never over what holds the name.
+fn move_out(from: &Path, to: &Path) -> Result<(), rustix::io::Errno> {
     rustix::fs::renameat_with(
         rustix::fs::CWD,
         from,
@@ -493,6 +494,56 @@ fn rename_noreplace(from: &Path, to: &Path) -> Result<(), rustix::io::Errno> {
         to,
         rustix::fs::RenameFlags::NOREPLACE,
     )
+}
+
+/// Into a Trash, through the engine's filesystem. An SMB folder refused while a file below it
+/// waits for the client's deferred close is tried again until that closes.
+fn move_in(from: &Path, to: &Path) -> Result<(), rustix::io::Errno> {
+    use rustix::io::Errno;
+
+    use crate::adapters::local_operations::{
+        deferred_close,
+        fs_ops::{Entry, fs},
+        leftovers::Deadline,
+        native_fs::open_local_parent_directory,
+    };
+    let (Some(from_dir), Some(from_name), Some(to_dir), Some(to_name)) =
+        (from.parent(), from.file_name(), to.parent(), to.file_name())
+    else {
+        return Err(Errno::INVAL);
+    };
+    let from_dir = open_local_parent_directory(from_dir).map_err(|_| Errno::NOENT)?;
+    let to_dir = open_local_parent_directory(to_dir).map_err(|_| Errno::NOENT)?;
+    let moving = Entry::new(&from_dir, from_name);
+    deferred_close::retry_folder_rename(
+        fs(),
+        moving,
+        &Deadline::default(),
+        &|| false,
+        |error: &Errno| *error == Errno::ACCESS,
+        || fs().trash(moving, Entry::new(&to_dir, to_name)),
+    )
+    .unwrap_or(Err(Errno::INTR))
+}
+
+/// Why `item` could not go to the Trash: on SMB, a file still open elsewhere is said so.
+fn refused(item: &Path, error: rustix::io::Errno) -> Error {
+    use crate::adapters::local_operations::{
+        fs_ops::{Entry, fs},
+        holders::refused_rename,
+        native_fs::open_local_parent_directory,
+    };
+    let why = item
+        .parent()
+        .zip(item.file_name())
+        .and_then(|(parent, name)| {
+            let dir = open_local_parent_directory(parent).ok()?;
+            refused_rename(fs(), Entry::new(&dir, name), error)
+        });
+    match why {
+        Some(why) => Error::new(ErrorKind::Busy, &why),
+        None => os_io_error(error),
+    }
 }
 
 fn unsupported(message: &str) -> Error {

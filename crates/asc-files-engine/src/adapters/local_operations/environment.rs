@@ -20,7 +20,7 @@ use std::{
     path::Path,
 };
 
-pub(super) trait FsEnvironment: Send + Sync {
+pub(crate) trait FsEnvironment: Send + Sync {
     fn mount_type(&self, fd: BorrowedFd<'_>) -> Option<(MountType, MountSite)>;
     fn folder_mount(&self, path: &Path, id: Option<u64>) -> Option<(u64, MountType)>;
     fn current_mount_type(&self, fd: BorrowedFd<'_>) -> Option<MountType>;

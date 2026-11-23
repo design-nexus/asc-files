@@ -65,9 +65,9 @@ pub(super) fn closing(closetimeo: Duration) -> Duration {
     closetimeo.saturating_add(MARGIN).min(LIMIT)
 }
 
-pub(super) struct WaitCancelled;
+pub(crate) struct WaitCancelled;
 
-pub(super) fn retry_folder_rename<T, E>(
+pub(crate) fn retry_folder_rename<T, E>(
     fs: &dyn FsOps,
     folder: Entry<'_>,
     deadline: &Deadline,

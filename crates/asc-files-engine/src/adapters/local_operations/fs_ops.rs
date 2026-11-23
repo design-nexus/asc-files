@@ -57,13 +57,13 @@ pub(super) struct FsStat {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct Entry<'a> {
+pub(crate) struct Entry<'a> {
     pub dir: BorrowedFd<'a>,
     pub name: &'a OsStr,
 }
 
 impl<'a> Entry<'a> {
-    pub(super) fn new(dir: &'a impl AsFd, name: &'a OsStr) -> Self {
+    pub(crate) fn new(dir: &'a impl AsFd, name: &'a OsStr) -> Self {
         Self {
             dir: dir.as_fd(),
             name,
@@ -113,7 +113,7 @@ impl EntryStat {
     }
 }
 
-pub(super) trait FsOps: super::environment::FsEnvironment {
+pub(crate) trait FsOps: super::environment::FsEnvironment {
     // Not asserted off the main thread: restore opens descriptors before dispatching to a worker.
     fn open_at(
         &self,
@@ -126,6 +126,11 @@ pub(super) trait FsOps: super::environment::FsEnvironment {
     fn dup(&self, fd: BorrowedFd<'_>) -> Result<OwnedFd, Errno>;
     fn stat_vfs(&self, fd: BorrowedFd<'_>) -> Result<rustix::fs::StatVfs, Errno>;
     fn rename(&self, from: Entry<'_>, to: Entry<'_>, flags: RenameFlags) -> Result<(), Errno>;
+    /// Moves `from` into a Trash folder, never over anything there. A rename on the real
+    /// filesystem; the seam lets a test refuse it as a drive would.
+    fn trash(&self, from: Entry<'_>, to: Entry<'_>) -> Result<(), Errno> {
+        self.rename(from, to, RenameFlags::NOREPLACE)
+    }
     fn link(&self, from: Entry<'_>, to: Entry<'_>) -> Result<(), Errno>;
     fn unlink(&self, at: Entry<'_>, flags: AtFlags) -> Result<(), Errno>;
     fn mkdir(&self, at: Entry<'_>, mode: Mode) -> Result<(), Errno>;
@@ -216,7 +221,7 @@ pub(super) trait FsOps: super::environment::FsEnvironment {
 
 pub(super) struct System;
 
-pub(super) fn fs() -> &'static dyn FsOps {
+pub(crate) fn fs() -> &'static dyn FsOps {
     #[cfg(test)]
     {
         &super::tests::fs_quirks::SCOPED

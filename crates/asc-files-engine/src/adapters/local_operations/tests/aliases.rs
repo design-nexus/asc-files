@@ -580,7 +580,7 @@ fn an_item_already_at_a_top_level_name_is_never_taken_for_one_the_paste_saved()
             },
         );
 
-        let events = RefCell::new(run_paste(PasteRequest {
+        let events = RefCell::new(run_paste_events(PasteRequest {
             id: OperationRequestId(1530),
             destination: Location::local(&destination),
             items: items

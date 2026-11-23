@@ -88,10 +88,42 @@ pub(crate) fn io_error(error: impl fmt::Display) -> Error {
     Error::new(ErrorKind::Failed, &error.to_string())
 }
 
+/// An error from the system, with the kind its errno names (as GIO's `g_io_error_from_errno`
+/// did for the legacy app), so a client can tell "not found" from "no space" without reading
+/// the sentence.
 pub(crate) fn os_io_error(error: impl Into<std::io::Error>) -> Error {
-    io_error(crate::adapters::local_operations::native_fs::os_error_text(
-        error,
-    ))
+    let error: std::io::Error = error.into();
+    let kind = error.raw_os_error().map_or(ErrorKind::Failed, errno_kind);
+    Error::new(
+        kind,
+        &crate::adapters::local_operations::native_fs::os_error_text(error),
+    )
+}
+
+fn errno_kind(errno: i32) -> ErrorKind {
+    use rustix::io::Errno;
+    match Errno::from_raw_os_error(errno) {
+        Errno::NOENT => ErrorKind::NotFound,
+        Errno::EXIST => ErrorKind::Exists,
+        Errno::ISDIR => ErrorKind::IsDirectory,
+        Errno::NOTDIR => ErrorKind::NotDirectory,
+        Errno::NOTEMPTY => ErrorKind::NotEmpty,
+        Errno::NAMETOOLONG => ErrorKind::FilenameTooLong,
+        Errno::INVAL => ErrorKind::InvalidArgument,
+        Errno::MLINK | Errno::LOOP => ErrorKind::TooManyLinks,
+        Errno::NOSPC | Errno::DQUOT => ErrorKind::NoSpace,
+        Errno::ACCESS | Errno::PERM => ErrorKind::PermissionDenied,
+        Errno::NOTSUP | Errno::NOSYS => ErrorKind::NotSupported,
+        Errno::CANCELED => ErrorKind::Cancelled,
+        Errno::ROFS => ErrorKind::ReadOnly,
+        Errno::TIMEDOUT => ErrorKind::TimedOut,
+        Errno::BUSY | Errno::TXTBSY => ErrorKind::Busy,
+        Errno::AGAIN => ErrorKind::WouldBlock,
+        Errno::MFILE | Errno::NFILE => ErrorKind::TooManyOpenFiles,
+        Errno::PIPE => ErrorKind::BrokenPipe,
+        Errno::NODEV | Errno::NXIO => ErrorKind::NoSuchDevice,
+        _ => ErrorKind::Failed,
+    }
 }
 
 pub(crate) fn translated_io_error(message: &str) -> Error {

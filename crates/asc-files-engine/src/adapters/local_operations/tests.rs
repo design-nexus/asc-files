@@ -45,11 +45,13 @@ use crate::{
 };
 
 mod aliases;
+mod conflicts;
 mod file_copy;
 mod folder_copy;
 pub(crate) mod fs_quirks;
 mod naming;
 mod paths;
+mod placement;
 
 /// Tests that change process-wide state (the clock, the kernel release, mount capabilities)
 /// run one at a time; legacy held the GLib main context for this.
@@ -530,6 +532,21 @@ fn paste_copies(sources: impl IntoIterator<Item = PathBuf>, into: &Path) {
     }
 }
 
+/// What each item of a paste created, from its progress events.
+fn run_paste_collecting_created(
+    request: PasteRequest,
+) -> Result<Vec<Option<Location>>, Box<dyn Error>> {
+    Ok(run_paste(request)
+        .iter()
+        .filter_map(|event| match event {
+            OperationEvent::TransferProgress {
+                created_location, ..
+            } => Some(created_location.clone()),
+            _ => None,
+        })
+        .collect())
+}
+
 fn renamed_beneath(
     target: &Path,
     report: &crate::services::TransferReport,
@@ -556,10 +573,19 @@ fn renamed_beneath(
     renamed
 }
 
-/// Legacy's paste through its provider, run instead as a batch of the engine's jobs and told as
-/// the provider's events. A move with Replace or Merge has no counterpart in jobs yet and stops
-/// the test with a message saying so.
+/// A paste that must succeed, as legacy's `run_paste` asserted.
 fn run_paste(request: PasteRequest) -> Vec<OperationEvent> {
+    let events = run_paste_events(request);
+    assert!(
+        matches!(events.last(), Some(OperationEvent::Pasted { .. })),
+        "{events:?}"
+    );
+    events
+}
+
+/// Legacy's paste through its provider, run instead as a batch of the engine's jobs and told as
+/// the provider's events.
+fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
     use crate::{
         jobs::{self, Action, Event, Item, Outcome, Request},
         merge::{Clash, MergePlan},
@@ -586,9 +612,11 @@ fn run_paste(request: PasteRequest) -> Vec<OperationEvent> {
                 }),
                 (true, TransferConflict::FailIfExists) => Action::Move,
                 (true, TransferConflict::KeepBoth) => Action::MoveKeepingBoth,
-                (true, conflict) => {
-                    panic!("jobs cannot yet move with {conflict:?}; see docs/PORTING-LEDGER.md")
-                }
+                (true, TransferConflict::ReplaceExisting) => Action::MoveReplacing,
+                (true, TransferConflict::Merge) => Action::MergeMoving(MergePlan {
+                    otherwise: Clash::Replace,
+                    ..MergePlan::default()
+                }),
             };
             Item {
                 source: item
@@ -629,7 +657,18 @@ fn run_paste(request: PasteRequest) -> Vec<OperationEvent> {
                             report,
                         });
                     }
-                    if request.move_sources {
+                    events.push(OperationEvent::TransferProgress {
+                        request_id: id,
+                        completed_items: completed.len() + 1,
+                        completed_files: 0,
+                        total_files: None,
+                        current_file: None,
+                        transferred_bytes: bytes,
+                        total_bytes: None,
+                        created_location: Some(Location::local(&name)),
+                    });
+                    // Legacy did not report an item moved to where it already was.
+                    if request.move_sources && items[index].source != name {
                         events.push(OperationEvent::ItemMoved {
                             request_id: id,
                             from: Location::local(&items[index].source),
@@ -762,4 +801,14 @@ fn numbers_at(path: &Path) -> (u64, u64) {
     use std::os::unix::fs::MetadataExt;
     let metadata = fs::symlink_metadata(path).expect("identity");
     (metadata.dev(), metadata.ino())
+}
+
+/// Legacy pumped the main loop until the operation ended; a batch here has ended on return.
+fn wait_for_operation<T: ?Sized>(_events: &T, _ended: impl Fn(&OperationEvent) -> bool) {}
+
+fn drive_until_transfer_settles<T: ?Sized>(_events: &T) {}
+
+/// The kind of error the engine reports for `errno`, as legacy compared against GIO's mapping.
+fn kind_of(errno: rustix::io::Errno) -> ErrorKind {
+    crate::error::os_io_error(io::Error::from_raw_os_error(errno.raw_os_error())).kind()
 }

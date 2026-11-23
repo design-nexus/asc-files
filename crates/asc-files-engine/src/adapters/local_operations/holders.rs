@@ -52,7 +52,7 @@ pub(super) fn held_inside(holder: Option<&Holder>) -> Option<String> {
     })
 }
 
-pub(super) fn refused_rename(fs: &dyn FsOps, from: Entry<'_>, errno: Errno) -> Option<String> {
+pub(crate) fn refused_rename(fs: &dyn FsOps, from: Entry<'_>, errno: Errno) -> Option<String> {
     let (_, capabilities) = known_mount(fs, from.dir);
     capabilities.deferred_close?;
     match errno {

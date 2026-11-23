@@ -314,10 +314,14 @@ fn job_request(params: &Value) -> Result<Request, (i64, String)> {
                         return Err((INVALID_PARAMS, format!("unknown conflict {other}")));
                     }
                 }),
+                Some("merge") if item.get("move").and_then(Value::as_bool) == Some(true) => {
+                    Action::MergeMoving(merge_plan(item)?)
+                }
                 Some("merge") => Action::Merge(merge_plan(item)?),
                 Some("move") => match item.get("conflict").and_then(Value::as_str) {
                     None | Some("fail") => Action::Move,
                     Some("keepBoth") => Action::MoveKeepingBoth,
+                    Some("replace") => Action::MoveReplacing,
                     Some(other) => {
                         return Err((
                             INVALID_PARAMS,
@@ -436,7 +440,9 @@ fn no_history() -> (i64, String) {
 fn default_label(items: &[Item]) -> String {
     let verb = |action: &Action| match action {
         Action::Copy(_) | Action::Merge(_) => "Copy",
-        Action::Move | Action::MoveKeepingBoth => "Move",
+        Action::Move | Action::MoveKeepingBoth | Action::MoveReplacing | Action::MergeMoving(_) => {
+            "Move"
+        }
         Action::Replace => "Replace",
         Action::Trash => "Move to Trash",
     };

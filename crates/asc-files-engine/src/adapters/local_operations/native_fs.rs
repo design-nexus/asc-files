@@ -322,7 +322,7 @@ pub(super) fn local_directory_children<Fd: AsFd>(handle: &Fd) -> Result<Vec<OsSt
 }
 
 /// Resolve ordinary parent aliases from `/`; descendants keep their separate no-follow policy.
-pub(super) fn open_local_parent_directory(parent_path: &Path) -> Result<OwnedFd, String> {
+pub(crate) fn open_local_parent_directory(parent_path: &Path) -> Result<OwnedFd, String> {
     if !parent_path.is_absolute() {
         return Err(crate::i18n::tr(
             "A local operation target must use an absolute path",

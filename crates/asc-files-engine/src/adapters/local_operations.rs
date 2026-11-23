@@ -64,6 +64,9 @@ pub(super) fn placement_error_kind(error: PlaceError) -> crate::error::ErrorKind
     match error {
         PlaceError::Exists => crate::error::ErrorKind::Exists,
         PlaceError::InvalidName => crate::error::ErrorKind::InvalidFilename,
-        _ => crate::error::ErrorKind::Failed,
+        PlaceError::IntoItself => crate::error::ErrorKind::InvalidArgument,
+        PlaceError::Unsupported | PlaceError::CrossDevice => crate::error::ErrorKind::NotSupported,
+        PlaceError::Io(errno) => crate::error::os_io_error(errno).kind(),
+        PlaceError::Changed | PlaceError::Unconfirmed => crate::error::ErrorKind::Failed,
     }
 }

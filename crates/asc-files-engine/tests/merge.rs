@@ -142,8 +142,8 @@ fn a_plan_replaces_skips_and_keeps_both_as_it_says() {
         fixture.read("dest/photos/only-mine.jpg"),
         "old only-mine.jpg"
     );
-    assert_eq!(merged.replaced.len(), 1);
-    assert_eq!(merged.created.len(), 3, "b (1), only-new and new-folder");
+    assert_eq!(merged.replaced(), 1);
+    assert_eq!(merged.created(), 3, "b (1), only-new and new-folder");
 }
 
 #[test]
@@ -170,7 +170,7 @@ fn a_merge_with_no_folder_to_merge_into_is_a_copy_and_into_a_file_is_refused() {
         &Progress::new(),
     )
     .unwrap();
-    assert_eq!(merged.created.len(), 1);
+    assert_eq!(merged.created(), 1);
     assert!(fixture.path("empty/photos/2024/c.jpg").exists());
 
     fs::create_dir(fixture.path("file-dest")).unwrap();

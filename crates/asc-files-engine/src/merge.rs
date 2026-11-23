@@ -82,16 +82,44 @@ impl Side {
     }
 }
 
+/// One thing a merge did, in the order it did them. Paths are absolute.
+#[derive(Debug)]
+pub enum Did {
+    /// A whole new file or folder copied in from `source`.
+    Copied {
+        copy: PathBuf,
+        source: PathBuf,
+        conflict: Conflict,
+    },
+    /// A copy of `source` took the place of what was at `target`.
+    Replaced {
+        target: PathBuf,
+        source: PathBuf,
+        original: Option<Trashed>,
+    },
+    /// The item at `from` was moved to `to`; `renamed` as [`ops::Changes`] reports it, relative to
+    /// `to`'s folder.
+    Moved {
+        from: PathBuf,
+        to: PathBuf,
+        renamed: Vec<(PathBuf, PathBuf)>,
+    },
+    /// The item at `from` was moved over what was at `to`.
+    MovedOver {
+        from: PathBuf,
+        to: PathBuf,
+        original: Option<Trashed>,
+    },
+    /// A source folder a merging move emptied was removed.
+    RemovedFolder { path: PathBuf, mode: u32 },
+}
+
 /// A finished merge. Paths are absolute unless said otherwise.
 #[derive(Debug, Default)]
 pub struct Merged {
     /// The merged folder's name inside the destination.
     pub name: OsString,
-    /// Items the merge made, each a whole new file or folder, with the incoming item each came from.
-    pub created: Vec<(PathBuf, PathBuf, Conflict)>,
-    /// Items that took the place of one already there, with the incoming item each came from and
-    /// where the original went.
-    pub replaced: Vec<(PathBuf, PathBuf, Option<Trashed>)>,
+    pub done: Vec<Did>,
     /// Incoming items the plan left out, relative to the merged folder.
     pub left_out: Vec<PathBuf>,
     /// Names the destination could not store, relative to the destination folder.
@@ -101,6 +129,23 @@ pub struct Merged {
     /// Incoming items that failed, the merge going on past each.
     pub failed: Vec<(PathBuf, Error)>,
     pub progress: ProgressSnapshot,
+}
+
+impl Merged {
+    /// Items copied in whole, as opposed to merged into or replacing one.
+    pub fn created(&self) -> usize {
+        self.done
+            .iter()
+            .filter(|did| matches!(did, Did::Copied { .. } | Did::Moved { .. }))
+            .count()
+    }
+
+    pub fn replaced(&self) -> usize {
+        self.done
+            .iter()
+            .filter(|did| matches!(did, Did::Replaced { .. } | Did::MovedOver { .. }))
+            .count()
+    }
 }
 
 /// Merges the folder `source` into the folder of the same name in `into`; where there is none,
@@ -113,8 +158,71 @@ pub fn merge(
     cancel: &Cancel,
     progress: &Progress,
 ) -> Result<Merged, Error> {
-    let name = source
-        .file_name()
+    merging(source, (into, None), plan, (names, false), cancel, progress)
+}
+
+/// Merges `source` into the folder called `name` in `into`, as [`merge`] does into the one of its
+/// own name: the name a conflict prompt showed, say.
+pub fn merge_as(
+    source: &Path,
+    (into, name): (&Path, &std::ffi::OsStr),
+    plan: &MergePlan,
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Merged, Error> {
+    merging(
+        source,
+        (into, Some(name)),
+        plan,
+        (names, false),
+        cancel,
+        progress,
+    )
+}
+
+/// Merges as [`merge`] does, moving instead of copying: each incoming item is moved in (a clash
+/// replaced by moving over it), and each source folder left empty is removed. What the plan left
+/// out stays where it was, and so does any folder still holding it.
+pub fn merge_moving(
+    source: &Path,
+    into: &Path,
+    plan: &MergePlan,
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Merged, Error> {
+    merging(source, (into, None), plan, (names, true), cancel, progress)
+}
+
+pub fn merge_moving_as(
+    source: &Path,
+    (into, name): (&Path, &std::ffi::OsStr),
+    plan: &MergePlan,
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Merged, Error> {
+    merging(
+        source,
+        (into, Some(name)),
+        plan,
+        (names, true),
+        cancel,
+        progress,
+    )
+}
+
+fn merging(
+    source: &Path,
+    (into, named): (&Path, Option<&std::ffi::OsStr>),
+    plan: &MergePlan,
+    (names, moving): (NameMode, bool),
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Merged, Error> {
+    let name = named
+        .or_else(|| source.file_name())
         .ok_or_else(|| translated_io_error("The item has no name"))?
         .to_os_string();
     if ops::lands_within(source, into) {
@@ -130,15 +238,34 @@ pub fn merge(
     };
     match fs::symlink_metadata(&target) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let copied = ops::copy(source, into, Conflict::Fail, names, cancel, progress)?;
-            merged.created.push((
-                into.join(&copied.name),
-                source.to_path_buf(),
-                Conflict::Fail,
-            ));
-            merged.name = copied.name;
-            merged.renamed = copied.changes.renamed;
-            merged.skipped = copied.changes.skipped;
+            let changes = if moving {
+                let moved = ops::move_as(source, (into, &name), names, cancel, progress)?;
+                merged.done.push(Did::Moved {
+                    from: source.to_path_buf(),
+                    to: into.join(&moved.name),
+                    renamed: pairs(&moved.changes),
+                });
+                merged.name = moved.name;
+                moved.changes
+            } else {
+                let copied = ops::copy_as(
+                    source,
+                    (into, &name),
+                    Conflict::Fail,
+                    names,
+                    cancel,
+                    progress,
+                )?;
+                merged.done.push(Did::Copied {
+                    copy: into.join(&copied.name),
+                    source: source.to_path_buf(),
+                    conflict: Conflict::Fail,
+                });
+                merged.name = copied.name;
+                copied.changes
+            };
+            merged.renamed = changes.renamed;
+            merged.skipped = changes.skipped;
         }
         Err(error) => return Err(crate::error::os_io_error(error)),
         Ok(existing)
@@ -150,7 +277,7 @@ pub fn merge(
                 (source, &target),
                 (Path::new(""), into_name),
                 plan,
-                (names, cancel, progress),
+                (names, moving, cancel, progress),
                 &mut merged,
             );
         }
@@ -171,7 +298,7 @@ fn merge_folder(
     (source, target): (&Path, &Path),
     (relative, shown): (&Path, &Path),
     plan: &MergePlan,
-    (names, cancel, progress): (NameMode, &Cancel, &Progress),
+    (names, moving, cancel, progress): (NameMode, bool, &Cancel, &Progress),
     merged: &mut Merged,
 ) {
     let mut entries = match fs::read_dir(source) {
@@ -220,29 +347,57 @@ fn merge_folder(
                     (&incoming, &target.join(&name)),
                     (&relative, &shown.join(&name)),
                     plan,
-                    (names, cancel, progress),
+                    (names, moving, cancel, progress),
                     merged,
                 );
+                if moving {
+                    remove_if_empty(&incoming, &incoming_meta, merged);
+                }
                 continue;
             }
             Some(_) => Some(plan.choice(&relative)),
         };
-        let result = match clash {
-            Some(Clash::Skip) => {
+        let result = match (clash, moving) {
+            (Some(Clash::Skip), _) => {
                 merged.left_out.push(relative);
                 Ok(())
             }
-            Some(Clash::Replace) => {
+            (Some(Clash::Replace), false) => {
                 ops::replace(&incoming, target, names, cancel, progress).map(|replaced| {
                     note_changes(merged, shown, &replaced.changes);
-                    merged.replaced.push((
-                        target.join(&replaced.name),
-                        incoming.clone(),
-                        replaced.original,
-                    ));
+                    merged.done.push(Did::Replaced {
+                        target: target.join(&replaced.name),
+                        source: incoming.clone(),
+                        original: replaced.original,
+                    });
                 })
             }
-            None | Some(Clash::KeepBoth) => {
+            (Some(Clash::Replace), true) => {
+                ops::move_replacing(&incoming, target, names, cancel, progress).map(|replaced| {
+                    note_changes(merged, shown, &replaced.changes);
+                    merged.done.push(Did::MovedOver {
+                        from: incoming.clone(),
+                        to: target.join(&replaced.name),
+                        original: replaced.original,
+                    });
+                })
+            }
+            (None | Some(Clash::KeepBoth), true) => {
+                let moved = if clash.is_some() {
+                    ops::move_keeping_both(&incoming, target, names, cancel, progress)
+                } else {
+                    ops::move_item(&incoming, target, names, cancel, progress)
+                };
+                moved.map(|moved| {
+                    note_changes(merged, shown, &moved.changes);
+                    merged.done.push(Did::Moved {
+                        from: incoming.clone(),
+                        to: target.join(&moved.name),
+                        renamed: pairs(&moved.changes),
+                    });
+                })
+            }
+            (None | Some(Clash::KeepBoth), false) => {
                 let conflict = if clash.is_some() {
                     Conflict::KeepBoth
                 } else {
@@ -250,14 +405,36 @@ fn merge_folder(
                 };
                 ops::copy(&incoming, target, conflict, names, cancel, progress).map(|copied| {
                     note_changes(merged, shown, &copied.changes);
-                    merged
-                        .created
-                        .push((target.join(&copied.name), incoming.clone(), conflict));
+                    merged.done.push(Did::Copied {
+                        copy: target.join(&copied.name),
+                        source: incoming.clone(),
+                        conflict,
+                    });
                 })
             }
         };
         into(result, merged);
     }
+}
+
+/// Removes a source folder a merging move emptied, remembering its mode for undo. A folder that
+/// still holds anything (an item the plan left out, or one that failed) stays.
+fn remove_if_empty(folder: &Path, meta: &fs::Metadata, merged: &mut Merged) {
+    use std::os::unix::fs::PermissionsExt;
+    if fs::remove_dir(folder).is_ok() {
+        merged.done.push(Did::RemovedFolder {
+            path: folder.to_path_buf(),
+            mode: meta.permissions().mode() & 0o7777,
+        });
+    }
+}
+
+fn pairs(changes: &ops::Changes) -> Vec<(PathBuf, PathBuf)> {
+    changes
+        .renamed
+        .iter()
+        .map(|renamed| (renamed.requested.clone(), renamed.saved_as.clone()))
+        .collect()
 }
 
 /// Changes an item's copy reports are relative to its folder; the merge's are relative to the
