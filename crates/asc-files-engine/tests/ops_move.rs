@@ -5,7 +5,7 @@ use std::{fs, os::unix::fs::MetadataExt, path::Path};
 
 use asc_files_engine::{
     error::ErrorKind,
-    ops::{self, Cancel, Progress},
+    ops::{self, Cancel, NameMode, Progress},
 };
 
 fn names(dir: &Path) -> Vec<String> {
@@ -32,7 +32,14 @@ fn a_move_within_a_filesystem_is_a_rename() {
     fs::create_dir(&dest).unwrap();
     let inode = fs::metadata(&source).unwrap().ino();
 
-    let moved = ops::move_item(&source, &dest, &Cancel::new(), &Progress::new()).expect("move");
+    let moved = ops::move_item(
+        &source,
+        &dest,
+        NameMode::Keep,
+        &Cancel::new(),
+        &Progress::new(),
+    )
+    .expect("move");
 
     assert!(!moved.copied);
     assert!(!source.exists());
@@ -51,8 +58,14 @@ fn a_move_never_replaces_what_holds_the_name() {
     fs::create_dir(&dest).unwrap();
     fs::write(dest.join("a.txt"), b"old").unwrap();
 
-    let error =
-        ops::move_item(&source, &dest, &Cancel::new(), &Progress::new()).expect_err("refused");
+    let error = ops::move_item(
+        &source,
+        &dest,
+        NameMode::Keep,
+        &Cancel::new(),
+        &Progress::new(),
+    )
+    .expect_err("refused");
 
     assert_eq!(error.kind(), ErrorKind::Exists, "{error}");
     assert_eq!(fs::read(&source).unwrap(), b"new");
@@ -72,8 +85,14 @@ fn a_move_across_filesystems_copies_then_deletes_the_source() {
     fs::write(tree.join("b.txt"), vec![3u8; 1 << 20]).unwrap();
     std::os::unix::fs::symlink("b.txt", tree.join("to-b")).unwrap();
 
-    let moved =
-        ops::move_item(&tree, other.path(), &Cancel::new(), &Progress::new()).expect("move");
+    let moved = ops::move_item(
+        &tree,
+        other.path(),
+        NameMode::Keep,
+        &Cancel::new(),
+        &Progress::new(),
+    )
+    .expect("move");
 
     assert!(moved.copied);
     assert!(moved.kept.is_empty(), "kept: {:?}", moved.kept);
@@ -101,8 +120,14 @@ fn a_cancelled_move_across_filesystems_keeps_the_source() {
     let cancel = Cancel::new();
     cancel.cancel();
 
-    let error =
-        ops::move_item(&tree, other.path(), &cancel, &Progress::new()).expect_err("cancelled");
+    let error = ops::move_item(
+        &tree,
+        other.path(),
+        NameMode::Keep,
+        &cancel,
+        &Progress::new(),
+    )
+    .expect_err("cancelled");
 
     assert_eq!(error.kind(), ErrorKind::Cancelled, "{error}");
     assert_eq!(names(&tree).len(), 50, "every source entry stays");

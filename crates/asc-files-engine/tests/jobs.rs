@@ -6,7 +6,7 @@ use std::{fs, path::Path, sync::mpsc, time::Duration};
 use asc_files_engine::{
     error::ErrorKind,
     jobs::{self, Action, Event, Item, Outcome, Request},
-    ops::Conflict,
+    ops::{Conflict, NameMode},
 };
 
 fn isolated_home_dir() -> tempfile::TempDir {
@@ -65,6 +65,7 @@ fn replace_in_a_batch_where_only_some_items_clash_places_every_item() {
         let events = run(Request {
             into: dest.clone(),
             items,
+            names: NameMode::Keep,
         });
 
         assert!(
@@ -94,6 +95,7 @@ fn a_failed_item_ends_only_itself() {
         items: ["a.txt", "b.txt", "c.txt"]
             .map(|n| item(&source.join(n), Action::Copy(Conflict::Fail)))
             .to_vec(),
+        names: NameMode::Keep,
     });
 
     let outcomes = outcomes(&events);
@@ -139,7 +141,11 @@ fn events_start_once_report_each_item_once_and_finish_last() {
         })
         .collect();
 
-    let events = run(Request { into: dest, items });
+    let events = run(Request {
+        into: dest,
+        items,
+        names: NameMode::Keep,
+    });
 
     assert!(matches!(
         events.first(),
@@ -190,6 +196,7 @@ fn cancelling_reports_the_rest_as_not_attempted() {
         Request {
             into: dest.clone(),
             items,
+            names: NameMode::Keep,
         },
         tx,
     );
@@ -268,6 +275,7 @@ fn progress_never_goes_backwards_within_an_item() {
     let events = run(Request {
         into: other.path().to_path_buf(),
         items: vec![item(&big, Action::Copy(Conflict::Fail))],
+        names: NameMode::Keep,
     });
 
     let samples: Vec<u64> = events

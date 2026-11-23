@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! Spike: the Nyx Files backend. JSON-RPC 2.0, one message per line, on stdin and stdout.
+//! The Files backend (`asc-files-backend`). JSON-RPC 2.0, one message per line, on stdin and stdout.
 //! stdout carries only protocol lines; diagnostics go to stderr.
 
 use std::{
@@ -13,7 +13,7 @@ use std::{
 use asc_files_engine::{
     error::Error,
     jobs::{self, Action, Event, Item, JobId, Outcome, Request},
-    ops::Conflict,
+    ops::{Conflict, NameMode, RenameCause, SpecialKind},
     trash,
 };
 use serde_json::{Value, json};
@@ -234,7 +234,30 @@ fn job_request(params: &Value) -> Result<Request, (i64, String)> {
             Ok(Item { source, action })
         })
         .collect::<Result<_, _>>()?;
-    Ok(Request { into, items })
+    let names = match params.get("names").and_then(Value::as_str) {
+        None | Some("fix") => NameMode::Fix,
+        Some("keep") => NameMode::Keep,
+        Some(other) => return Err((INVALID_PARAMS, format!("unknown names {other}"))),
+    };
+    Ok(Request { into, items, names })
+}
+
+fn rename_cause(cause: RenameCause) -> &'static str {
+    match cause {
+        RenameCause::Alias => "alias",
+        RenameCause::Taken => "taken",
+        RenameCause::Invalid => "invalid",
+        RenameCause::TooLong => "tooLong",
+    }
+}
+
+fn special_kind(kind: SpecialKind) -> &'static str {
+    match kind {
+        SpecialKind::Pipe => "pipe",
+        SpecialKind::Socket => "socket",
+        SpecialKind::Device => "device",
+        SpecialKind::Symlink => "symlink",
+    }
 }
 
 fn notification(event: Event) -> Value {
@@ -254,7 +277,19 @@ fn notification(event: Event) -> Value {
             outcome,
         } => {
             let outcome = match outcome {
-                Outcome::Done { name } => json!({"status": "done", "path": lossy(&name)}),
+                Outcome::Done { name, changes } => json!({
+                    "status": "done",
+                    "path": lossy(&name),
+                    "renamed": changes.renamed.iter().map(|renamed| json!({
+                        "requested": lossy(&renamed.requested),
+                        "savedAs": lossy(&renamed.saved_as),
+                        "cause": rename_cause(renamed.cause),
+                    })).collect::<Vec<_>>(),
+                    "skipped": changes.skipped.iter().map(|skipped| json!({
+                        "path": lossy(&skipped.path),
+                        "kind": special_kind(skipped.kind),
+                    })).collect::<Vec<_>>(),
+                }),
                 Outcome::Failed(error) => json!({"status": "failed", "error": error_json(&error)}),
                 Outcome::NotAttempted => json!({"status": "notAttempted"}),
             };

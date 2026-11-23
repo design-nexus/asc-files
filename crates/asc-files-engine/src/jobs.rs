@@ -17,7 +17,7 @@ use std::{
 
 use crate::{
     error::Error,
-    ops::{self, Cancel, Conflict, Progress, ProgressSnapshot},
+    ops::{self, Cancel, Changes, Conflict, NameMode, Progress, ProgressSnapshot},
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -44,14 +44,18 @@ pub struct Item {
 pub struct Request {
     pub into: PathBuf,
     pub items: Vec<Item>,
+    /// What to do with a name the destination drive cannot store; see [`ops::copy`].
+    pub names: NameMode,
 }
 
 /// How one item ended.
 #[derive(Debug)]
 pub enum Outcome {
-    /// Done; `name` is what the item is called in the destination, or in the Trash.
+    /// Done; `name` is what the item is called in the destination, or in the Trash. `changes`
+    /// lists what was written under another name or left out.
     Done {
         name: PathBuf,
+        changes: Changes,
     },
     Failed(Error),
     /// The batch was cancelled before this item started.
@@ -138,7 +142,14 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
         let outcome = if cancel.is_cancelled() {
             Outcome::NotAttempted
         } else {
-            run_item(job, index, item, &request.into, cancel, &send)
+            run_item(
+                job,
+                index,
+                item,
+                (&request.into, request.names),
+                cancel,
+                &send,
+            )
         };
         match outcome {
             Outcome::Done { .. } => done += 1,
@@ -164,7 +175,7 @@ fn run_item(
     job: JobId,
     index: usize,
     item: &Item,
-    into: &std::path::Path,
+    (into, names): (&std::path::Path, NameMode),
     cancel: &Cancel,
     send: &(impl Fn(Event) + Sync),
 ) -> Outcome {
@@ -188,19 +199,23 @@ fn run_item(
             }
         });
         let result = match item.action {
-            Action::Copy(conflict) => ops::copy(&item.source, into, conflict, cancel, &progress)
-                .map(|copied| into.join(copied.name)),
-            Action::Move => ops::move_item(&item.source, into, cancel, &progress)
-                .map(|moved| into.join(moved.name)),
-            Action::Replace => ops::replace(&item.source, into, cancel, &progress)
-                .map(|replaced| into.join(replaced.name)),
-            Action::Trash => ops::trash(&item.source).map(|trashed| trashed.file),
+            Action::Copy(conflict) => {
+                ops::copy(&item.source, into, conflict, names, cancel, &progress)
+                    .map(|copied| (into.join(copied.name), copied.changes))
+            }
+            Action::Move => ops::move_item(&item.source, into, names, cancel, &progress)
+                .map(|moved| (into.join(moved.name), moved.changes)),
+            Action::Replace => ops::replace(&item.source, into, names, cancel, &progress)
+                .map(|replaced| (into.join(replaced.name), replaced.changes)),
+            Action::Trash => {
+                ops::trash(&item.source).map(|trashed| (trashed.file, Changes::default()))
+            }
         };
         running.store(false, Ordering::Release);
         result
     });
     match result {
-        Ok(name) => Outcome::Done { name },
+        Ok((name, changes)) => Outcome::Done { name, changes },
         Err(error) => Outcome::Failed(error),
     }
 }

@@ -6,16 +6,17 @@
 use std::{
     ffi::{OsStr, OsString},
     os::fd::AsFd,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
 
-use super::{Copy, Destination, Options, SharedProgress, Source, copy_new, fs, merge, split};
+use super::{Copy, Destination, Options, SharedProgress, Source, copy_new, fs, lock, merge, split};
+pub use crate::services::{NameMode, RenameCause, SpecialKind};
 use crate::{
-    adapters::local_operations::{leftovers::Deadline, names::Taken},
+    adapters::local_operations::{leftovers::Deadline, mount_profile::NamePolicy, names::Taken},
     error::Error,
 };
 
@@ -74,11 +75,83 @@ pub enum Conflict {
     Merge,
 }
 
+/// A name the destination could not hold, and the name written instead. Paths are relative to
+/// the destination folder.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Renamed {
+    pub requested: PathBuf,
+    pub saved_as: PathBuf,
+    pub cause: RenameCause,
+}
+
+/// An entry the destination could not hold at all, so it was left out of the copy. The path is
+/// relative to the destination folder, where it would have been.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Skipped {
+    pub path: PathBuf,
+    pub kind: SpecialKind,
+}
+
+/// What a copy wrote otherwise than it was asked to: empty unless the destination refused a name
+/// or an entry.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Changes {
+    pub renamed: Vec<Renamed>,
+    pub skipped: Vec<Skipped>,
+}
+
+impl Changes {
+    pub fn is_empty(&self) -> bool {
+        self.renamed.is_empty() && self.skipped.is_empty()
+    }
+
+    /// What `copy` noted, for the item published as `published` in the destination folder.
+    fn of(copy: &Copy, published: &OsStr) -> Self {
+        let left = std::mem::take(&mut *lock(&copy.left));
+        let root = Path::new(published);
+        let item = left.item.map(|(requested, cause)| Renamed {
+            requested: PathBuf::from(requested),
+            saved_as: root.to_path_buf(),
+            cause,
+        });
+        Self {
+            renamed: item
+                .into_iter()
+                .chain(
+                    left.renamed
+                        .into_iter()
+                        .map(|(requested, saved_as, cause)| Renamed {
+                            requested: root.join(requested),
+                            saved_as: root.join(saved_as),
+                            cause,
+                        }),
+                )
+                .collect(),
+            skipped: left
+                .skipped
+                .into_iter()
+                .map(|(path, kind)| Skipped {
+                    path: root.join(path),
+                    kind,
+                })
+                .collect(),
+        }
+    }
+}
+
+fn with_names(names: NameMode) -> Options {
+    Options {
+        names: NamePolicy::new(names),
+        ..Options::default()
+    }
+}
+
 /// A finished copy.
 #[derive(Debug)]
 pub struct Copied {
     /// The name the copy was published under inside the destination folder.
     pub name: OsString,
+    pub changes: Changes,
     pub progress: ProgressSnapshot,
 }
 
@@ -86,10 +159,18 @@ pub struct Copied {
 ///
 /// Runs on the calling thread until the copy is published, refused or cancelled. A copy appears
 /// under its final name only once it is complete, and nothing that holds the name is replaced.
+///
+/// A name the destination drive cannot store (FAT's `:`, a trailing dot, `CON`, one too long) is
+/// written as the closest name it can, and listed in [`Copied::changes`]. The rules come from the
+/// drive's own mount (mountinfo, udev and `statfs`). That holds for everything inside a copied
+/// folder; for the item's own name it holds with [`NameMode::Fix`], the mode for ordinary pastes.
+/// [`NameMode::Keep`] is for giving a name back, as undo does: there a refused name fails the item
+/// rather than changing it.
 pub fn copy(
     source: &Path,
     into: &Path,
     conflict: Conflict,
+    names: NameMode,
     cancel: &Cancel,
     progress: &Progress,
 ) -> Result<Copied, Error> {
@@ -119,7 +200,7 @@ pub fn copy(
         cancel.0.clone(),
         progress.0.clone(),
         true,
-        Options::default(),
+        with_names(names),
         Deadline::default(),
     );
     let published = match destination {
@@ -139,9 +220,10 @@ pub fn copy(
             merge(&copy, &source, &folder, None, placing).map(|_| name)
         }
     }
-    .map_err(|failure| failure.into_error(&source.name));
+    .map_err(|failure| failure.into_error(&source.name))?;
     Ok(Copied {
-        name: published?,
+        changes: Changes::of(&copy, &published),
+        name: published,
         progress: progress.snapshot(),
     })
 }
@@ -173,6 +255,8 @@ pub struct Moved {
     /// Source entries kept because they changed after the copy read them, or could not be
     /// proven to match it. They stay where they were; the copy holds what was read.
     pub kept: Vec<(std::path::PathBuf, crate::services::KeptCause)>,
+    /// What the copy across filesystems wrote otherwise than asked; see [`copy`].
+    pub changes: Changes,
     pub progress: ProgressSnapshot,
 }
 
@@ -184,6 +268,7 @@ pub struct Moved {
 pub fn move_item(
     source: &Path,
     into: &Path,
+    names: NameMode,
     cancel: &Cancel,
     progress: &Progress,
 ) -> Result<Moved, Error> {
@@ -217,6 +302,7 @@ pub fn move_item(
                 name: target_name,
                 copied: false,
                 kept: Vec::new(),
+                changes: Changes::default(),
                 progress: progress.snapshot(),
             });
         }
@@ -235,7 +321,7 @@ pub fn move_item(
     let options = Options {
         manifest: true,
         durable: true,
-        ..Options::default()
+        ..with_names(names)
     };
     let copy = Copy::new(
         fs(),
@@ -274,6 +360,7 @@ pub fn move_item(
     );
     deleted?;
     Ok(Moved {
+        changes: Changes::of(&copy, &published_name),
         name: published_name,
         copied: true,
         kept,
@@ -294,6 +381,8 @@ pub struct Replaced {
     pub name: OsString,
     /// Where the replaced original went, or None when nothing held the name.
     pub original: Option<Trashed>,
+    /// What the copy wrote otherwise than asked; see [`copy`].
+    pub changes: Changes,
     pub progress: ProgressSnapshot,
 }
 
@@ -311,6 +400,7 @@ pub struct Replaced {
 pub fn replace(
     source: &Path,
     into: &Path,
+    names: NameMode,
     cancel: &Cancel,
     progress: &Progress,
 ) -> Result<Replaced, Error> {
@@ -334,10 +424,11 @@ pub fn replace(
     let found = match fs().stat(Entry::new(&*parent, &target), false) {
         Ok(stat) => stat,
         Err(rustix::io::Errno::NOENT) => {
-            let copied = copy(source, into, Conflict::Fail, cancel, progress)?;
+            let copied = copy(source, into, Conflict::Fail, names, cancel, progress)?;
             return Ok(Replaced {
                 name: copied.name,
                 original: None,
+                changes: copied.changes,
                 progress: copied.progress,
             });
         }
@@ -358,7 +449,7 @@ pub fn replace(
         cancel.0.clone(),
         progress.0.clone(),
         true,
-        Options::default(),
+        with_names(names),
         Deadline::default(),
     );
     copy_new(
@@ -431,6 +522,7 @@ pub fn replace(
         )?
     };
     Ok(Replaced {
+        changes: Changes::of(&copy, &target),
         name: target,
         original: Some(trashed),
         progress: progress.snapshot(),
@@ -624,8 +716,14 @@ mod tests {
             let _fat = FsQuirks::install(root.path(), Quirks::vfat());
             let old_inode = fs::symlink_metadata(dest.join("item")).unwrap().ino();
 
-            let replaced =
-                replace(&source, &dest, &Cancel::new(), &Progress::new()).expect("replace");
+            let replaced = replace(
+                &source,
+                &dest,
+                NameMode::Keep,
+                &Cancel::new(),
+                &Progress::new(),
+            )
+            .expect("replace");
 
             if folder {
                 assert_eq!(names(&dest.join("item")), ["new"]);
@@ -678,7 +776,13 @@ mod tests {
         );
         let old_inode = fs::metadata(dest.join("item")).unwrap().ino();
 
-        let result = replace(&source, &dest, &Cancel::new(), &Progress::new());
+        let result = replace(
+            &source,
+            &dest,
+            NameMode::Keep,
+            &Cancel::new(),
+            &Progress::new(),
+        );
 
         assert!(result.is_err(), "{result:?}");
         assert_eq!(fs::read(dest.join("item")).unwrap(), b"old");
@@ -701,7 +805,13 @@ mod tests {
         let _fat = FsQuirks::install(root.path(), Quirks::vfat());
         let old_inode = fs::metadata(dest.join("item")).unwrap().ino();
 
-        let result = replace(&source, &dest, &Cancel::new(), &Progress::new());
+        let result = replace(
+            &source,
+            &dest,
+            NameMode::Keep,
+            &Cancel::new(),
+            &Progress::new(),
+        );
         fs::remove_file(&trash).unwrap();
 
         assert!(result.is_err(), "{result:?}");
@@ -712,5 +822,186 @@ mod tests {
             ["item"],
             "the copy went back to its stage and was removed"
         );
+    }
+
+    /// A folder with names no Windows-format drive can store, and one it can.
+    fn awkward_tree(home: &Path) -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let root = tempfile::tempdir_in(home).unwrap();
+        let (source, dest) = (root.path().join("source"), root.path().join("dest"));
+        fs::create_dir_all(source.join("trip")).unwrap();
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(source.join("trip/a:b.txt"), b"colon").unwrap();
+        fs::write(source.join("trip/why?.txt"), b"question").unwrap();
+        fs::write(source.join("trip/plain.txt"), b"plain").unwrap();
+        (root, source.join("trip"), dest)
+    }
+
+    fn windows_format_drives() -> [(&'static str, Quirks); 4] {
+        [
+            ("vfat", Quirks::vfat()),
+            ("exfat", Quirks::exfat()),
+            ("ntfs3 windows_names", Quirks::ntfs3_windows_names()),
+            ("ntfs-3g", Quirks::ntfs_3g()),
+        ]
+    }
+
+    #[test]
+    fn names_a_windows_format_drive_cannot_store_are_fixed_and_reported_when_asked() {
+        let home = test_home();
+        for (drive, quirks) in windows_format_drives() {
+            let (_root, source, dest) = awkward_tree(&home);
+            let _drive = FsQuirks::install(&dest, quirks);
+
+            let copied = copy(
+                &source,
+                &dest,
+                Conflict::Fail,
+                NameMode::Fix,
+                &Cancel::new(),
+                &Progress::new(),
+            )
+            .unwrap_or_else(|error| panic!("{drive}: {error:?}"));
+
+            assert_eq!(copied.name, "trip", "{drive}");
+            let mut renamed = copied.changes.renamed.clone();
+            renamed.sort_by(|a, b| a.requested.cmp(&b.requested));
+            let requested: Vec<_> = renamed.iter().map(|r| r.requested.clone()).collect();
+            assert_eq!(
+                requested,
+                [
+                    PathBuf::from("trip/a:b.txt"),
+                    PathBuf::from("trip/why?.txt")
+                ],
+                "{drive}: {renamed:?}"
+            );
+            for (renamed, content) in renamed.iter().zip([&b"colon"[..], b"question"]) {
+                assert_eq!(renamed.cause, RenameCause::Invalid, "{drive}");
+                assert_eq!(
+                    renamed.saved_as.parent(),
+                    Some(Path::new("trip")),
+                    "{drive}"
+                );
+                let saved = renamed.saved_as.file_name().unwrap().as_encoded_bytes();
+                assert!(
+                    !saved.iter().any(|byte| b"\\:*?\"<>|".contains(byte)),
+                    "{drive}: {renamed:?}"
+                );
+                assert_eq!(
+                    fs::read(dest.join(&renamed.saved_as)).unwrap(),
+                    content,
+                    "{drive}"
+                );
+            }
+            assert_eq!(
+                fs::read(dest.join("trip/plain.txt")).unwrap(),
+                b"plain",
+                "{drive}"
+            );
+            assert!(copied.changes.skipped.is_empty(), "{drive}");
+        }
+    }
+
+    #[test]
+    fn an_item_whose_own_name_a_drive_refuses_fails_when_its_name_must_be_kept() {
+        let home = test_home();
+        for (drive, quirks) in windows_format_drives() {
+            let root = tempfile::tempdir_in(&home).unwrap();
+            let (source, dest) = (root.path().join("source"), root.path().join("dest"));
+            fs::create_dir_all(source.join("a:b")).unwrap();
+            fs::write(source.join("a:b/inside.txt"), b"x").unwrap();
+            fs::create_dir_all(&dest).unwrap();
+            let _drive = FsQuirks::install(&dest, quirks);
+
+            let result = copy(
+                &source.join("a:b"),
+                &dest,
+                Conflict::Fail,
+                NameMode::Keep,
+                &Cancel::new(),
+                &Progress::new(),
+            );
+
+            assert!(result.is_err(), "{drive}: {result:?}");
+            assert!(names(&dest).is_empty(), "{drive}: nothing is left behind");
+        }
+    }
+
+    #[test]
+    fn contents_are_fixed_for_the_drive_even_when_the_items_own_name_is_kept() {
+        let home = test_home();
+        let (_root, source, dest) = awkward_tree(&home);
+        let _fat = FsQuirks::install(&dest, Quirks::vfat());
+
+        let copied = copy(
+            &source,
+            &dest,
+            Conflict::Fail,
+            NameMode::Keep,
+            &Cancel::new(),
+            &Progress::new(),
+        )
+        .expect("copy");
+
+        assert_eq!(copied.name, "trip");
+        assert_eq!(copied.changes.renamed.len(), 2, "{:?}", copied.changes);
+        assert_eq!(names(&dest.join("trip")).len(), 3);
+    }
+
+    #[test]
+    fn an_item_whose_own_name_is_fixed_is_published_and_reported_under_the_new_name() {
+        let home = test_home();
+        let root = tempfile::tempdir_in(&home).unwrap();
+        let (source, dest) = (root.path().join("source"), root.path().join("dest"));
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(source.join("x|y.txt"), b"pipe").unwrap();
+        let _fat = FsQuirks::install(&dest, Quirks::vfat());
+
+        let copied = copy(
+            &source.join("x|y.txt"),
+            &dest,
+            Conflict::Fail,
+            NameMode::Fix,
+            &Cancel::new(),
+            &Progress::new(),
+        )
+        .expect("copy");
+
+        assert_ne!(copied.name, "x|y.txt");
+        assert_eq!(names(&dest), [copied.name.to_string_lossy()]);
+        assert_eq!(fs::read(dest.join(&copied.name)).unwrap(), b"pipe");
+        assert_eq!(
+            copied.changes.renamed,
+            [Renamed {
+                requested: PathBuf::from("x|y.txt"),
+                saved_as: PathBuf::from(&copied.name),
+                cause: RenameCause::Invalid,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_move_onto_a_fat_drive_fixes_names_and_still_deletes_its_source() {
+        let home = test_home();
+        let (_root, source, dest) = awkward_tree(&home);
+        let _fat = FsQuirks::install(&dest, Quirks::vfat());
+
+        let moved = move_item(
+            &source,
+            &dest,
+            NameMode::Fix,
+            &Cancel::new(),
+            &Progress::new(),
+        )
+        .expect("move");
+
+        assert!(moved.copied, "a FAT drive is another filesystem");
+        assert_eq!(moved.changes.renamed.len(), 2, "{:?}", moved.changes);
+        assert!(moved.kept.is_empty(), "{:?}", moved.kept);
+        assert!(
+            !source.exists(),
+            "the source is deleted once its copy is on the drive"
+        );
+        assert_eq!(names(&dest.join("trip")).len(), 3);
     }
 }

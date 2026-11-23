@@ -4,7 +4,7 @@
 
 use std::{fs, os::unix::fs::MetadataExt, path::PathBuf};
 
-use asc_files_engine::ops::{self, Cancel, Progress};
+use asc_files_engine::ops::{self, Cancel, NameMode, Progress};
 
 /// Turns the test home's Trash into a plain file until dropped, so no Trash folder can be made.
 struct NoTrash(PathBuf);
@@ -44,6 +44,7 @@ fn a_replace_whose_original_cannot_be_trashed_leaves_it_in_place() {
     let result = ops::replace(
         &source.join("a.txt"),
         &dest,
+        NameMode::Keep,
         &Cancel::new(),
         &Progress::new(),
     );

@@ -9,7 +9,7 @@ use std::{
 
 use asc_files_engine::{
     error::ErrorKind,
-    ops::{self, Cancel, Conflict, Progress},
+    ops::{self, Cancel, Conflict, NameMode, Progress},
 };
 
 fn copy(
@@ -17,7 +17,14 @@ fn copy(
     into: &Path,
     conflict: Conflict,
 ) -> Result<ops::Copied, asc_files_engine::error::Error> {
-    ops::copy(source, into, conflict, &Cancel::new(), &Progress::new())
+    ops::copy(
+        source,
+        into,
+        conflict,
+        NameMode::Keep,
+        &Cancel::new(),
+        &Progress::new(),
+    )
 }
 
 fn dirs() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
@@ -166,8 +173,15 @@ fn a_cancelled_copy_leaves_nothing_behind() {
     let cancel = Cancel::new();
     cancel.cancel();
 
-    let error =
-        ops::copy(&tree, &dest, Conflict::Fail, &cancel, &Progress::new()).expect_err("cancelled");
+    let error = ops::copy(
+        &tree,
+        &dest,
+        Conflict::Fail,
+        NameMode::Keep,
+        &cancel,
+        &Progress::new(),
+    )
+    .expect_err("cancelled");
 
     assert_eq!(error.kind(), ErrorKind::Cancelled, "{error}");
     assert!(names(&dest).is_empty(), "left: {:?}", names(&dest));

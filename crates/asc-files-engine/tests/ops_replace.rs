@@ -4,7 +4,7 @@
 
 use std::{fs, os::unix::fs::MetadataExt, path::Path};
 
-use asc_files_engine::ops::{self, Cancel, Progress};
+use asc_files_engine::ops::{self, Cancel, NameMode, Progress};
 
 fn isolated_trash() -> std::path::PathBuf {
     let data = std::env::var("XDG_DATA_HOME").expect("XDG_DATA_HOME set by test-engine.sh");
@@ -77,6 +77,7 @@ fn replace_swaps_in_the_copy_and_trashes_the_original() {
     let replaced = ops::replace(
         &source.join("a.txt"),
         &dest,
+        NameMode::Keep,
         &Cancel::new(),
         &Progress::new(),
     )
@@ -125,6 +126,7 @@ fn replace_swaps_a_whole_folder() {
     let replaced = ops::replace(
         &source.join("photos"),
         &dest,
+        NameMode::Keep,
         &Cancel::new(),
         &Progress::new(),
     )
@@ -146,6 +148,7 @@ fn replace_with_nothing_at_the_name_is_a_plain_copy() {
     let replaced = ops::replace(
         &source.join("b.txt"),
         &dest,
+        NameMode::Keep,
         &Cancel::new(),
         &Progress::new(),
     )

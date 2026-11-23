@@ -163,6 +163,19 @@ fn the_protocol_end_to_end() {
     let finished = mine.last().unwrap();
     assert_eq!(finished["method"], "job.finished");
     assert_eq!(finished["params"]["done"], 2);
+    for note in &done {
+        let outcome = &note["params"]["outcome"];
+        assert_eq!(outcome["renamed"], json!([]), "{outcome}");
+        assert_eq!(outcome["skipped"], json!([]), "{outcome}");
+    }
+
+    // Names are fixed for the destination unless the caller asks to keep them; nothing else.
+    let unknown = backend.call(
+        "jobs.start",
+        json!({"into": dest, "names": "mangle", "items": []}),
+        &mut notes,
+    );
+    assert_eq!(unknown["error"]["code"], -32602, "{unknown}");
     assert_eq!(fs::read(dest.join("a.txt")).unwrap(), b"new a");
     assert_eq!(fs::read(dest.join("b.txt")).unwrap(), b"new b");
 
