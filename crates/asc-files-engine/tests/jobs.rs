@@ -253,8 +253,17 @@ fn progress_never_goes_backwards_within_an_item() {
     let Ok(other) = tempfile::tempdir_in("/dev/shm") else {
         return;
     };
+    // Fit the copy to the target: a container's /dev/shm is often only 64 MB.
+    let free = rustix::fs::statvfs(other.path())
+        .map(|fs| fs.f_bavail * fs.f_frsize)
+        .unwrap_or(0);
+    let size = (256u64 << 20).min(free / 4);
+    if size < 8 << 20 {
+        eprintln!("SKIP: only {free} bytes free on /dev/shm");
+        return;
+    }
     let big = root.path().join("big.bin");
-    fs::write(&big, vec![5u8; 256 << 20]).unwrap();
+    fs::write(&big, vec![5u8; size as usize]).unwrap();
 
     let events = run(Request {
         into: other.path().to_path_buf(),
@@ -268,10 +277,11 @@ fn progress_never_goes_backwards_within_an_item() {
             _ => None,
         })
         .collect();
-    eprintln!("OBSERVED progress samples for a 256 MiB cross-fs copy: {samples:?}");
+    eprintln!("OBSERVED progress samples for a {size}-byte cross-fs copy: {samples:?}");
     assert!(
         samples.windows(2).all(|pair| pair[0] <= pair[1]),
         "{samples:?}"
     );
-    assert!(matches!(outcomes(&events)[0], Outcome::Done { .. }));
+    let outcome = outcomes(&events)[0];
+    assert!(matches!(outcome, Outcome::Done { .. }), "{outcome:?}");
 }
