@@ -38,15 +38,15 @@ impl HiddenName {
 
     pub(crate) const fn prefix(self) -> &'static str {
         match self {
-            Self::Probe => ".nyx-files-probe-",
-            Self::Copy => ".nyx-files-copy-",
-            Self::Extraction => ".nyx-files-extraction-",
-            Self::Replacement => ".nyx-files-replacement-",
-            Self::Compression => ".nyx-files-compression-",
-            Self::Replaced => ".nyx-files-replaced-",
-            Self::Rename => ".nyx-files-rename-",
-            Self::Merge => ".nyx-files-merge-",
-            Self::Originals => ".nyx-files-originals-",
+            Self::Probe => ".asc-files-probe-",
+            Self::Copy => ".asc-files-copy-",
+            Self::Extraction => ".asc-files-extraction-",
+            Self::Replacement => ".asc-files-replacement-",
+            Self::Compression => ".asc-files-compression-",
+            Self::Replaced => ".asc-files-replaced-",
+            Self::Rename => ".asc-files-rename-",
+            Self::Merge => ".asc-files-merge-",
+            Self::Originals => ".asc-files-originals-",
         }
     }
 }
@@ -78,9 +78,9 @@ enum Suffix {
     Tail { tag: &'static str, digits: usize },
 }
 
-const PREFIX: &[u8] = b".nyx-files-";
-/// Older Files named its temporary items `.strata-…`; they are recovered too.
-const LEGACY_PREFIX: &str = ".strata-";
+const PREFIX: &[u8] = b".asc-files-";
+/// Earlier builds named their temporary items `.nyx-files-…` and `.strata-…`; they are recovered too.
+const LEGACY_PREFIXES: [&str; 2] = [".nyx-files-", ".strata-"];
 const LEGACY_SYMLINK: &str = ".strata-symlink-";
 
 const LEFTOVERS: [(&str, Suffix, Leftover); 12] = [
@@ -157,11 +157,13 @@ pub(crate) fn classify(name: &OsStr) -> Option<Leftover> {
     if name.starts_with(PREFIX) {
         return find(&LEFTOVERS, name);
     }
-    // A legacy name is the current one with the old prefix.
-    let rest = name.strip_prefix(LEGACY_PREFIX.as_bytes())?;
     if name.starts_with(LEGACY_SYMLINK.as_bytes()) {
         return find(&LEFTOVERS, name);
     }
+    // A legacy name is the current one with an older prefix.
+    let rest = LEGACY_PREFIXES
+        .iter()
+        .find_map(|legacy| name.strip_prefix(legacy.as_bytes()))?;
     let mut current = PREFIX.to_vec();
     current.extend_from_slice(rest);
     find(&LEFTOVERS, &current)

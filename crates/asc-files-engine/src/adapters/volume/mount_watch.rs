@@ -63,7 +63,7 @@ impl Watcher {
         });
         let watching = watcher.clone();
         if let Err(error) = std::thread::Builder::new()
-            .name("nyx-files-mounts".to_owned())
+            .name("asc-files-mounts".to_owned())
             .spawn(move || watching.watch(source))
         {
             tracing::warn!(%error, "could not start the mount watcher");

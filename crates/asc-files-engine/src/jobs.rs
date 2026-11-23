@@ -114,7 +114,7 @@ pub fn start(request: Request, events: Sender<Event>) -> Handle {
     let cancel = Cancel::new();
     let worker_cancel = cancel.clone();
     let thread = thread::Builder::new()
-        .name(format!("nyx-files-job-{}", id.0))
+        .name(format!("asc-files-job-{}", id.0))
         .spawn(move || run(id, request, &worker_cancel, &events))
         .expect("a job thread");
     Handle {
