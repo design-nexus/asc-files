@@ -37,10 +37,7 @@ fn outcomes(events: &[Event]) -> Vec<&Outcome> {
 }
 
 fn item(source: &Path, action: Action) -> Item {
-    Item {
-        source: source.to_path_buf(),
-        action,
-    }
+    Item::new(source, action)
 }
 
 /// The legacy app's bug: Replace in a paste where only some items clash did nothing.

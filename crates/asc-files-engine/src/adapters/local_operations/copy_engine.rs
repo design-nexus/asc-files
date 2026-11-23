@@ -359,6 +359,123 @@ enum Item {
     Pinned(Arc<OwnedFd>, OsString),
 }
 
+/// Runs `work` on a [`Copy`] of `item` on the calling thread, collecting what it reports and,
+/// with `options.manifest`, what it recorded. The legacy app ran this on a GLib worker and
+/// followed its progress from the main loop; the caller now owns the thread, the cancel flag
+/// and the counters.
+fn following<T>(
+    item: Item,
+    options: Options,
+    (cancelled, counters): (Arc<AtomicBool>, Arc<SharedProgress>),
+    work: impl FnOnce(&Arc<Copy>, &Source) -> Result<T, Failure>,
+) -> Followed<T> {
+    let (parent, name) = match item {
+        Item::Path(path) => match split(&path) {
+            Ok(split) => split,
+            Err(error) => {
+                return Followed {
+                    value: Err(error),
+                    reported: counters.reported(),
+                    left: Left::default(),
+                    manifest: None,
+                };
+            }
+        },
+        Item::Pinned(parent, name) => (parent, name),
+    };
+    let source = Source {
+        parent,
+        name,
+        recorded_in: options.manifest.then(manifest::Folder::root),
+    };
+    let copy = Copy::new(
+        fs(),
+        source.name.clone(),
+        cancelled,
+        counters.clone(),
+        true,
+        options,
+        Deadline::default(),
+    );
+    let value = work(&copy, &source).map_err(|failure| failure.into_error(&source.name));
+    let manifest = source.recorded_in.clone().map(|root| {
+        let mut manifest = manifest::of(source.parent.clone(), root);
+        for copy in std::mem::take(&mut *lock(&copy.copies)) {
+            manifest.copied_to(copy);
+        }
+        manifest
+    });
+    Followed {
+        value,
+        reported: counters.reported(),
+        left: std::mem::take(&mut *lock(&copy.left)),
+        manifest,
+    }
+}
+
+/// Copies the item at `source` to `destination`: a new item, or a merge into a folder. Returns
+/// what was renamed or left out beneath the target along with the result; a stopped merge
+/// still reports what it placed.
+pub(super) fn copy_local(
+    source: PathBuf,
+    destination: Destination,
+    options: Options,
+    progress: (Arc<AtomicBool>, Arc<SharedProgress>),
+) -> (Result<Copied, crate::error::Error>, TransferReport) {
+    let (Destination::New(target, _) | Destination::Merge(target, _)) = &destination;
+    let target = target.clone();
+    let merging = matches!(destination, Destination::Merge(..));
+    let workers = options.workers;
+    let followed = following(
+        Item::Path(source),
+        options,
+        progress,
+        move |copy, source| match destination {
+            Destination::New(target, taken) => {
+                let (parent, name) = split(&target).map_err(Failure::Error)?;
+                let new = NewItem::Published(taken);
+                let (name, ownership) = copy_new(copy, source, (&parent, &name), new, workers)?;
+                let published = Some(Published::proven(parent, name.clone(), ownership));
+                Ok((name, Vec::new(), published))
+            }
+            Destination::Merge(folder, placing) => {
+                let name = folder.file_name().unwrap_or_default().to_os_string();
+                merge(copy, source, &folder, workers, placing)
+                    .map(|(nested, published)| (name, nested, published))
+            }
+        },
+    );
+    match followed.value {
+        Ok((name, nested, published)) => {
+            let report = left_report(&target.with_file_name(&name), followed.left);
+            let ownership = published.as_ref().map(|copy| copy.ownership().clone());
+            let mut manifest = followed.manifest;
+            if let (Some(manifest), Some(published)) = (&mut manifest, published) {
+                manifest.copied_to(published);
+            }
+            (
+                Ok(Copied {
+                    ownership,
+                    name,
+                    reported: followed.reported,
+                    manifest,
+                    nested,
+                }),
+                report,
+            )
+        }
+        // What a stopped merge placed stays.
+        Err(error) => {
+            let report = if merging {
+                left_report(&target, followed.left)
+            } else {
+                TransferReport::default()
+            };
+            (Err(error), report)
+        }
+    }
+}
+
 pub(super) fn unlock_stage(staged: &StagedSibling) {
     if staged.restrictive.is_empty() {
         return;

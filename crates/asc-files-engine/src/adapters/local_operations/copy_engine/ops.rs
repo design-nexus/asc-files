@@ -166,6 +166,9 @@ pub struct Copied {
 /// folder; for the item's own name it holds with [`NameMode::Fix`], the mode for ordinary pastes.
 /// [`NameMode::Keep`] is for giving a name back, as undo does: there a refused name fails the item
 /// rather than changing it.
+///
+/// A copy into the folder the source is in is a duplicate: it takes the next free "name (n)"
+/// whatever `conflict` says, since its own name is always taken there.
 pub fn copy(
     source: &Path,
     into: &Path,
@@ -177,6 +180,39 @@ pub fn copy(
     let name = source
         .file_name()
         .ok_or_else(|| crate::error::translated_io_error("The item has no name"))?;
+    let conflict = if conflict == Conflict::Fail && in_its_own_folder(source, into) {
+        Conflict::KeepBoth
+    } else {
+        conflict
+    };
+    copy_as(source, (into, name), conflict, names, cancel, progress)
+}
+
+/// Whether `into` is the folder `source` is in, by identity, so another spelling of the same
+/// folder counts.
+fn in_its_own_folder(source: &Path, into: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let identity = |path: &Path| {
+        std::fs::metadata(path)
+            .ok()
+            .map(|meta| (meta.dev(), meta.ino()))
+    };
+    source
+        .parent()
+        .and_then(identity)
+        .is_some_and(|parent| identity(into) == Some(parent))
+}
+
+/// Copies `source` into the folder `into` under `name`, as [`copy`] does under its own: the name a
+/// conflict prompt offered, say.
+pub fn copy_as(
+    source: &Path,
+    (into, name): (&Path, &OsStr),
+    conflict: Conflict,
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Copied, Error> {
     if lands_within(source, into) {
         return Err(crate::adapters::local_operations::placement::place_error(
             crate::adapters::local_operations::placement::PlaceError::IntoItself,
@@ -276,6 +312,53 @@ pub fn move_item(
         .file_name()
         .ok_or_else(|| crate::error::translated_io_error("The item has no name"))?;
     move_as(source, (into, name), names, cancel, progress)
+}
+
+/// Moves `source` into the folder `into`, under its own name if that is free and otherwise the
+/// next free "name (n)", as Keep Both does for a copy.
+pub fn move_keeping_both(
+    source: &Path,
+    into: &Path,
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Moved, Error> {
+    let name = source
+        .file_name()
+        .ok_or_else(|| crate::error::translated_io_error("The item has no name"))?;
+    match move_as(source, (into, name), names, cancel, progress) {
+        Err(error) if error.kind() == crate::error::ErrorKind::Exists => {}
+        moved => return moved,
+    }
+    move_numbered(source, into, names, cancel, progress)
+}
+
+/// Moves `source` into the folder `into` under the first free "name (n)", where its own name is
+/// known to be taken.
+pub fn move_numbered(
+    source: &Path,
+    into: &Path,
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Moved, Error> {
+    use crate::adapters::local_operations::{mount_profile, names::numbered_names};
+    let name = source
+        .file_name()
+        .ok_or_else(|| crate::error::translated_io_error("The item has no name"))?;
+    let exists = |error: &Error| error.kind() == crate::error::ErrorKind::Exists;
+    let folder = crate::adapters::local_operations::native_fs::open_local_parent_directory(into)
+        .map_err(crate::error::io_error)?;
+    let limit = mount_profile::name_limit(fs(), folder.as_fd());
+    let is_directory = std::fs::symlink_metadata(source).is_ok_and(|meta| meta.is_dir());
+    let mut last = None;
+    for candidate in numbered_names(name, is_directory, limit) {
+        match move_as(source, (into, &candidate), names, cancel, progress) {
+            Err(error) if exists(&error) => last = Some(error),
+            moved => return moved,
+        }
+    }
+    Err(last.unwrap_or_else(|| crate::error::translated_io_error("No free name was left")))
 }
 
 /// Moves `source` into the folder `into` under `name`, as [`move_item`] does under its own; undo

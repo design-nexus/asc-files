@@ -192,10 +192,7 @@ fn run(fixture: &Fixture, journal: &Journal, action: Action) -> Vec<Event> {
     jobs::start(
         Request {
             into: fixture.path("dest"),
-            items: vec![Item {
-                source: fixture.path("source/photos"),
-                action,
-            }],
+            items: vec![Item::new(fixture.path("source/photos"), action)],
             names: NameMode::Fix,
             record: Some(Record {
                 journal: journal.clone(),

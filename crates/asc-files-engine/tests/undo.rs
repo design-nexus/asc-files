@@ -53,7 +53,7 @@ impl Fixture {
                 into: self.path("dest"),
                 items: items
                     .into_iter()
-                    .map(|(source, action)| Item { source, action })
+                    .map(|(source, action)| Item::new(source, action))
                     .collect(),
                 names: NameMode::Fix,
                 record: Some(Record {
@@ -351,10 +351,7 @@ fn a_move_across_drives_is_undone_across_them() {
     jobs::start(
         Request {
             into: other.path().to_path_buf(),
-            items: vec![Item {
-                source: fixture.path("source/tree"),
-                action: Action::Move,
-            }],
+            items: vec![Item::new(fixture.path("source/tree"), Action::Move)],
             names: NameMode::Fix,
             record: Some(Record {
                 journal: fixture.journal.clone(),

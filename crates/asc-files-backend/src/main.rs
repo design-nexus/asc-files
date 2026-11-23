@@ -315,12 +315,33 @@ fn job_request(params: &Value) -> Result<Request, (i64, String)> {
                     }
                 }),
                 Some("merge") => Action::Merge(merge_plan(item)?),
-                Some("move") => Action::Move,
+                Some("move") => match item.get("conflict").and_then(Value::as_str) {
+                    None | Some("fail") => Action::Move,
+                    Some("keepBoth") => Action::MoveKeepingBoth,
+                    Some(other) => {
+                        return Err((
+                            INVALID_PARAMS,
+                            format!("unknown conflict {other} for a move"),
+                        ));
+                    }
+                },
                 Some("replace") => Action::Replace,
                 Some("trash") => Action::Trash,
                 other => return Err((INVALID_PARAMS, format!("unknown action {other:?}"))),
             };
-            Ok(Item { source, action })
+            let name = match item.get("name") {
+                None | Some(Value::Null) => None,
+                Some(name) => Some(
+                    name.as_str()
+                        .map(std::ffi::OsString::from)
+                        .ok_or((INVALID_PARAMS, "name must be a string".to_owned()))?,
+                ),
+            };
+            Ok(Item {
+                source,
+                action,
+                name,
+            })
         })
         .collect::<Result<_, _>>()?;
     let names = match params.get("names").and_then(Value::as_str) {
@@ -415,7 +436,7 @@ fn no_history() -> (i64, String) {
 fn default_label(items: &[Item]) -> String {
     let verb = |action: &Action| match action {
         Action::Copy(_) | Action::Merge(_) => "Copy",
-        Action::Move => "Move",
+        Action::Move | Action::MoveKeepingBoth => "Move",
         Action::Replace => "Replace",
         Action::Trash => "Move to Trash",
     };

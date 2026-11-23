@@ -11,6 +11,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
+    ffi::OsString,
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, OnceLock,
@@ -22,6 +23,7 @@ use std::{
 };
 
 use crate::{
+    adapters::local_operations::case_variants::{self, CaseVariants, Saved},
     drives,
     error::Error,
     merge::{self, MergePlan},
@@ -39,6 +41,8 @@ pub enum Action {
     /// Merge a folder into the one of its name, with a choice for each clash; see [`merge`].
     Merge(MergePlan),
     Move,
+    /// Move, taking the next free "name (n)" where the name is taken.
+    MoveKeepingBoth,
     /// Copy, replacing what holds the name; the original goes to the Trash.
     Replace,
     Trash,
@@ -48,6 +52,19 @@ pub enum Action {
 pub struct Item {
     pub source: PathBuf,
     pub action: Action,
+    /// The name to give the item in the destination instead of its own, as a conflict prompt
+    /// offered it. Used by copies and moves.
+    pub name: Option<OsString>,
+}
+
+impl Item {
+    pub fn new(source: impl Into<PathBuf>, action: Action) -> Self {
+        Self {
+            source: source.into(),
+            action,
+            name: None,
+        }
+    }
 }
 
 /// A batch: every item lands in `into` (ignored by [`Action::Trash`]).
@@ -185,6 +202,19 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
     let settle = (durable && !cancel.is_cancelled()).then(|| ops::Settle::open(&request.into));
     let (mut done, mut failed, mut not_attempted) = (0, 0, 0);
     let mut steps = Vec::new();
+    // Items whose names differ only in case: a later one a case-insensitive destination takes for
+    // an earlier one is numbered, as no one chose a conflict for it.
+    let mut variants = CaseVariants::new(request.items.iter().enumerate().filter_map(
+        |(index, item)| {
+            let named = matches!(item.action, Action::Copy(Conflict::Fail) | Action::Move);
+            let name = item
+                .name
+                .clone()
+                .or_else(|| Some(item.source.file_name()?.to_os_string()));
+            name.filter(|_| named).map(|name| (index, name))
+        },
+    ));
+    let folds = case_variants::folds(&request.into);
     for (index, item) in request.items.iter().enumerate() {
         let (outcome, step) = if cancel.is_cancelled() {
             (Outcome::NotAttempted, Vec::new())
@@ -193,11 +223,18 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
                 job,
                 index,
                 item,
-                (&request.into, request.names),
+                (
+                    &request.into,
+                    request.names,
+                    (&variants.earlier(index), folds),
+                ),
                 cancel,
                 &send,
             )
         };
+        if let Outcome::Done { name, .. } = &outcome {
+            variants.saved(index, name);
+        }
         steps.extend(step);
         match outcome {
             Outcome::Done { .. } => done += 1,
@@ -305,7 +342,7 @@ fn run_item(
     job: JobId,
     index: usize,
     item: &Item,
-    (into, names): (&std::path::Path, NameMode),
+    (into, names, earlier): (&std::path::Path, NameMode, (&[Saved], bool)),
     cancel: &Cancel,
     send: &(impl Fn(Event) + Sync),
 ) -> (Outcome, Vec<Step>) {
@@ -340,18 +377,49 @@ fn run_item(
                 (names, cancel, &progress),
             ),
             Action::Merge(plan) => merged(source, into, plan, (names, cancel, &progress)),
-            &Action::Copy(conflict) => ops::copy(source, into, conflict, names, cancel, &progress)
-                .map(|copied| {
-                    let step = Step::copied(source, (into, &copied.name), conflict, false);
-                    (into.join(copied.name), copied.changes, Vec::from_iter(step))
-                })
-                .map_err(plain),
-            Action::Move => ops::move_item(source, into, names, cancel, &progress)
-                .map(|moved| {
-                    let step = Step::moved(source, (into, &moved));
-                    (into.join(moved.name), moved.changes, Vec::from_iter(step))
-                })
-                .map_err(plain),
+            &Action::Copy(conflict) => {
+                let copy = |conflict| match &item.name {
+                    Some(name) => {
+                        ops::copy_as(source, (into, name), conflict, names, cancel, &progress)
+                    }
+                    None => ops::copy(source, into, conflict, names, cancel, &progress),
+                };
+                let copied = if aliased_by_an_earlier(item, into, earlier) {
+                    copy(Conflict::KeepBoth).map(|copied| aliased(source, copied))
+                } else {
+                    copy(conflict)
+                };
+                copied
+                    .map(|copied| {
+                        let step = Step::copied(source, (into, &copied.name), conflict, false);
+                        (into.join(copied.name), copied.changes, Vec::from_iter(step))
+                    })
+                    .map_err(plain)
+            }
+            Action::Move | Action::MoveKeepingBoth => {
+                let keeping_both = |item: &Item| {
+                    ops::move_keeping_both(&item.source, into, names, cancel, &progress)
+                };
+                let moved = match (&item.action, &item.name) {
+                    (_, Some(name)) => ops::move_as(source, (into, name), names, cancel, &progress),
+                    (Action::MoveKeepingBoth, None) => keeping_both(item),
+                    _ if aliased_by_an_earlier(item, into, earlier) => {
+                        ops::move_numbered(source, into, names, cancel, &progress).map(|moved| {
+                            ops::Moved {
+                                changes: aliased_changes(source, &moved.name, moved.changes),
+                                ..moved
+                            }
+                        })
+                    }
+                    _ => ops::move_item(source, into, names, cancel, &progress),
+                };
+                moved
+                    .map(|moved| {
+                        let step = Step::moved(source, (into, &moved));
+                        (into.join(moved.name), moved.changes, Vec::from_iter(step))
+                    })
+                    .map_err(plain)
+            }
             Action::Replace => ops::replace(source, into, names, cancel, &progress)
                 .map(|replaced| {
                     let step = Step::replaced(source, (into, &replaced));
@@ -460,4 +528,35 @@ mod tests {
         cancel.cancel();
         assert_eq!(finished.recv_timeout(Duration::from_secs(5)), Ok(()));
     }
+}
+
+/// Whether the name an item asks for in `into` is held by an item of this batch saved earlier
+/// under another spelling. Where the destination's rules fold case that is known; elsewhere, as
+/// in a casefolded folder, only looking the name up shows it.
+fn aliased_by_an_earlier(item: &Item, into: &Path, (earlier, folds): (&[Saved], bool)) -> bool {
+    item.name.is_none()
+        && !earlier.is_empty()
+        && (folds
+            || item
+                .source
+                .file_name()
+                .is_some_and(|name| case_variants::taken_by(&into.join(name), earlier)))
+}
+
+fn aliased(source: &Path, copied: ops::Copied) -> ops::Copied {
+    ops::Copied {
+        changes: aliased_changes(source, &copied.name, copied.changes),
+        ..copied
+    }
+}
+
+/// Reports the numbered name an aliased item was saved under, before what the copy reported.
+fn aliased_changes(source: &Path, saved: &std::ffi::OsStr, changes: Changes) -> Changes {
+    let mut renamed = vec![ops::Renamed {
+        requested: PathBuf::from(source.file_name().unwrap_or_default()),
+        saved_as: PathBuf::from(saved),
+        cause: ops::RenameCause::Alias,
+    }];
+    renamed.extend(changes.renamed);
+    Changes { renamed, ..changes }
 }
