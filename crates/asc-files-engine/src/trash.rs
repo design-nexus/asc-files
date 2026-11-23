@@ -9,7 +9,7 @@
 //! Restore and delete act only on the entry a listing showed, proven by device and inode.
 
 use std::{
-    ffi::{OsStr, OsString},
+    ffi::OsString,
     io::Write,
     os::unix::{
         ffi::{OsStrExt, OsStringExt},
@@ -48,33 +48,50 @@ pub struct Entry {
 
 /// Moves `item` to the Trash on its own drive, never copying between drives.
 pub fn put(item: &Path) -> Result<Trashed, Error> {
-    let name = item
-        .file_name()
-        .ok_or_else(|| crate::error::translated_io_error("The item has no name"))?
-        .to_os_string();
-    let parent = item
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
+    put_recording(item, None)
+}
+
+/// [`put`], recording `original` as where the item came from when a replace has already moved
+/// it to a hidden name. `original` must be on the item's drive, in a folder that exists.
+pub(crate) fn put_recording(item: &Path, original: Option<&Path>) -> Result<Trashed, Error> {
+    let unnamed = || crate::error::translated_io_error("The item has no name");
     // A symlinked parent would record a path restore cannot trust; record the real one.
-    let parent = std::fs::canonicalize(parent).map_err(os_io_error)?;
-    let item = parent.join(&name);
+    let real = |path: &Path| -> Result<PathBuf, Error> {
+        let name = path.file_name().ok_or_else(unnamed)?;
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        Ok(std::fs::canonicalize(parent)
+            .map_err(os_io_error)?
+            .join(name))
+    };
+    let item = real(item)?;
+    let parent = item.parent().ok_or_else(unnamed)?.to_path_buf();
     let meta = std::fs::symlink_metadata(&item).map_err(os_io_error)?;
+    let original = match original {
+        Some(original) => real(original)?,
+        None => item.clone(),
+    };
+    let name = original.file_name().ok_or_else(unnamed)?.to_os_string();
 
     let home = home_trash();
     let (trash, recorded) = if same_mount_and_device(&parent, meta.dev(), home.parent()) {
-        (home, item.clone())
+        (home, original.clone())
     } else {
         let top = topdir(&parent).ok_or_else(|| unsupported("This item's drive has no Trash"))?;
-        if item == top {
+        if item == top || original == top {
             return Err(unsupported("A drive's top folder cannot go to the Trash"));
         }
-        if in_a_trash(&item, &top) {
+        if in_a_trash(&item, &top) || in_a_trash(&original, &top) {
             return Err(unsupported("This item is already in the Trash"));
         }
+        let relative = original
+            .strip_prefix(&top)
+            .map_err(|_| unsupported("The item's original place is on another drive"))?
+            .to_path_buf();
         let trash = topdir_trash(&top, true)
             .ok_or_else(|| unsupported("This drive's Trash could not be made"))?;
-        let relative = item.strip_prefix(&top).unwrap_or(&item).to_path_buf();
         (trash, relative)
     };
     let (files, info) = (trash.join("files"), trash.join("info"));

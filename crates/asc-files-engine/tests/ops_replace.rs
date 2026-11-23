@@ -96,6 +96,21 @@ fn replace_swaps_in_the_copy_and_trashes_the_original() {
         b"new",
         "a replace copies; the source stays"
     );
+    let entry = asc_files_engine::trash::list()
+        .into_iter()
+        .find(|entry| entry.file == original.file)
+        .expect("listed in the Trash");
+    assert_eq!(
+        entry.original,
+        dest.join("a.txt"),
+        "the record names where the item was, not the hidden stage it passed through"
+    );
+    let stored = original.file.file_name().unwrap().to_str().unwrap();
+    assert!(
+        stored == "a.txt" || stored.starts_with("a.txt."),
+        "stored under its own name, numbered if taken: {stored}"
+    );
+    asc_files_engine::trash::delete(&entry).unwrap();
 }
 
 #[test]
