@@ -14,6 +14,7 @@ use asc_files_engine::{
     error::Error,
     jobs::{self, Action, Event, Item, JobId, Outcome, Request},
     ops::Conflict,
+    trash,
 };
 use serde_json::{Value, json};
 
@@ -117,7 +118,7 @@ impl Session {
                 Ok(json!({
                     "protocolVersion": PROTOCOL_VERSION,
                     "server": "asc-files-backend",
-                    "capabilities": ["list", "jobs.copy", "jobs.move", "jobs.replace", "jobs.trash"],
+                    "capabilities": ["list", "jobs.copy", "jobs.move", "jobs.replace", "jobs.trash", "trash"],
                 }))
             }
             "list.open" => {
@@ -161,6 +162,29 @@ impl Session {
                     handle.cancel();
                 }
                 Ok(Value::Null)
+            }
+            "trash.list" => Ok(json!({
+                "entries": trash::list().iter().map(entry_json).collect::<Vec<_>>(),
+            })),
+            "trash.restore" => {
+                let entry = listed_entry(params)?;
+                let restored = trash::restore(&entry).map_err(operation_error)?;
+                Ok(json!({"path": lossy(&restored)}))
+            }
+            "trash.delete" => {
+                let entry = listed_entry(params)?;
+                trash::delete(&entry).map_err(operation_error)?;
+                Ok(Value::Null)
+            }
+            "trash.empty" => {
+                let (deleted, failed) = trash::empty();
+                Ok(json!({
+                    "deleted": deleted,
+                    "failed": failed
+                        .iter()
+                        .map(|(entry, error)| json!({"info": lossy(&entry.info), "error": error_json(error)}))
+                        .collect::<Vec<_>>(),
+                }))
             }
             "shutdown" => {
                 self.shutting_down = true;
@@ -251,6 +275,28 @@ fn notification(event: Event) -> Value {
         ),
     };
     json!({"jsonrpc": "2.0", "method": method, "params": params})
+}
+
+/// An entry is named by its `.trashinfo`; it is found afresh, so the engine's identity check
+/// refuses one that changed since the client's listing.
+fn listed_entry(params: &Value) -> Result<trash::Entry, (i64, String)> {
+    let info = path_param(params, "info")?;
+    trash::list()
+        .into_iter()
+        .find(|entry| entry.info == info)
+        .ok_or((
+            OPERATION_FAILED,
+            "That item is no longer in the Trash".to_owned(),
+        ))
+}
+
+fn entry_json(entry: &trash::Entry) -> Value {
+    json!({
+        "info": lossy(&entry.info),
+        "file": lossy(&entry.file),
+        "original": lossy(&entry.original),
+        "deleted": entry.deleted,
+    })
 }
 
 fn id(job: JobId) -> u64 {

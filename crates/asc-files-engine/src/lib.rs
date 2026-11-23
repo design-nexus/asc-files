@@ -9,6 +9,7 @@ pub mod i18n;
 pub mod jobs;
 pub mod model;
 pub mod services;
+pub mod trash;
 pub(crate) mod util;
 
 /// The public operations API.

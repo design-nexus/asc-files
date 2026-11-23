@@ -191,6 +191,51 @@ fn the_protocol_end_to_end() {
             .is_some_and(|m| !m.is_empty())
     );
 
+    // Trash round trip. trash.empty is never called: it would empty every Trash this user sees.
+    let doomed = root.path().join("doomed.txt");
+    fs::write(&doomed, b"bye").unwrap();
+    let start = backend.call(
+        "jobs.start",
+        json!({"into": root.path(), "items": [{"source": doomed, "action": "trash"}]}),
+        &mut notes,
+    );
+    let job = start["result"]["job"].clone();
+    backend.until(&mut notes, |n| {
+        n["method"] == "job.finished" && n["params"]["job"] == job
+    });
+    assert!(!doomed.exists());
+    let find = |backend: &mut Backend, notes: &mut Vec<Value>| {
+        let listed = backend.call("trash.list", json!({}), notes);
+        listed["result"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["original"] == json!(doomed))
+            .cloned()
+    };
+    let entry = find(&mut backend, &mut notes).expect("listed in the Trash");
+    let restored = backend.call("trash.restore", json!({"info": entry["info"]}), &mut notes);
+    assert_eq!(restored["result"]["path"], json!(doomed), "{restored}");
+    assert_eq!(fs::read(&doomed).unwrap(), b"bye");
+    let stale = backend.call("trash.restore", json!({"info": entry["info"]}), &mut notes);
+    assert_eq!(
+        stale["error"]["code"], 1,
+        "a restored entry is gone: {stale}"
+    );
+    let start = backend.call(
+        "jobs.start",
+        json!({"into": root.path(), "items": [{"source": doomed, "action": "trash"}]}),
+        &mut notes,
+    );
+    let job = start["result"]["job"].clone();
+    backend.until(&mut notes, |n| {
+        n["method"] == "job.finished" && n["params"]["job"] == job
+    });
+    let entry = find(&mut backend, &mut notes).unwrap();
+    let deleted = backend.call("trash.delete", json!({"info": entry["info"]}), &mut notes);
+    assert!(deleted.get("result").is_some(), "{deleted}");
+    assert!(find(&mut backend, &mut notes).is_none(), "deleted for good");
+
     let bye = backend.call("shutdown", json!({}), &mut notes);
     assert!(bye.get("result").is_some(), "{bye}");
     drop(backend.stdin);

@@ -5,9 +5,17 @@ Files for Ascendant is MIT-licensed (`LICENSE`). Code ported from elsewhere keep
 | Source | Revision | Licence | What came from it |
 |---|---|---|---|
 | Legacy Nyx Files, `nyx-legacy/nyx-files` (itself derived from `lgse/strata@809e2f5`) | `36887fe5f3b40c2a5be50bda1d13f80a426e1a2b`, plus the `fix/replace-in-multi-item-paste` change to `local_operations.rs` | MIT for every ported file (`SPDX-License-Identifier: MIT`, © LGSE Ltd.); the legacy app as a whole is GPL-3.0-or-later, and **no GPL-only file is ported** | The copy/move/placement engine (`adapters/local_operations/**`), mount tables and name rules (`adapters/volume/**`), `model`, the `services` types the engine uses, the fault-injection test harness (`tests/fs_quirks.rs`) and the engine's unit tests |
-| Flea, `thisisgm/flea` | `1af3fa944c54506e808d30f574be9e2ee8bd350f` (v0.4.3) | MIT (© 2026 GM) | Nothing yet. Trash, undo, listing and the job-queue design are planned (Phase A2, A5–A7). The Flea notice is added to `LICENSE` with the first ported file. |
+| Flea, `thisisgm/flea` | `1af3fa944c54506e808d30f574be9e2ee8bd350f` (v0.4.3) | MIT (© 2026 GM, in `LICENSE`) | **Trash location and record rules** (`crates/asc-files-engine/src/trash.rs`, from `src/backend/topdirtrash.rs` and `topdirtrash/locations.rs`): an administrator's `.Trash` only when it is a real sticky folder on the same drive, `$uid` and `.Trash-$uid` private and same-drive, no mount roots or items already in a Trash, records relative to the drive and never restoring outside it, one drive listed once. Rewritten on `rustix`, not copied. Undo, listing and the job-queue design are still to come (A5–A7). |
 
 The port to a GLib-free engine was done in the Files 2.0 spike (`~/Projects/work/nyx-files-2.0-spike/SPIKE-LOG.md`).
 Changes against legacy are recorded there: GLib error and cancellation types replaced, `unicode-segmentation` for
 Pango's grapheme breaks, ring's RNG for staging names, native-path-only `Location`, the `rustix` ≥ 1.1.5 xattr size
 query, and the engine-level into-itself guard.
+
+## Trash: what Flea did and did not have
+
+Flea's own Trash is native only for **putting** items on the home filesystem and in per-drive Trash folders for btrfs
+subvolume and bind mounts. Browsing, restoring and emptying go through the `gio` command-line tool
+(`src/backend/trashbrowse.rs`: "GIO owns the shared Trash store"). Files implements the whole freedesktop.org
+Trash specification natively instead: put, list, restore, delete, empty, the `directorysizes` cache, home and
+per-drive.

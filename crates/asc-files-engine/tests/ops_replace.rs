@@ -4,10 +4,7 @@
 
 use std::{fs, os::unix::fs::MetadataExt, path::Path};
 
-use asc_files_engine::{
-    error::ErrorKind,
-    ops::{self, Cancel, Progress},
-};
+use asc_files_engine::ops::{self, Cancel, Progress};
 
 fn isolated_trash() -> std::path::PathBuf {
     let data = std::env::var("XDG_DATA_HOME").expect("XDG_DATA_HOME set by test-engine.sh");
@@ -141,52 +138,4 @@ fn replace_with_nothing_at_the_name_is_a_plain_copy() {
 
     assert!(replaced.original.is_none());
     assert_eq!(fs::read(dest.join("b.txt")).unwrap(), b"b");
-}
-
-#[test]
-fn trash_refuses_an_item_on_another_filesystem() {
-    isolated_trash();
-    let Ok(other) = tempfile::tempdir_in("/dev/shm") else {
-        eprintln!("SKIP: no /dev/shm");
-        return;
-    };
-    let item = other.path().join("x.txt");
-    fs::write(&item, b"x").unwrap();
-
-    let error = ops::trash(&item).expect_err("refused");
-
-    assert_eq!(error.kind(), ErrorKind::NotSupported, "{error}");
-    assert_eq!(fs::read(&item).unwrap(), b"x", "the item stays");
-}
-
-#[test]
-fn a_replace_whose_original_cannot_be_trashed_leaves_it_in_place() {
-    isolated_trash();
-    let Ok(other) = tempfile::tempdir_in("/dev/shm") else {
-        eprintln!("SKIP: no /dev/shm");
-        return;
-    };
-    let (source, dest) = (other.path().join("source"), other.path().join("dest"));
-    fs::create_dir_all(&source).unwrap();
-    fs::create_dir_all(&dest).unwrap();
-    fs::write(source.join("a.txt"), b"new").unwrap();
-    fs::write(dest.join("a.txt"), b"old").unwrap();
-    let old_inode = fs::metadata(dest.join("a.txt")).unwrap().ino();
-
-    let error = ops::replace(
-        &source.join("a.txt"),
-        &dest,
-        &Cancel::new(),
-        &Progress::new(),
-    )
-    .expect_err("cannot trash here");
-
-    assert_eq!(error.kind(), ErrorKind::NotSupported, "{error}");
-    assert_eq!(fs::read(dest.join("a.txt")).unwrap(), b"old");
-    assert_eq!(
-        fs::metadata(dest.join("a.txt")).unwrap().ino(),
-        old_inode,
-        "the original is back at its name"
-    );
-    assert_eq!(names(&dest), ["a.txt"], "the copy and its stage are gone");
 }
