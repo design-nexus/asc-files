@@ -810,6 +810,36 @@ fn rejected_exchange_falls_back_to_aside_and_is_remembered() -> Result<(), Box<d
     Ok(())
 }
 
+/// Where a replace's publish (its stage renamed to `target`) falls among the renames naming
+/// `target`, found by running one with no fault on this base.
+fn publish_index(directory: bool, mode: u32) -> Result<usize, Box<dyn Error>> {
+    let root = tempfile::tempdir()?;
+    let (source, target) = (root.path().join("source"), root.path().join("target"));
+    write_item(&source, directory, b"new")?;
+    write_item(&target, directory, b"old")?;
+    fs::set_permissions(&target, fs::Permissions::from_mode(mode))?;
+    let quirks = FsQuirks::install(
+        root.path(),
+        without_trash(NFS_SUPER_MAGIC, Quirks::default()),
+    );
+    let _ = replace_reporting(&source, &target, false);
+    let renames: Vec<_> = quirks
+        .calls()
+        .into_iter()
+        .filter(|call| call.op == Op::Rename && call.names.iter().any(|name| name == "target"))
+        .collect();
+    let at = renames.iter().position(|call| {
+        call.names.iter().any(|name| {
+            name.to_string_lossy()
+                .starts_with(".asc-files-replacement-")
+        })
+    });
+    if target.exists() {
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755))?;
+    }
+    at.ok_or_else(|| "the replace published by no rename".into())
+}
+
 #[test]
 fn a_failed_publication_puts_the_original_back() -> Result<(), Box<dyn Error>> {
     let _serial = serial()?;
@@ -824,24 +854,42 @@ fn a_failed_publication_puts_the_original_back() -> Result<(), Box<dyn Error>> {
         ReadOnlyFolder,
         Symlink,
     }
-    for (item, quirks, (op, skip), evicted) in [
-        (Item::File, Quirks::default(), (Op::Rename, 1), false),
-        (Item::Folder, Quirks::default(), (Op::Rename, 1), false),
+    // The failure is injected at the publish: the nth call of `op` naming `at`. For the read-only
+    // folder the base decides how many renames come first, so a dry run finds it.
+    let read_only_publish = publish_index(true, 0o555)?;
+    for (item, quirks, (op, at, skip), evicted) in [
+        (
+            Item::File,
+            Quirks::default(),
+            (Op::Rename, "target", 1),
+            false,
+        ),
+        (
+            Item::Folder,
+            Quirks::default(),
+            (Op::Rename, "target", 1),
+            false,
+        ),
         (
             Item::ReadOnlyFolder,
             Quirks::default(),
-            (Op::Rename, 2),
+            (Op::Rename, "target", read_only_publish),
             false,
         ),
         (
             Item::File,
             Quirks::without_rename_flags(),
-            (Op::Link, 0),
+            (Op::Link, "target", 0),
             false,
         ),
         // The engine's publish is its second rename at the name on FAT (legacy's was the fourth).
-        (Item::File, vfat, (Op::Rename, 1), true),
-        (Item::Symlink, Quirks::sshfs(), (Op::Rename, 1), false),
+        (Item::File, vfat, (Op::Rename, "target", 1), true),
+        (
+            Item::Symlink,
+            Quirks::sshfs(),
+            (Op::Rename, "target", 1),
+            false,
+        ),
     ] {
         let directory = matches!(item, Item::Folder | Item::ReadOnlyFolder);
         let root = tempfile::tempdir()?;
@@ -871,9 +919,9 @@ fn a_failed_publication_puts_the_original_back() -> Result<(), Box<dyn Error>> {
             without_trash(
                 quirks.fs_type.unwrap_or(NFS_SUPER_MAGIC),
                 Quirks {
-                    fail: vec![(op, "target", skip, Errno::IO)],
+                    fail: vec![(op, at, skip, Errno::IO)],
                     before: if evicted {
-                        vec![(op, "target", skip, evicting)]
+                        vec![(op, at, skip, evicting)]
                     } else {
                         Vec::new()
                     },
