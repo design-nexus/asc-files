@@ -888,7 +888,9 @@ fn a_failed_publication_puts_the_original_back() -> Result<(), Box<dyn Error>> {
         if let Item::ReadOnlyFolder = item {
             fs::set_permissions(&target, mode(0o755))?;
         }
-        let error = result.expect_err("the publication fails");
+        let Err(error) = result else {
+            panic!("the publication fails: {item:?}, {op:?} {skip}, evicted: {evicted}");
+        };
         let injected = super::super::native_fs::os_error_detail(Errno::IO);
         assert!(error.message().contains(&injected), "{item:?}: {error}");
         assert!(replaced.is_empty());
