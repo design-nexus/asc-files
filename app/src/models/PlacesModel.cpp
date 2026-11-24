@@ -58,26 +58,32 @@ PlacesModel::PlacesModel(QObject *parent) : QAbstractListModel(parent) {
 }
 
 QList<PlacesModel::Place> PlacesModel::pages() const {
-    return {{Pages, tr("Overview"), {}, OverviewIcon, -1, {}, Browser::Overview},
-            {Pages, tr("Recent"), {}, RecentIcon, -1, {}, Browser::Recent},
-            {Pages, tr("Favorites"), {}, FavoritesIcon, -1, {}, Browser::Favorites}};
+    return {{Pages, tr("Overview"), {}, OverviewIcon, -1, {}, Browser::Overview, QStringLiteral("overview")},
+            {Pages, tr("Recent"), {}, RecentIcon, -1, {}, Browser::Recent, QStringLiteral("recent")},
+            {Pages, tr("Favorites"), {}, FavoritesIcon, -1, {}, Browser::Favorites, QStringLiteral("favorites")}};
+}
+
+QList<PlacesModel::Place> PlacesModel::defaults() const {
+    QList<Place> places = pages() + folders();
+    places.append(trashPlace());
+    return places;
 }
 
 QList<PlacesModel::Place> PlacesModel::folders() const {
-    QList<Place> places{{Folders, tr("Home"), QDir::homePath(), HomeIcon}};
+    QList<Place> places{{Folders, tr("Home"), QDir::homePath(), HomeIcon, -1, {}, 0, QStringLiteral("home")}};
     // Named as Files names them (Qt calls the videos folder "Movies").
-    const QList<std::tuple<QStandardPaths::StandardLocation, QString, QString>> standard{
-        {QStandardPaths::DesktopLocation, tr("Desktop"), DesktopIcon},
-        {QStandardPaths::DocumentsLocation, tr("Documents"), DocumentsIcon},
-        {QStandardPaths::DownloadLocation, tr("Downloads"), DownloadsIcon},
-        {QStandardPaths::MusicLocation, tr("Music"), MusicIcon},
-        {QStandardPaths::PicturesLocation, tr("Pictures"), PicturesIcon},
-        {QStandardPaths::MoviesLocation, tr("Videos"), VideosIcon}};
-    for (const auto &[location, name, icon] : standard) {
+    const QList<std::tuple<QStandardPaths::StandardLocation, QString, QString, QString>> standard{
+        {QStandardPaths::DesktopLocation, tr("Desktop"), DesktopIcon, QStringLiteral("desktop")},
+        {QStandardPaths::DocumentsLocation, tr("Documents"), DocumentsIcon, QStringLiteral("documents")},
+        {QStandardPaths::DownloadLocation, tr("Downloads"), DownloadsIcon, QStringLiteral("downloads")},
+        {QStandardPaths::MusicLocation, tr("Music"), MusicIcon, QStringLiteral("music")},
+        {QStandardPaths::PicturesLocation, tr("Pictures"), PicturesIcon, QStringLiteral("pictures")},
+        {QStandardPaths::MoviesLocation, tr("Videos"), VideosIcon, QStringLiteral("videos")}};
+    for (const auto &[location, name, icon, key] : standard) {
         const QString path = QStandardPaths::writableLocation(location);
         // A folder XDG names that is Home itself, or missing, is left out.
         if (!path.isEmpty() && path != QDir::homePath() && QFileInfo(path).isDir()) {
-            places.append({Folders, name, path, icon});
+            places.append({Folders, name, path, icon, -1, {}, 0, key});
         }
     }
     return places;
@@ -86,7 +92,7 @@ QList<PlacesModel::Place> PlacesModel::folders() const {
 QList<PlacesModel::Place> PlacesModel::pinned() const {
     QList<Place> places;
     for (const QString &path : settings().value(QStringLiteral("sidebar/pinned")).toStringList()) {
-        places.append({Pinned, QFileInfo(path).fileName(), path, PinnedIcon});
+        places.append({Pinned, QFileInfo(path).fileName(), path, PinnedIcon, -1, {}, 0, QStringLiteral("pinned:") + path});
     }
     return places;
 }
@@ -97,7 +103,7 @@ QList<PlacesModel::Place> PlacesModel::drives() const {
         const double total = double(volume.bytesTotal());
         const double used = total > 0 ? 1.0 - double(volume.bytesAvailable()) / total : -1;
         const QString free = tr("%1 free").arg(QLocale().formattedDataSize(volume.bytesAvailable(), 0, QLocale::DataSizeSIFormat));
-        return Place{Storage, name, volume.rootPath(), DriveIcon, used, free};
+        return Place{Storage, name, volume.rootPath(), DriveIcon, used, free, 0, QStringLiteral("drive:") + volume.rootPath()};
     };
     places.append(describe(QStorageInfo::root(), tr("System")));
     for (const QStorageInfo &volume : QStorageInfo::mountedVolumes()) {
@@ -109,11 +115,133 @@ QList<PlacesModel::Place> PlacesModel::drives() const {
     return places;
 }
 
+PlacesModel::Place PlacesModel::trashPlace() const {
+    return {Storage, tr("Trash"), {}, TrashIcon, -1, {}, Browser::Trash, QStringLiteral("trash")};
+}
+
 void PlacesModel::rebuild() {
+    const QStringList hidden = settings().value(QStringLiteral("sidebar/hidden")).toStringList();
+    const auto shown = [&](QList<Place> places) {
+        places.removeIf([&](const Place &place) { return hidden.contains(place.key); });
+        return places;
+    };
+    // The folders in the saved order; folders the order does not name follow in theirs.
+    QList<Place> folders = shown(this->folders());
+    const QStringList order = settings().value(QStringLiteral("sidebar/order")).toStringList();
+    std::stable_sort(folders.begin(), folders.end(), [&](const Place &a, const Place &b) {
+        const qsizetype at = order.indexOf(a.key), bt = order.indexOf(b.key);
+        return (at < 0 ? order.size() : at) < (bt < 0 ? order.size() : bt);
+    });
     beginResetModel();
-    m_places = pages() + folders() + pinned() + drives();
-    m_places.append({Storage, tr("Trash"), {}, TrashIcon, -1, {}, Browser::Trash});
+    m_places = shown(pages()) + folders + pinned() + drives();
+    // The Trash comes last; refreshDrives counts on it.
+    m_trashShown = !hidden.contains(QStringLiteral("trash"));
+    if (m_trashShown) {
+        m_places.append(trashPlace());
+    }
     endResetModel();
+}
+
+int PlacesModel::mode() const { return settings().value(QStringLiteral("sidebar/mode"), Full).toInt(); }
+
+void PlacesModel::setMode(int mode) {
+    if (mode != this->mode() && mode >= Full && mode <= Hidden) {
+        QSettings saved = settings();
+        saved.setValue(QStringLiteral("sidebar/mode"), mode);
+        emit modeChanged();
+    }
+}
+
+void PlacesModel::stepMode() { setMode((mode() + 1) % 3); }
+
+bool PlacesModel::coloredIcons() const { return settings().value(QStringLiteral("sidebar/coloredIcons"), true).toBool(); }
+
+void PlacesModel::setColoredIcons(bool colored) {
+    if (colored != coloredIcons()) {
+        QSettings saved = settings();
+        saved.setValue(QStringLiteral("sidebar/coloredIcons"), colored);
+        emit appearanceChanged();
+    }
+}
+
+QVariantMap PlacesModel::sectionColors() const {
+    QSettings saved = settings();
+    saved.beginGroup(QStringLiteral("sidebar/colors"));
+    QVariantMap colors;
+    for (const QString &section : saved.childKeys()) {
+        colors.insert(section, saved.value(section));
+    }
+    return colors;
+}
+
+void PlacesModel::setSectionColor(int section, const QString &swatch) {
+    QSettings saved = settings();
+    const QString key = QStringLiteral("sidebar/colors/%1").arg(section);
+    if (swatch.isEmpty()) {
+        saved.remove(key);
+    } else {
+        saved.setValue(key, swatch);
+    }
+    emit appearanceChanged();
+}
+
+void PlacesModel::setHidden(const QString &key, bool hidden) {
+    QStringList keys = settings().value(QStringLiteral("sidebar/hidden")).toStringList();
+    const bool known = std::any_of(m_places.cbegin(), m_places.cend(), [&](const Place &place) { return place.key == key; }) ||
+                       std::any_of(defaults().cbegin(), defaults().cend(), [&](const Place &place) { return place.key == key; });
+    if (!known || keys.contains(key) == hidden || !hideable(key)) {
+        return;
+    }
+    if (hidden) {
+        keys.append(key);
+    } else {
+        keys.removeAll(key);
+    }
+    QSettings saved = settings();
+    saved.setValue(QStringLiteral("sidebar/hidden"), keys);
+    saved.sync();
+    rebuild();
+    emit hiddenChanged();
+}
+
+QVariantList PlacesModel::hiddenPlaces() const {
+    const QStringList hidden = settings().value(QStringLiteral("sidebar/hidden")).toStringList();
+    QVariantList result;
+    for (const Place &place : defaults()) {
+        if (hidden.contains(place.key)) {
+            result.append(QVariantMap{{QStringLiteral("key"), place.key}, {QStringLiteral("name"), place.name}});
+        }
+    }
+    return result;
+}
+
+void PlacesModel::moveFolder(const QString &key, const QString &before) {
+    QStringList order;
+    for (const Place &place : std::as_const(m_places)) {
+        if (place.section == Folders) {
+            order.append(place.key);
+        }
+    }
+    if (!order.contains(key) || !order.contains(before) || key == before) {
+        return;
+    }
+    order.removeAll(key);
+    order.insert(order.indexOf(before), key);
+    QSettings saved = settings();
+    saved.setValue(QStringLiteral("sidebar/order"), order);
+    saved.sync();
+    rebuild();
+}
+
+void PlacesModel::resetFolderOrder() {
+    QSettings saved = settings();
+    saved.remove(QStringLiteral("sidebar/order"));
+    saved.sync();
+    rebuild();
+}
+
+bool PlacesModel::hideable(const QString &key) {
+    return !key.startsWith(QLatin1String("pinned:")) && !key.startsWith(QLatin1String("drive:"));
 }
 
 void PlacesModel::refreshDrives() {
@@ -122,8 +250,8 @@ void PlacesModel::refreshDrives() {
     const int first = int(std::find_if(m_places.cbegin(), m_places.cend(), [](const Place &place) {
                               return place.section == Storage;
                           }) - m_places.cbegin());
-    // The drives, then the Trash, which stays.
-    const int old = int(m_places.size()) - 1 - first;
+    // The drives, then the Trash when it is shown, which stays.
+    const int old = int(m_places.size()) - (m_trashShown ? 1 : 0) - first;
     bool same = old == now.size();
     for (int i = 0; same && i < old; ++i) {
         same = m_places.at(first + i).path == now.at(i).path;
@@ -199,6 +327,10 @@ QVariant PlacesModel::data(const QModelIndex &index, int role) const {
         return place.page;
     case FirstInSectionRole:
         return index.row() == 0 || m_places.at(index.row() - 1).section != place.section;
+    case KeyRole:
+        return place.key;
+    case HideableRole:
+        return hideable(place.key);
     default:
         return {};
     }
@@ -207,5 +339,6 @@ QVariant PlacesModel::data(const QModelIndex &index, int role) const {
 QHash<int, QByteArray> PlacesModel::roleNames() const {
     return {{SectionRole, "section"}, {NameRole, "name"},   {PathRole, "path"},
             {IconRole, "icon"},       {UsedRole, "used"}, {FreeTextRole, "freeText"},
-            {PageRole, "page"}, {FirstInSectionRole, "firstInSection"}};
+            {PageRole, "page"}, {FirstInSectionRole, "firstInSection"}, {KeyRole, "key"},
+            {HideableRole, "hideable"}};
 }

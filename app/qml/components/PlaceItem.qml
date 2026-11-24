@@ -18,8 +18,16 @@ AbstractButton {
     property bool selected: false
     /// How full the drive is, 0–1; negative for a place that is not a drive.
     property real used: -1
+    /// In the icon rail: the icon alone, the name in a tooltip.
+    property bool compact: false
+    /// Something is being dragged over it to be put here.
+    property bool dropTarget: false
 
-    implicitHeight: Theme.placeHeight + (used >= 0 ? 6 : 0)
+    ToolTip.text: text
+    ToolTip.visible: compact && hovered
+    ToolTip.delay: 300
+
+    implicitHeight: Theme.placeHeight + (used >= 0 && !compact ? 6 : 0)
     implicitWidth: 200
     focusPolicy: Qt.TabFocus
     Accessible.name: text
@@ -29,12 +37,20 @@ AbstractButton {
         width: place.width - 12
         height: Theme.placeHeight
         radius: Theme.radius
-        color: place.selected ? Theme.selection : place.hovered ? Theme.hover : "transparent"
-        border.width: place.selected || place.visualFocus ? 1 : 0
+        color: place.selected || place.dropTarget ? Theme.selection : place.hovered ? Theme.hover : "transparent"
+        border.width: place.selected || place.visualFocus || place.dropTarget ? 1 : 0
         border.color: Theme.selectionEdge
     }
     contentItem: Item {
+        Icon {
+            visible: place.compact
+            anchors.centerIn: parent
+            path: place.iconPath
+            color: place.sectionColor
+            fill: place.iconFilled ? place.sectionColor : "transparent"
+        }
         RowLayout {
+            visible: !place.compact
             x: 20
             width: place.width - 36
             height: Theme.placeHeight
@@ -59,7 +75,7 @@ AbstractButton {
             }
         }
         Rectangle {
-            visible: place.used >= 0
+            visible: place.used >= 0 && !place.compact
             x: 49
             y: Theme.placeHeight - 2
             width: place.width - 66

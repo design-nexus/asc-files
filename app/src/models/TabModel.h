@@ -35,7 +35,7 @@ public:
     Q_INVOKABLE void next();
     Q_INVOKABLE void previous();
 
-    /// Opens the tabs the last session left, where they were; false when there were none.
+    /// Opens the tabs the last session left, where they were; false when it left fewer than two.
     bool restoreSession();
 
     int rowCount(const QModelIndex &parent = {}) const override;

@@ -96,6 +96,19 @@ private slots:
         QTRY_COMPARE(window->width(), 800);
         const auto rightEdge = [&] { return list->mapToScene(QPointF(list->width(), 0)).x(); };
         QTRY_VERIFY2(rightEdge() <= window->width() && list->width() > 200, qPrintable(QString::number(rightEdge())));
+
+        // The sidebar as an icon rail, then hidden, then full again: the list widens each time.
+        window->resize(1400, 900);
+        QTRY_COMPARE(sidebar->width(), 229.0);
+        const qreal full = list->width();
+        places.stepMode();
+        QTRY_COMPARE(sidebar->width(), 56.0);
+        QTRY_VERIFY(list->width() > full);
+        places.stepMode();
+        QTRY_VERIFY(!sidebar->isVisible());
+        places.stepMode();
+        QTRY_VERIFY(sidebar->isVisible());
+        QTRY_COMPARE(sidebar->width(), 229.0);
     }
 };
 

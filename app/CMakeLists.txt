@@ -43,6 +43,7 @@ qt_add_qml_module(asc_files_qml
         qml/components/Badge.qml
         qml/components/Breadcrumb.qml
         qml/components/Button.qml
+        qml/components/ContextMenu.qml
         qml/components/FileRow.qml
         qml/components/Icon.qml
         qml/components/IconButton.qml

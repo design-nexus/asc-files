@@ -41,7 +41,8 @@ void TabModel::saveSession() const {
 bool TabModel::restoreSession() {
     const QSettings session = settings();
     const QStringList saved = session.value(QStringLiteral("session/tabs")).toStringList();
-    if (saved.isEmpty()) {
+    // As legacy Files: a single tab is not brought back; Files starts at Home.
+    if (saved.size() < 2) {
         return false;
     }
     m_restoring = true;

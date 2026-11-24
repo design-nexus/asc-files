@@ -38,6 +38,23 @@ QtObject {
     readonly property color sectionPinned: "#e8a33d"
     readonly property color sectionStorage: "#8b6cf0"
 
+    // Swatches a sidebar section can take, by the names the settings keep (they follow the theme).
+    readonly property var swatches: ({
+        "blue": "#3d8ae8", "cyan": "#3cc4c9", "green": "#59d45b", "yellow": "#eeb43f",
+        "orange": "#e8a33d", "red": "#f2655f", "pink": "#c95fc6", "purple": "#8b6cf0"
+    })
+    readonly property var swatchNames: ["blue", "cyan", "green", "yellow", "orange", "red", "pink", "purple"]
+
+    // A section's colour: its chosen swatch, else the theme's ("1" Folders, "2" Pinned, "3" Storage).
+    function sectionColor(section, chosen) {
+        const swatch = chosen ? chosen[String(section)] : undefined
+        if (swatch !== undefined && swatches[swatch] !== undefined)
+            return swatches[swatch]
+        return section === 2 ? sectionPinned : section === 3 ? sectionStorage : sectionFolders
+    }
+
+    readonly property int railWidth: 56
+
     // Type: Inter at 13.5 px, the system's sans.
     readonly property string family: "Inter"
     readonly property real body: 10.125            // points (13.5 px at 96 dpi)
