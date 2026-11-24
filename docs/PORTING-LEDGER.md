@@ -16,16 +16,20 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `aliases.rs` | 11 | 8 | 0 | 3 |
 | `closes.rs` | 1 | 0 | 0 | 1 |
 | `conflicts.rs` | 20 | 15 | 0 | 5 |
+| `create_entry.rs` | 6 | 5 | 0 | 1 |
 | `file_copy.rs` | 29 | 28 | 1 | 0 |
 | `folder_copy.rs` | 22 | 21 | 1 (upstream: run by another test) | 0 |
 | `moves.rs` | 51 | 42 | 0 | 9 |
-| `naming.rs` | 21 | 17 | 0 | 4 |
+| `naming.rs` | 21 | 19 | 0 | 2 |
+| `paste_results.rs` | 8 | 6 | 0 | 2 |
 | `paths.rs` | 3 | 2 | 0 | 1 |
 | `placement.rs` | 39 | 37 | 0 | 2 |
+| `release.rs` | 5 | 0 | 0 | 5 |
 | `replacement.rs` | 28 | 25 | 0 | 3 |
+| `trash_capabilities.rs` | 1 | 0 | 0 | 1 (ignored upstream too) |
 | `merge.rs`, first pass | 66 | 14 | 0 | 2 (50 still to port: legacy's merge hooks and seams, and its snapshot undo) |
-| **So far** | **241** | **209** | **2** | **30** |
-| Remaining 10 files, and 50 of `merge.rs` | 251 | – | – | – |
+| **So far** | **261** | **222** | **2** | **37** |
+| Remaining 7 files (`copy`, `deletion`, `leftovers`, `progress`, `restore_safety`, `sync`, `undo`), and 50 of `merge.rs` | 231 | – | – | – |
 
 ## Ignored
 
@@ -44,7 +48,8 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `replacement::a_target_is_replaced_only_while_its_mount_still_knows_it`, the Evicted rows (FAT, SFTP, SMB once inode numbers went) | **Open gap.** Where a mount renumbers an evicted original, legacy still knew it and replaced it; the engine refuses. The safe way round: every row that must be refused runs and is refused. |
 | Same test, ReplacedLonger on a path-keyed SFTP mount | **Open gap.** Refused as it must be, but the item put in the original's place is left set aside (and named in the error) instead of put back. |
 | `replacement::rejected_exchange_falls_back_to_aside_and_is_remembered`, the exchange count | Legacy skipped the exchange for a read-only staged folder; the engine tries it, is refused, and falls back. The outcome and what is remembered are checked. |
-| `replacement::a_failed_publication_puts_the_original_back`, the FAT row | Re-aimed at the engine's publish (its second rename at the name on FAT; legacy's was its fourth). |
+| `replacement::a_failed_publication_puts_the_original_back`, the FAT row | Re-aimed at the engine's publish, its fourth rename at the name on FAT as in legacy (the refused swap through an originals folder makes two). |
+| `paste_results::an_item_replaced_without_trash_is_left_out_of_the_paste_undo`, the order of moves | Legacy moved the items without a conflict first; jobs keep the order asked for. The moves are compared as a set. |
 
 ## Not ported
 
@@ -55,8 +60,6 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `aliases::same_named_items_from_three_folders_all_land_whatever_their_order_and_choice` | Same. |
 | `naming::pasted_names_fixed_for_fat_are_planned_after_the_names_kept` | Same: the names a conflict prompt shows. |
 | `naming::transfer_targets_resolve_trash_leaf_names` | `trash://` URIs belong to the remote/GVfs adapter. |
-| `naming::a_typed_name_is_refused_for_the_first_thing_its_mount_would_change` | Validation of a typed name (legacy `typed_names.rs`). **Gap:** the API has no rename, new folder or new file yet; returns with them. |
-| `naming::a_typed_name_refusal_quotes_each_character_and_gives_the_code_point_of_those_that_show_nothing` | Same. |
 | `closes::what_an_operation_lets_go_of_is_closed_on_a_worker` | GIO objects closed off the UI thread: the engine has neither. |
 | `conflicts::transfers_into_the_same_location_or_a_descendant_are_noops` | Legacy's planning helper `transfer_is_noop`; its cases run end to end in `cutting_in_the_same_folder_remains_a_noop`, `pasting_onto_itself_with_replace_is_a_noop` and the engine's into-itself guard. |
 | `conflicts::transfer_noops_resolve_aliased_destinations_but_not_symlink_sources` | Same helper. |
@@ -79,6 +82,11 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `replacement::replacement_publication_preserves_concurrent_arrivals` | Legacy `replacement.rs` publication internals (`publish_staged_replacement`), superseded by `ops::replace`'s own staging, exchange and set-aside. |
 | `replacement::replacement_publication_reports_a_stage_it_cannot_remove` | Same. |
 | `replacement::replace_falls_back_to_aside_when_trash_lies` | GIO's `g_file_trash` reporting success without moving (GLib #4060); the native Trash moves by rename, which cannot. |
+| `create_entry::a_folder_reported_by_a_file_create_is_a_taken_name` | Legacy's private helper `name_taken`; its rule (a folder at the name refuses an exclusive file create with `EISDIR`, so the name is taken) is in `ops::create` and runs in the ported concurrency tests. |
+| `paste_results::a_cancel_that_cuts_off_an_item_counts_it_as_not_attempted` | Drives the GTK app's `Browser`. Cancelling is the job runner's (`tests/jobs.rs`: items not begun are `NotAttempted`). |
+| `paste_results::only_a_cut_off_between_local_locations_counts_as_not_attempted` | Legacy's rule for remote (`sftp://`) ends of a cut-off paste: the remote adapter. |
+| `release::*` (5) | Files letting go of its own previews of an item before changing it: the app's preview layer (Phase B). |
+| `trash_capabilities::isolated_trash_supports_read_copy_move_restore_and_delete` | Ignored upstream; GVfs `trash://` end to end: the remote/GVfs adapter. |
 | `paths::validated_children_are_confined_to_native_and_uri_parents` | A typed name may not leave its folder; returns with rename/new folder. The URI half belongs to the remote adapter. |
 
 ## Gaps the port found, and what was done
@@ -134,8 +142,16 @@ ported with a reason. This list must be empty, or every entry justified, before 
   which undo then takes away.
 - **Fixed:** a hard link under another name is replaced like any item; only the same name in the same folder
   (differing at most in case) is the item itself.
-- **Open:** a bulk path for many small items; `rename` on the protocol, new folder and new file with typed-name
-  validation; a paste-planning call.
+- **Added:** typed-name validation (legacy `typed_names.rs`, ported) and `ops::create` for a new folder or file:
+  refused before anything is made where the drive would store another name, an existing name refused or, when
+  asked, the next free number taken, safe against creates racing for the same name.
+- **Fixed:** on a drive with no Trash, Replace swaps the original out into an originals folder under its own
+  name, as legacy did, rather than leaving it at the stage's hidden name; an original that then cannot be
+  deleted (undeletable, or still open in a program on NFS or SMB) stays there and is reported as kept
+  (`KeptCause::OriginalNotRemoved`, with why), where before it was deleted silently or lost under the stage name.
+  `jobs` carries `original_deleted` (`originalDeleted` on `job.itemDone`), and a replace whose original was
+  deleted or kept is neither filed for undo nor reported as created.
+- **Open:** a bulk path for many small items; `rename` and `create` on the protocol; a paste-planning call.
 
 ## Archives (legacy: 225 tests)
 

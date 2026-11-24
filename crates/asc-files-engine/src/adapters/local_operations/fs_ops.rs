@@ -126,6 +126,11 @@ pub(crate) trait FsOps: super::environment::FsEnvironment {
     fn dup(&self, fd: BorrowedFd<'_>) -> Result<OwnedFd, Errno>;
     fn stat_vfs(&self, fd: BorrowedFd<'_>) -> Result<rustix::fs::StatVfs, Errno>;
     fn rename(&self, from: Entry<'_>, to: Entry<'_>, flags: RenameFlags) -> Result<(), Errno>;
+    /// Whether the item at `path` could go to a Trash on its drive.
+    fn can_trash(&self, path: &Path) -> bool {
+        crate::trash::available(path)
+    }
+
     /// Moves `from` into a Trash folder, never over anything there. A rename on the real
     /// filesystem; the seam lets a test refuse it as a drive would.
     fn trash(&self, from: Entry<'_>, to: Entry<'_>) -> Result<(), Errno> {

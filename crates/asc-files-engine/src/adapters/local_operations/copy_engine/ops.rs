@@ -112,11 +112,16 @@ pub struct Changes {
     pub renamed: Vec<Renamed>,
     pub skipped: Vec<Skipped>,
     pub kept: Vec<Kept>,
+    /// A replace deleted the original, its drive having no Trash; see [`Replaced`].
+    pub original_deleted: bool,
 }
 
 impl Changes {
     pub fn is_empty(&self) -> bool {
-        self.renamed.is_empty() && self.skipped.is_empty() && self.kept.is_empty()
+        self.renamed.is_empty()
+            && self.skipped.is_empty()
+            && self.kept.is_empty()
+            && !self.original_deleted
     }
 
     /// What `copy` noted, for the item published as `published` in the destination folder.
@@ -150,6 +155,7 @@ impl Changes {
                 })
                 .collect(),
             kept: Vec::new(),
+            original_deleted: false,
         }
     }
 }
@@ -203,22 +209,89 @@ pub fn copy(
     copy_as(source, (into, name), conflict, names, cancel, progress)
 }
 
-/// A name given for an item must be one plain name: not empty, `.` or `..`, and without `/`.
+/// A name given for an item must be one plain name: not empty, `.` or `..`, and without `/` or
+/// NUL. Worded as legacy's rename and new-item prompts said it.
 fn plain_name(name: &OsStr) -> Result<(), Error> {
-    use std::os::unix::ffi::OsStrExt;
-    let bytes = name.as_bytes();
-    if bytes.is_empty()
-        || bytes == b"."
-        || bytes == b".."
-        || bytes.contains(&b'/')
-        || bytes.contains(&0)
-    {
-        return Err(crate::error::Error::new(
+    let message = match name.to_str() {
+        Some(text) => crate::services::validate_basename(text).err(),
+        None => {
+            use std::os::unix::ffi::OsStrExt;
+            let bytes = name.as_bytes();
+            (bytes.contains(&b'/') || bytes.contains(&0)).then_some("Names cannot contain /")
+        }
+    };
+    match message {
+        Some(message) => Err(Error::new(
             crate::error::ErrorKind::InvalidFilename,
-            &crate::i18n::tr("A name must be a single name, not a path"),
+            &crate::i18n::tr(message),
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Makes a new, empty folder or file called `name` in `into`, never over anything, and returns
+/// where. With `unique`, as for a default name such as "New Folder", a taken name takes the next
+/// free "name (n)"; without, as for a name the user typed, a taken name fails, and a name the
+/// drive would store otherwise is refused before anything is made.
+pub fn create(into: &Path, name: &str, folder: bool, unique: bool) -> Result<PathBuf, Error> {
+    use crate::adapters::local_operations::{
+        fs_ops::Entry, mount_profile::name_limit, names::numbered_name,
+        native_fs::open_local_parent_directory, typed_names,
+    };
+    plain_name(name.as_ref())?;
+    if !unique && let Some(reason) = typed_names::refused_in(into, name, folder) {
+        return Err(Error::new(
+            crate::error::ErrorKind::InvalidFilename,
+            &reason,
         ));
     }
-    Ok(())
+    let dir = open_local_parent_directory(into).map_err(crate::error::io_error)?;
+    let mut limit = None;
+    for number in 0u64.. {
+        let candidate = match number {
+            0 => OsString::from(name),
+            _ => {
+                let limit = *limit.get_or_insert_with(|| name_limit(fs(), dir.as_fd()));
+                numbered_name(name.as_ref(), number, OsStr::new(""), limit, folder)
+            }
+        };
+        let at = Entry::new(&dir, &candidate);
+        let made = if folder {
+            fs().mkdir(at, rustix::fs::Mode::from_raw_mode(0o777))
+        } else {
+            fs().create_exclusive(at, rustix::fs::Mode::from_raw_mode(0o666))
+                .map(drop)
+        };
+        // SMB with POSIX extensions fails an exclusive file create over a folder with EISDIR.
+        let taken = |errno: rustix::io::Errno| {
+            errno == rustix::io::Errno::EXIST || (!folder && errno == rustix::io::Errno::ISDIR)
+        };
+        match made {
+            Ok(()) => return Ok(into.join(candidate)),
+            Err(errno) if taken(errno) && unique && number < u64::MAX => {}
+            Err(errno) if taken(errno) => {
+                return Err(Error::new(
+                    crate::error::ErrorKind::Exists,
+                    &rust_i18n::t!(
+                        "“%{name}” already exists",
+                        name = candidate.to_string_lossy()
+                    ),
+                ));
+            }
+            Err(errno) => {
+                let error = crate::error::os_io_error(errno);
+                return Err(Error::new(
+                    error.kind(),
+                    &rust_i18n::t!(
+                        "Could not create “%{name}”: %{error}",
+                        name = candidate.to_string_lossy(),
+                        error = crate::services::error_detail(error.message().to_owned())
+                    ),
+                ));
+            }
+        }
+    }
+    unreachable!("a free name is found or the loop fails")
 }
 
 /// Whether two paths name the same item, by identity, without following a link, as the engine's
@@ -999,6 +1072,8 @@ fn copy_then_replace(
             cause,
         })
         .collect();
+    // What the replacing step kept (an original it could not delete) is reported with the rest.
+    changes.kept.extend(replaced.changes.kept.iter().cloned());
     Ok(Replaced {
         changes,
         ..replaced
@@ -1032,6 +1107,7 @@ fn replace_by_moving(
         .map_err(crate::error::io_error)?
         .join(source_name);
     let gone = if placement::exchange_allowed(fs(), parent.as_fd())
+        && fs().can_trash(&target_path)
         && placement::exchange(
             fs(),
             Entry::new(&**source_dir, source_name),
@@ -1090,16 +1166,24 @@ fn replace_by_moving(
             (&|| {}, &barrier),
         )?
     };
+    let mut changes = Changes::default();
     let (original, original_deleted) = match gone {
         Gone::Trashed(trashed) => (Some(trashed), false),
         Gone::Deleted => (None, true),
         Gone::Kept(error) => return Err(error),
+        Gone::NotRemoved(path, why) => {
+            changes.kept.push(Kept {
+                path,
+                cause: crate::services::KeptCause::OriginalNotRemoved(why),
+            });
+            (None, false)
+        }
     };
     Ok(Replaced {
         name: target.clone(),
         original,
         original_deleted,
-        changes: Changes::default(),
+        changes,
         progress: progress.snapshot(),
     })
 }
@@ -1261,22 +1345,60 @@ pub fn replace_as(
         discard_stage();
         return Err(placement::place_error(PlaceError::Changed));
     }
-    let exchanged = if placement::exchange_allowed(fs(), parent.as_fd()) {
-        match placement::exchange(
+    // Without a Trash the original is swapped out into an originals folder under its own name, as
+    // legacy did, and deleted there once the copy is on the drive; if it cannot be, it waits there.
+    let trashes = fs().can_trash(&target_path);
+    let swapped_out = if placement::exchange_allowed(fs(), parent.as_fd()) && !trashes {
+        match placement::exchange_through(
             fs(),
             Entry::new(&*parent, &stage),
             Entry::new(&*parent, &target),
+            staged,
+            None,
         ) {
-            Ok(swapped) => swapped,
+            Ok(placement::Exchanged::Swapped(originals)) => {
+                let waiting = into.join(&originals.name);
+                let gone = dispose(
+                    (&originals.handle(), &waiting),
+                    (&target, original),
+                    &target_path,
+                    &barrier,
+                )
+                .map_err(|error| kept_at(&waiting.join(&target), &error))?;
+                Some(clear_originals(
+                    (&parent, into),
+                    (&originals.name, &target),
+                    gone,
+                ))
+            }
+            Ok(placement::Exchanged::Refused) => None,
             Err(error) => {
                 discard_stage();
                 return Err(placement::place_error(error));
             }
         }
     } else {
-        false
+        None
     };
-    let trashed = if exchanged {
+    let exchanged =
+        if swapped_out.is_none() && trashes && placement::exchange_allowed(fs(), parent.as_fd()) {
+            match placement::exchange(
+                fs(),
+                Entry::new(&*parent, &stage),
+                Entry::new(&*parent, &target),
+            ) {
+                Ok(swapped) => swapped,
+                Err(error) => {
+                    discard_stage();
+                    return Err(placement::place_error(error));
+                }
+            }
+        } else {
+            false
+        };
+    let trashed = if let Some(gone) = swapped_out {
+        gone
+    } else if exchanged {
         // The original now sits at the stage name. Prove it is still the item that was confirmed.
         let swapped_is_original = fs()
             .stat(Entry::new(&*parent, &stage), false)
@@ -1324,13 +1446,23 @@ pub fn replace_as(
             (&discard_stage, &barrier),
         )?
     };
+    let mut kept = Vec::new();
     let (original, original_deleted) = match trashed {
         Gone::Trashed(trashed) => (Some(trashed), false),
         Gone::Deleted => (None, true),
         Gone::Kept(error) => return Err(error),
+        Gone::NotRemoved(path, why) => {
+            kept.push(Kept {
+                path,
+                cause: crate::services::KeptCause::OriginalNotRemoved(why),
+            });
+            (None, false)
+        }
     };
+    let mut changes = Changes::of(&copy, &target);
+    changes.kept.extend(kept);
     Ok(Replaced {
-        changes: Changes::of(&copy, &target),
+        changes,
         name: target,
         original,
         original_deleted,
@@ -1438,10 +1570,11 @@ fn replace_by_setting_aside(
         )
     });
     match gone {
-        Ok(gone) => {
-            let _ = std::fs::remove_dir(into.join(&aside.originals.name));
-            Ok(gone)
-        }
+        Ok(gone) => Ok(clear_originals(
+            (parent, into),
+            (&aside.originals.name, &aside.name),
+            gone,
+        )),
         Err(error) => {
             // The copy goes back to its stage, then the original back to its name.
             let copy_back = placement::place(
@@ -1513,6 +1646,25 @@ fn remove_pinned(
     .map_err(crate::error::io_error)
 }
 
+/// Removes the originals folder an original waited in once it is gone. On NFS or SMB a file still
+/// open elsewhere lingers under a hidden name once deleted, so the folder waits for it to close,
+/// within the mount's wait; if it stays open, the original is reported kept, with why.
+fn clear_originals(
+    (parent, into): (&Arc<std::os::fd::OwnedFd>, &Path),
+    (originals, name): (&OsStr, &OsStr),
+    gone: Gone,
+) -> Gone {
+    use crate::adapters::local_operations::{fs_ops::Entry, leftovers};
+    let folder = Entry::new(&**parent, originals);
+    match leftovers::remove_folder(fs(), folder, &Deadline::default(), &|| false, &|| true) {
+        Ok(()) => gone,
+        Err(_) => match (gone, leftovers::still_open(fs(), folder)) {
+            (Gone::Deleted, Some(why)) => Gone::NotRemoved(into.join(originals).join(name), why),
+            (gone, _) => gone,
+        },
+    }
+}
+
 /// What became of an original a replace took the place of.
 enum Gone {
     Trashed(Trashed),
@@ -1521,6 +1673,9 @@ enum Gone {
     /// where it waited; the error says where. The replacement stays: undoing it would only write
     /// more to a drive that just failed.
     Kept(Error),
+    /// Its drive has no Trash and deleting it failed (it is still open in a program, say): the
+    /// replacement stands, and the original stays where it waited, with why.
+    NotRemoved(PathBuf, String),
 }
 
 /// Sends the original at `name` in `parent` to the Trash, recorded under `recorded` (the path it
@@ -1545,8 +1700,15 @@ fn dispose(
                 ));
                 return Ok(Gone::Kept(kept_at(&into.join(name), &error)));
             }
-            remove_pinned(parent, name, identity)?;
-            Ok(Gone::Deleted)
+            match remove_pinned(parent, name, identity) {
+                Ok(()) => Ok(Gone::Deleted),
+                Err(error) => {
+                    use crate::adapters::local_operations::{fs_ops::Entry, leftovers};
+                    let why = leftovers::still_open(fs(), Entry::new(&**parent, name))
+                        .unwrap_or_else(|| error.message().to_owned());
+                    Ok(Gone::NotRemoved(into.join(name), why))
+                }
+            }
         }
         Err(error) => Err(error),
     }

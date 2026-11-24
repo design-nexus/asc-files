@@ -65,11 +65,13 @@ an item instead (meant for undo). Notifications: `job.started {job, total}`, `jo
 history entry, or `null` when nothing it did can be undone (with `undoError` if the history could not be
 written), and for a durable batch `settled` says whether the drive confirmed everything was written
 (`settleError` if not): only then is a removable drive safe to unplug. Every item gets
-exactly one `job.itemDone`; its outcome is `{status: "done", path, renamed, skipped, kept}`,
-`{status: "failed", error, renamed, skipped, kept}` or `{status: "notAttempted"}`, where `renamed` is
+exactly one `job.itemDone`; its outcome is `{status: "done", path, renamed, skipped, kept, originalDeleted}`,
+`{status: "failed", error, renamed, skipped, kept, originalDeleted}` or `{status: "notAttempted"}`, where `renamed` is
 `[{requested, savedAs, cause}]`, `skipped` `[{path, kind}]`, and `kept` `[{path, cause: {reason, …}}]`: source
-entries a move left in place (changed after the copy read them, undeletable, still open elsewhere, …). A failed
-item still lists what it did before it stopped.
+entries a move left in place (changed after the copy read them, undeletable, still open elsewhere, …), and an
+original a replace could not delete on a drive with no Trash, left in an originals folder beside the target.
+`originalDeleted` is true when a replace deleted the original, its drive having no Trash: undo cannot bring it
+back. A failed item still lists what it did before it stopped.
 
 Items may also take `name` (the name a conflict prompt offered; one plain name), and moves take `conflict`
 `"fail"`, `"keepBoth"` or `"replace"`; a `merge` item with `move: true` merges by moving.

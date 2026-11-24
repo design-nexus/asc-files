@@ -2614,6 +2614,21 @@ impl FsOps for Scoped {
         }
     }
 
+    fn can_trash(&self, path: &Path) -> bool {
+        assert_off_main_thread();
+        match scope_for_path(path) {
+            Some(scope) => scope
+                .run(Op::CanTrash, &[], |scope| {
+                    Ok(match scope.quirk(|quirks| quirks.trash) {
+                        Trash::Unsupported => false,
+                        _ => System.can_trash(path),
+                    })
+                })
+                .unwrap_or(false),
+            None => System.can_trash(path),
+        }
+    }
+
     /// The item's own drive may refuse, as legacy's GIO trash did; the move itself is real, as
     /// the Trash it goes to lies outside any simulated drive.
     fn trash(&self, from: Entry<'_>, to: Entry<'_>) -> Result<(), Errno> {

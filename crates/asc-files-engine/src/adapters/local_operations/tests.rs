@@ -47,12 +47,14 @@ use crate::{
 
 mod aliases;
 mod conflicts;
+mod create_entry;
 mod file_copy;
 mod folder_copy;
 pub(crate) mod fs_quirks;
 mod merge;
 mod moves;
 mod naming;
+mod paste_results;
 mod paths;
 mod placement;
 mod replacement;
@@ -654,6 +656,8 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
             Event::Progress { progress, .. } => bytes = progress.bytes,
             Event::ItemDone { index, outcome, .. } => match outcome {
                 Outcome::Done { name, changes } => {
+                    // Legacy left out of the paste's undo an item whose original was deleted.
+                    let undoable = !changes.original_deleted;
                     let report = changes_report(&into, changes);
                     if !report.is_empty() {
                         events.push(OperationEvent::ItemsReported {
@@ -661,6 +665,7 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
                             report,
                         });
                     }
+                    // A move is reported by where it landed, not as a created location.
                     events.push(OperationEvent::TransferProgress {
                         request_id: id,
                         completed_items: completed.len() + 1,
@@ -669,7 +674,8 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
                         current_file: None,
                         transferred_bytes: bytes,
                         total_bytes: None,
-                        created_location: Some(Location::local(&name)),
+                        created_location: (!request.move_sources && undoable)
+                            .then(|| Location::local(&name)),
                     });
                     // Legacy did not report an item moved to where it already was.
                     if request.move_sources && items[index].source != name {
@@ -680,7 +686,9 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
                             merged: false,
                         });
                     }
-                    completed.push(Location::local(&name));
+                    if undoable {
+                        completed.push(Location::local(&name));
+                    }
                 }
                 Outcome::Failed { error, changes } => {
                     let report = changes_report(&into, changes);

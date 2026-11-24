@@ -249,7 +249,7 @@ impl Step {
     /// None where the original was deleted for want of a Trash: undoing would discard the only
     /// version left.
     pub fn replaced(source: &Path, (into, replaced): (&Path, &ops::Replaced)) -> Option<Self> {
-        if replaced.original_deleted {
+        if replaced.original_deleted || kept_original(replaced) {
             return None;
         }
         let target = into.join(&replaced.name);
@@ -269,7 +269,7 @@ impl Step {
     }
 
     pub fn moved_over(source: &Path, (into, replaced): (&Path, &ops::Replaced)) -> Option<Self> {
-        if replaced.original_deleted {
+        if replaced.original_deleted || kept_original(replaced) {
             return None;
         }
         let to = into.join(&replaced.name);
@@ -340,6 +340,16 @@ impl Step {
             Self::Replaced { target, .. } => target,
         }
     }
+}
+
+/// An original that could not be deleted stayed aside, with no Trash record for undo to use.
+fn kept_original(replaced: &ops::Replaced) -> bool {
+    replaced.changes.kept.iter().any(|kept| {
+        matches!(
+            kept.cause,
+            crate::services::KeptCause::OriginalNotRemoved(_)
+        )
+    })
 }
 
 /// What undo needs of an original that went to the Trash: None inside means nothing was there;

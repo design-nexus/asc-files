@@ -17,6 +17,7 @@ pub(crate) mod progress;
 pub(crate) mod replacement;
 #[cfg(test)]
 pub(crate) mod tests;
+pub(crate) mod typed_names;
 pub(crate) mod work_queue;
 
 pub(crate) use crate::error::{

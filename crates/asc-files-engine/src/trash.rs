@@ -54,6 +54,35 @@ fn identity(meta: &std::fs::Metadata) -> Identity {
     (meta.dev(), meta.ino(), meta.ctime(), meta.ctime_nsec())
 }
 
+/// Whether `item` could go to a Trash on its own drive, by the rules [`put`] follows, without
+/// making anything. A drive whose top folder could take a `.Trash-$uid` counts.
+pub fn available(item: &Path) -> bool {
+    let (Some(parent), Ok(meta)) = (item.parent(), std::fs::symlink_metadata(item)) else {
+        return false;
+    };
+    let Ok(parent) = std::fs::canonicalize(parent) else {
+        return false;
+    };
+    let home = home_trash();
+    if same_mount_and_device(&parent, meta.dev(), home.parent()) {
+        return true;
+    }
+    let Some(top) = topdir(&parent) else {
+        return false;
+    };
+    let writable = |folder: &Path| {
+        rustix::fs::access(
+            folder,
+            rustix::fs::Access::WRITE_OK | rustix::fs::Access::EXEC_OK,
+        )
+        .is_ok()
+    };
+    match topdir_trash(&top, false) {
+        Some(trash) => std::fs::metadata(&trash).is_ok_and(|trash| trash.dev() == meta.dev()),
+        None => writable(&top),
+    }
+}
+
 /// Moves `item` to the Trash on its own drive, never copying between drives.
 pub fn put(item: &Path) -> Result<Trashed, Error> {
     put_recording(item, None)

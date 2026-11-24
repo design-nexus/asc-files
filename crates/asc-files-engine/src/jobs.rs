@@ -401,7 +401,10 @@ fn run_item(
                 let step = Step::moved_over(source, (into, &replaced));
                 (
                     into.join(replaced.name),
-                    replaced.changes,
+                    Changes {
+                        original_deleted: replaced.original_deleted,
+                        ..replaced.changes
+                    },
                     Vec::from_iter(step),
                 )
             })
@@ -469,7 +472,10 @@ fn run_item(
                 let step = Step::replaced(source, (into, &replaced));
                 (
                     into.join(replaced.name),
-                    replaced.changes,
+                    Changes {
+                        original_deleted: replaced.original_deleted,
+                        ..replaced.changes
+                    },
                     Vec::from_iter(step),
                 )
             })
@@ -512,6 +518,7 @@ fn merged(
         renamed: merged.renamed,
         skipped: merged.skipped,
         kept: merged.kept,
+        original_deleted: false,
     };
     if let Some((_, first)) = merged.failed.first() {
         let error = match merged.failed.len() - 1 {

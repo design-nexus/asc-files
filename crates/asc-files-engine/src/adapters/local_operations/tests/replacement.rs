@@ -882,8 +882,9 @@ fn a_failed_publication_puts_the_original_back() -> Result<(), Box<dyn Error>> {
             (Op::Link, "target", 0),
             false,
         ),
-        // The engine's publish is its second rename at the name on FAT (legacy's was the fourth).
-        (Item::File, vfat, (Op::Rename, "target", 1), true),
+        // The publish is the fourth rename at the name on FAT, as in legacy: the refused swap
+        // first parks the copy under the name in an originals folder and brings it back.
+        (Item::File, vfat, (Op::Rename, "target", 3), true),
         (
             Item::Symlink,
             Quirks::sshfs(),
