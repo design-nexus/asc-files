@@ -13,10 +13,12 @@
 #include "models/Transfers.h"
 #include "ops/Operations.h"
 #include "render/Preview.h"
+#include "theme/SystemTheme.h"
 #include "thumbnails/Thumbnails.h"
 
 #include <QFile>
 #include <QQmlApplicationEngine>
+#include <QtQml/qqml.h>
 #include <QQmlExtensionPlugin>
 #include <QQuickItem>
 #include <QQuickStyle>
@@ -59,6 +61,8 @@ private slots:
         tabs.openTab(dir.path());
         FolderModel &folders = *tabs.current()->folderModel();
         QSignalSpy opened(&folders, &FolderModel::opened);
+        SystemTheme systemTheme;
+        qmlRegisterSingletonInstance("AscFiles.System", 1, 0, "SystemTheme", &systemTheme);
         QQmlApplicationEngine engine;
         engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
         engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider(&preview));

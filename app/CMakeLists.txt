@@ -30,6 +30,7 @@ qt_add_library(asc_files_core STATIC
     src/ops/Operations.cpp src/ops/Operations.h
     src/render/Preview.cpp src/render/Preview.h
     src/render/Sandbox.cpp src/render/Sandbox.h
+    src/theme/SystemTheme.cpp src/theme/SystemTheme.h
     src/thumbnails/Thumbnails.cpp src/thumbnails/Thumbnails.h)
 target_include_directories(asc_files_core PUBLIC src)
 target_link_libraries(asc_files_core PUBLIC Qt6::Core Qt6::Gui Qt6::Quick)
@@ -85,7 +86,7 @@ target_link_libraries(asc-files PRIVATE asc_files_core asc_files_qmlplugin Qt6::
 # Tests run against the real backend: ASC_FILES_BACKEND names it (scripts/app.sh builds it).
 enable_testing()
 set(ASC_FILES_BACKEND "" CACHE FILEPATH "The asc-files-backend binary the tests run")
-foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search)
+foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search systemtheme)
     qt_add_executable(tst_${test} tests/tst_${test}.cpp)
     target_link_libraries(tst_${test} PRIVATE asc_files_core Qt6::Test)
     add_test(NAME ${test} COMMAND tst_${test})

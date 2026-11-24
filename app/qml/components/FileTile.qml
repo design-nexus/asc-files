@@ -58,8 +58,8 @@ Rectangle {
                 anchors.centerIn: parent
                 size: tile.iconSize
                 strokeWidth: 0.9
-                color: tile.isFolder ? Theme.accent : "#8a93ad"
-                fill: tile.isFolder ? Qt.rgba(61 / 255, 138 / 255, 232 / 255, 0.18) : "transparent"
+                color: tile.isFolder ? Theme.accent : Theme.folderIcon
+                fill: tile.isFolder ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18) : "transparent"
                 path: tile.isFolder ? "M1.5 4.2c0-.7.5-1.2 1.2-1.2h3.4l1.5 1.5h5.7c.7 0 1.2.5 1.2 1.2v6.6c0 .7-.5 1.2-1.2 1.2H2.7c-.7 0-1.2-.5-1.2-1.2z"
                                     : "M4 2h5l3 3v9H4zM9 2v3h3"
             }

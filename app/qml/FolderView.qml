@@ -165,9 +165,9 @@ Item {
         anchors.margins: 12
         height: visible ? 40 : 0
         radius: Theme.radius
-        color: Qt.rgba(238 / 255, 180 / 255, 63 / 255, 0.10)
+        color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.10)
         border.width: 1
-        border.color: Qt.rgba(238 / 255, 180 / 255, 63 / 255, 0.35)
+        border.color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.35)
         z: 2
         RowLayout {
             anchors.fill: parent

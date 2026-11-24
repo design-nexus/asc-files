@@ -13,6 +13,7 @@
 #include "models/Transfers.h"
 #include "ops/Operations.h"
 #include "render/Preview.h"
+#include "theme/SystemTheme.h"
 #include "thumbnails/Thumbnails.h"
 #include "models/TrashModel.h"
 
@@ -20,6 +21,7 @@
 #include <QDir>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QtQml/qqml.h>
 #include <QQmlExtensionPlugin>
 #include <QQuickStyle>
 #include <QStandardPaths>
@@ -59,6 +61,9 @@ int main(int argc, char *argv[]) {
         qCritical().noquote() << why;
     });
 
+    // The Nyx theme, followed live; Theme.qml reads it.
+    SystemTheme systemTheme;
+    qmlRegisterSingletonInstance("AscFiles.System", 1, 0, "SystemTheme", &systemTheme);
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
     engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider(&preview));

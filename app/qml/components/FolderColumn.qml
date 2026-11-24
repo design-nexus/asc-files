@@ -63,7 +63,7 @@ Rectangle {
                 spacing: 9
                 Icon {
                     path: entry.isFolder ? "M2 4.5h4l1.5 1.5H14v6.5H2z" : "M4 2h5l3 3v9H4zM9 2v3h3"
-                    color: entry.isFolder ? Theme.accent : "#8a93ad"
+                    color: entry.isFolder ? Theme.accent : Theme.folderIcon
                 }
                 Text {
                     Layout.fillWidth: true

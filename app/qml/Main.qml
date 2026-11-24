@@ -249,7 +249,7 @@ ApplicationWindow {
                 Text {
                     visible: !sidebar.compact
                     Layout.leftMargin: 26; Layout.bottomMargin: 18; Layout.topMargin: 8
-                    text: qsTr("F1 Shortcuts"); color: "#c9cbd6"; font.family: Theme.family; font.pointSize: Theme.tiny; font.weight: Font.Bold
+                    text: qsTr("F1 Shortcuts"); color: Theme.textSoft; font.family: Theme.family; font.pointSize: Theme.tiny; font.weight: Font.Bold
                 }
             }
 
@@ -388,7 +388,7 @@ ApplicationWindow {
                         Layout.bottomMargin: 14
                         Layout.topMargin: 6
                         text: window.view ? window.view.status : ""
-                        color: "#c9cbd6"
+                        color: Theme.textSoft
                         font.family: Theme.family
                         font.pointSize: Theme.small
                     }

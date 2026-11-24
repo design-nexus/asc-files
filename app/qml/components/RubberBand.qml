@@ -54,7 +54,7 @@ MouseArea {
     Rectangle {
         id: box
         visible: false
-        color: Qt.rgba(61 / 255, 138 / 255, 232 / 255, 0.15)
+        color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.15)
         border.width: 1
         border.color: Theme.accent
         radius: 4

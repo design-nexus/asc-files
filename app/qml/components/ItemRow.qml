@@ -49,12 +49,12 @@ Rectangle {
                 width: 18; height: 18; radius: 5
                 color: "transparent"
                 border.width: 1
-                border.color: Qt.rgba(162 / 255, 165 / 255, 186 / 255, 0.28)
+                border.color: Qt.rgba(Theme.textDim.r, Theme.textDim.g, Theme.textDim.b, 0.28)
                 Icon {
                     anchors.centerIn: parent
                     size: 11
                     strokeWidth: 1.6
-                    color: "#8a93ad"
+                    color: Theme.folderIcon
                     path: row.isFolder ? "M2 4.5h4l1.5 1.5H14v6.5H2z" : "M4 2h5l3 3v9H4zM9 2v3h3"
                 }
             }

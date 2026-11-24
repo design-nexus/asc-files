@@ -114,7 +114,7 @@ ColumnLayout {
                      ((content.preview.kind === "image" || content.preview.kind === "pdf") && !content.preview.loading))
             size: 96
             strokeWidth: 0.8
-            color: content.preview.kind === "folder" ? Theme.accent : "#8a93ad"
+            color: content.preview.kind === "folder" ? Theme.accent : Theme.folderIcon
             path: content.preview.kind === "folder" ? "M2 4.5h4l1.5 1.5H14v6.5H2z" : "M4 2h5l3 3v9H4zM9 2v3h3"
         }
         BusyIndicator {

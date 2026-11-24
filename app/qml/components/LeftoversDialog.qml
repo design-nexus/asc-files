@@ -32,7 +32,7 @@ Popup {
     modal: true
     focus: true
     padding: 22
-    Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.45) }
+    Overlay.modal: Rectangle { color: Theme.scrim }
     background: Rectangle { radius: 14; color: Theme.raised; border.width: 1; border.color: Theme.panelEdge }
 
     contentItem: ColumnLayout {
