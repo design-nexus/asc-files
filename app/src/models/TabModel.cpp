@@ -4,8 +4,54 @@
 #include "Browser.h"
 
 #include <QFile>
+#include <QSettings>
 
-TabModel::TabModel(BackendClient *backend, QObject *parent) : QAbstractListModel(parent), m_backend(backend) {}
+namespace {
+
+QSettings settings() {
+    return QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("asc-files"), QStringLiteral("asc-files"));
+}
+
+} // namespace
+
+TabModel::TabModel(BackendClient *backend, QObject *parent) : QAbstractListModel(parent), m_backend(backend) {
+    m_save.setSingleShot(true);
+    m_save.setInterval(500);
+    connect(&m_save, &QTimer::timeout, this, &TabModel::saveSession);
+    connect(this, &TabModel::currentChanged, this, &TabModel::saveSoon);
+    connect(this, &TabModel::countChanged, this, &TabModel::saveSoon);
+}
+
+void TabModel::saveSoon() {
+    if (!m_restoring) {
+        m_save.start();
+    }
+}
+
+void TabModel::saveSession() const {
+    QStringList saved;
+    for (const Browser *browser : m_tabs) {
+        saved.append(browser->saved());
+    }
+    QSettings session = settings();
+    session.setValue(QStringLiteral("session/tabs"), saved);
+    session.setValue(QStringLiteral("session/current"), m_current);
+}
+
+bool TabModel::restoreSession() {
+    const QSettings session = settings();
+    const QStringList saved = session.value(QStringLiteral("session/tabs")).toStringList();
+    if (saved.isEmpty()) {
+        return false;
+    }
+    m_restoring = true;
+    for (const QString &place : saved) {
+        open({})->restore(place);
+    }
+    m_restoring = false;
+    setCurrentIndex(qBound(0, session.value(QStringLiteral("session/current")).toInt(), int(m_tabs.size()) - 1));
+    return true;
+}
 
 void TabModel::setCurrentIndex(int index) {
     if (index >= 0 && index < m_tabs.size() && index != m_current) {
@@ -26,6 +72,7 @@ Browser *TabModel::open(const QByteArray &path) {
         if (at >= 0) {
             emit dataChanged(index(at), index(at), {TitleRole});
         }
+        saveSoon();
     });
     beginInsertRows({}, row, row);
     m_tabs.insert(row, browser);
@@ -39,7 +86,12 @@ Browser *TabModel::open(const QByteArray &path) {
 
 void TabModel::openTab(const QString &path) {
     const Browser *here = current();
-    open(path.isEmpty() && here ? here->rawLocation() : QFile::encodeName(path));
+    if (path.isEmpty() && here) {
+        // A new tab starts where this one is, folder or page.
+        open({})->restore(here->saved());
+        return;
+    }
+    open(QFile::encodeName(path));
 }
 
 void TabModel::closeTab(int index) {

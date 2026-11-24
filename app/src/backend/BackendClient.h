@@ -7,6 +7,7 @@
 #include <QJsonValue>
 #include <QList>
 #include <QObject>
+#include <QPointer>
 #include <QProcess>
 #include <QStringList>
 #include <functional>
@@ -42,7 +43,10 @@ public:
 
     /// Starts the process. Calls made before it is ready are sent once it is.
     void start();
-    /// Sends a request; `reply` runs on this object's thread with its answer.
+    /// Sends a request; `reply` runs on this object's thread with its answer, unless `context`,
+    /// the object it belongs to, is gone by then.
+    void call(const QString &method, const QJsonObject &params, const QObject *context, Reply reply);
+    /// Sends a request whose reply belongs to no object (or that wants none).
     void call(const QString &method, const QJsonObject &params, Reply reply = {});
 
     bool isReady() const { return m_ready; }
@@ -76,7 +80,13 @@ private:
     QProcess *m_process = nullptr;
     QByteArray m_buffer;
     qint64 m_next = 0;
-    QHash<qint64, Reply> m_pending;
+    struct Pending {
+        Reply reply;
+        /// The object the reply belongs to; a reply whose object is gone is dropped.
+        QPointer<const QObject> context;
+        bool hasContext = false;
+    };
+    QHash<qint64, Pending> m_pending;
     /// Lines written while the process is starting; sent after `initialize`.
     QList<QByteArray> m_queued;
     bool m_initialized = false;

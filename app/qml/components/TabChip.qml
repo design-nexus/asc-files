@@ -20,6 +20,12 @@ AbstractButton {
     Accessible.role: Accessible.PageTab
     Accessible.name: text
 
+    // A middle click closes the tab, as in a browser.
+    TapHandler {
+        acceptedButtons: Qt.MiddleButton
+        onTapped: tab.closeRequested()
+    }
+
     background: Rectangle {
         radius: Theme.radius
         color: tab.current ? Theme.raised : tab.hovered ? Theme.hover : "transparent"

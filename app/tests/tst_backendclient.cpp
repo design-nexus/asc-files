@@ -107,6 +107,19 @@ private slots:
         QTRY_VERIFY(answered);
     }
 
+    void aReplyForAnOwnerThatIsGoneIsDropped() {
+        BackendClient client(TestSupport::backend());
+        client.start();
+        auto *owner = new QObject;
+        bool answered = false;
+        client.call(QStringLiteral("undo.history"), {}, owner, [&](const QJsonValue &, const BackendError &) { answered = true; });
+        delete owner;
+        bool after = false;
+        client.call(QStringLiteral("undo.history"), {}, [&](const QJsonValue &, const BackendError &) { after = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(after, 10000);
+        QVERIFY(!answered);
+    }
+
     void aMissingProgramFails() {
         BackendClient client(QStringLiteral("/no/such/asc-files-backend"));
         QSignalSpy failed(&client, &BackendClient::failed);

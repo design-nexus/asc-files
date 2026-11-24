@@ -3,6 +3,7 @@
 
 #include <QAbstractListModel>
 #include <QList>
+#include <QTimer>
 
 class BackendClient;
 #include "Browser.h"
@@ -34,6 +35,9 @@ public:
     Q_INVOKABLE void next();
     Q_INVOKABLE void previous();
 
+    /// Opens the tabs the last session left, where they were; false when there were none.
+    bool restoreSession();
+
     int rowCount(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
@@ -43,7 +47,13 @@ signals:
     void countChanged();
 
 private:
+    /// Keeps where each tab is, a moment after it changes, for the next session.
+    void saveSoon();
+    void saveSession() const;
+
     BackendClient *m_backend;
+    QTimer m_save;
+    bool m_restoring = false;
     QList<Browser *> m_tabs;
     int m_current = -1;
 };

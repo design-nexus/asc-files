@@ -23,7 +23,7 @@ JobModel::JobModel(BackendClient *backend, QObject *parent) : QAbstractListModel
 
 void JobModel::start(const QJsonObject &params, const QString &label,
                      std::function<void(qint64, const BackendError &)> started) {
-    m_backend->call(QStringLiteral("jobs.start"), params,
+    m_backend->call(QStringLiteral("jobs.start"), params, this,
                     [this, label, started](const QJsonValue &result, const BackendError &error) {
                         if (!error.isNull()) {
                             if (started) {

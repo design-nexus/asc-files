@@ -30,6 +30,11 @@ BackendClient::BackendClient(QString program, QObject *parent) : QObject(parent)
 
 BackendClient::~BackendClient() {
     m_stopping = true;
+    // Nothing is answered while the process stops: what asked may be gone already.
+    m_pending.clear();
+    if (m_process) {
+        disconnect(m_process, nullptr, this, nullptr);
+    }
     if (m_process && m_process->state() != QProcess::NotRunning) {
         // A clean shutdown lets running jobs send their last events and the undo history settle.
         send(QJsonDocument(QJsonObject{{"jsonrpc", "2.0"}, {"id", ++m_next}, {"method", "shutdown"}})
@@ -85,7 +90,7 @@ void BackendClient::launch() {
 
     // `initialize` goes first; what was asked meanwhile follows it.
     const qint64 id = ++m_next;
-    m_pending.insert(id, [this](const QJsonValue &result, const BackendError &error) {
+    m_pending.insert(id, Pending{[this](const QJsonValue &result, const BackendError &error) {
         if (!error.isNull()) {
             m_gaveUp = true;
             emit failed(tr("The Files backend refused to start a session: %1").arg(error.message));
@@ -102,7 +107,7 @@ void BackendClient::launch() {
             m_relaunch = false;
             emit restarted();
         }
-    });
+    }, {}, false});
     const QJsonObject initialize{{"jsonrpc", "2.0"},
                                  {"id", id},
                                  {"method", "initialize"},
@@ -116,16 +121,26 @@ void BackendClient::launch() {
 }
 
 void BackendClient::call(const QString &method, const QJsonObject &params, Reply reply) {
+    call(method, params, nullptr, std::move(reply));
+}
+
+void BackendClient::call(const QString &method, const QJsonObject &params, const QObject *context, Reply reply) {
     if (m_gaveUp) {
         if (reply) {
             BackendError error{BackendError::Stopped, {}, tr("The Files backend is not running"), {}};
-            QTimer::singleShot(0, this, [reply, error] { reply({}, error); });
+            QPointer<const QObject> owner(context);
+            const bool hasContext = context != nullptr;
+            QTimer::singleShot(0, this, [reply, error, owner, hasContext] {
+                if (!hasContext || owner) {
+                    reply({}, error);
+                }
+            });
         }
         return;
     }
     const qint64 id = ++m_next;
     if (reply) {
-        m_pending.insert(id, std::move(reply));
+        m_pending.insert(id, Pending{std::move(reply), context, context != nullptr});
     }
     send(QJsonDocument(QJsonObject{{"jsonrpc", "2.0"}, {"id", id}, {"method", method}, {"params", params}})
              .toJson(QJsonDocument::Compact));
@@ -153,10 +168,11 @@ void BackendClient::readLines() {
         }
         const QJsonValue id = message.value(QStringLiteral("id"));
         if (!id.isUndefined() && !id.isNull()) {
-            if (const Reply reply = m_pending.take(id.toInteger())) {
+            const Pending pending = m_pending.take(id.toInteger());
+            if (pending.reply && (!pending.hasContext || pending.context)) {
                 const QJsonValue error = message.value(QStringLiteral("error"));
-                reply(message.value(QStringLiteral("result")),
-                      error.isObject() ? errorFrom(error.toObject()) : BackendError{});
+                pending.reply(message.value(QStringLiteral("result")),
+                              error.isObject() ? errorFrom(error.toObject()) : BackendError{});
             }
         } else if (message.contains(QStringLiteral("method"))) {
             emit notification(message.value(QStringLiteral("method")).toString(),
@@ -190,8 +206,10 @@ void BackendClient::failPending(const QString &why) {
     const auto pending = std::exchange(m_pending, {});
     m_queued.clear();
     const BackendError error{BackendError::Stopped, {}, why, {}};
-    for (const Reply &reply : pending) {
-        reply({}, error);
+    for (const Pending &waiting : pending) {
+        if (waiting.reply && (!waiting.hasContext || waiting.context)) {
+            waiting.reply({}, error);
+        }
     }
 }
 

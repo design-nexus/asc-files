@@ -2,6 +2,9 @@
 #include "TestSupport.h"
 #include "backend/BackendClient.h"
 #include "models/Browser.h"
+#include "models/FavoritesModel.h"
+#include "models/RecentModel.h"
+#include "models/TrashModel.h"
 #include "models/FolderModel.h"
 #include "models/JobModel.h"
 #include "models/PlacesModel.h"
@@ -39,6 +42,10 @@ private slots:
         backend.start();
         TabModel tabs(&backend);
         PlacesModel places;
+        RecentModel recent;
+        FavoritesModel favorites;
+        TrashModel trash(&backend);
+        FolderModel downloads(&backend);
         JobModel jobs(&backend);
         tabs.openTab(dir.path());
         FolderModel &folders = *tabs.current()->folderModel();
@@ -46,6 +53,10 @@ private slots:
         QQmlApplicationEngine engine;
         engine.setInitialProperties({{"tabs", QVariant::fromValue(&tabs)},
                                      {"places", QVariant::fromValue(&places)},
+                                     {"recent", QVariant::fromValue(&recent)},
+                                     {"favorites", QVariant::fromValue(&favorites)},
+                                     {"trash", QVariant::fromValue(&trash)},
+                                     {"downloads", QVariant::fromValue(&downloads)},
                                      {"jobModel", QVariant::fromValue(&jobs)},
                                      {"backend", QVariant::fromValue(&backend)}});
         engine.loadFromModule("AscFiles", "Main");
@@ -68,6 +79,17 @@ private slots:
         QTRY_COMPARE(list->property("count").toInt(), 3);
         QTRY_VERIFY(folders.isLoaded(0));
         QVERIFY(QTest::qWaitForWindowExposed(window));
+
+        // Every page shows without a warning.
+        for (const Browser::Page page : {Browser::Overview, Browser::Recent, Browser::Favorites, Browser::Trash}) {
+            tabs.current()->goPage(page);
+            QTest::qWait(100);
+        }
+        tabs.current()->back();
+        tabs.current()->back();
+        tabs.current()->back();
+        tabs.current()->back();
+        QTRY_COMPARE(tabs.current()->page(), Browser::Folder);
 
         // Tiled narrow, the panel and its list stay inside the window.
         window->resize(800, 900);

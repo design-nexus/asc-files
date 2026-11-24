@@ -6,6 +6,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QHash>
 #include <QVariantMap>
 
 namespace {
@@ -22,14 +23,32 @@ bool isWithin(const QByteArray &path, const QByteArray &folder) {
 } // namespace
 
 Browser::Browser(BackendClient *backend, QObject *parent) : QObject(parent), m_folders(new FolderModel(backend, this)) {
-    connect(m_folders, &FolderModel::folderChanged, this, &Browser::locationChanged);
+    // The folder model may move on its own (its folder was deleted): follow it.
+    connect(m_folders, &FolderModel::folderChanged, this, [this] {
+        if (m_here.page == Folder) {
+            m_here.path = m_folders->rawFolder();
+        }
+        emit locationChanged();
+    });
 }
 
-QByteArray Browser::rawLocation() const { return m_folders->rawFolder(); }
+QByteArray Browser::rawLocation() const { return m_here.page == Folder ? m_here.path : QByteArray(); }
 
-QString Browser::location() const { return m_folders->folder(); }
+QString Browser::location() const { return m_here.page == Folder ? Wire::display(m_here.path) : QString(); }
 
 QString Browser::title() const {
+    switch (m_here.page) {
+    case Overview:
+        return tr("Overview");
+    case Recent:
+        return tr("Recent");
+    case Favorites:
+        return tr("Favorites");
+    case Trash:
+        return tr("Trash");
+    case Folder:
+        break;
+    }
     const QByteArray path = rawLocation();
     if (path == homePath()) {
         return tr("Home");
@@ -43,19 +62,62 @@ bool Browser::canGoUp() const {
 }
 
 void Browser::go(const QByteArray &path) {
-    const QByteArray here = rawLocation();
-    if (path.isEmpty() || path == here) {
+    if (!path.isEmpty()) {
+        go(Place{Folder, path});
+    }
+}
+
+void Browser::goPage(Page page) { go(Place{page, {}}); }
+
+void Browser::go(const Place &place) {
+    if (place == m_here) {
         return;
     }
-    if (!here.isEmpty()) {
-        m_back.append(here);
+    if (m_here.page != Folder || !m_here.path.isEmpty()) {
+        m_back.append(m_here);
         if (m_back.size() > MaxHistory) {
             m_back.removeFirst();
         }
     }
     m_forward.clear();
-    m_folders->open(path);
+    show(place);
     emit historyChanged();
+}
+
+void Browser::show(const Place &place) {
+    m_here = place;
+    if (place.page == Folder) {
+        m_folders->open(place.path);
+    }
+    emit locationChanged();
+}
+
+QString Browser::saved() const {
+    switch (m_here.page) {
+    case Overview:
+        return QStringLiteral("page:overview");
+    case Recent:
+        return QStringLiteral("page:recent");
+    case Favorites:
+        return QStringLiteral("page:favorites");
+    case Trash:
+        return QStringLiteral("page:trash");
+    case Folder:
+        break;
+    }
+    return QFile::decodeName(m_here.path);
+}
+
+void Browser::restore(const QString &saved) {
+    static const QHash<QString, Page> pages{{QStringLiteral("page:overview"), Overview},
+                                            {QStringLiteral("page:recent"), Recent},
+                                            {QStringLiteral("page:favorites"), Favorites},
+                                            {QStringLiteral("page:trash"), Trash}};
+    if (pages.contains(saved)) {
+        goPage(pages.value(saved));
+    } else if (saved.startsWith(u'/')) {
+        goPath(saved);
+    }
 }
 
 void Browser::goPath(const QString &path) { go(QFile::encodeName(path)); }
@@ -68,6 +130,9 @@ void Browser::goRow(int row) {
 }
 
 void Browser::goCrumb(int index) {
+    if (m_here.page != Folder) {
+        return;
+    }
     const QList<QByteArray> paths = crumbPaths();
     if (index >= 0 && index < paths.size()) {
         go(paths.at(index));
@@ -82,7 +147,7 @@ bool Browser::goTyped(const QString &text) {
     if (typed == QLatin1String("~") || typed.startsWith(QLatin1String("~/"))) {
         typed = QDir::homePath() + typed.mid(1);
     } else if (!typed.startsWith(u'/')) {
-        typed = QDir(location()).filePath(typed);
+        typed = QDir(m_here.page == Folder ? location() : QDir::homePath()).filePath(typed);
     }
     go(QFile::encodeName(QDir::cleanPath(typed)));
     return true;
@@ -92,8 +157,8 @@ void Browser::back() {
     if (m_back.isEmpty()) {
         return;
     }
-    m_forward.append(rawLocation());
-    m_folders->open(m_back.takeLast());
+    m_forward.append(m_here);
+    show(m_back.takeLast());
     emit historyChanged();
 }
 
@@ -101,8 +166,8 @@ void Browser::forward() {
     if (m_forward.isEmpty()) {
         return;
     }
-    m_back.append(rawLocation());
-    m_folders->open(m_forward.takeLast());
+    m_back.append(m_here);
+    show(m_forward.takeLast());
     emit historyChanged();
 }
 
@@ -137,6 +202,9 @@ QList<QByteArray> Browser::crumbPaths() const {
 
 QVariantList Browser::crumbs() const {
     QVariantList result;
+    if (m_here.page != Folder) {
+        return {QVariantMap{{QStringLiteral("label"), title()}, {QStringLiteral("home"), false}}};
+    }
     const QByteArray home = homePath();
     for (const QByteArray &path : crumbPaths()) {
         const bool isHome = path == home;

@@ -95,6 +95,57 @@ private slots:
         QVERIFY(!browser.goTyped(QStringLiteral("   ")));
     }
 
+    void pagesTakeTheirPlaceInHistory() {
+        QTemporaryDir dir;
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        Browser browser(&backend);
+        browser.goPath(dir.path());
+        QVERIFY(openedAt(browser, dir.path()));
+        browser.goPage(Browser::Trash);
+        QCOMPARE(browser.page(), Browser::Trash);
+        QCOMPARE(browser.title(), QStringLiteral("Trash"));
+        QCOMPARE(browser.location(), QString());
+        QCOMPARE(labels(browser), QStringList{"Trash"});
+        QVERIFY(!browser.canGoUp());
+        QCOMPARE(browser.saved(), QStringLiteral("page:trash"));
+        browser.back();
+        QCOMPARE(browser.page(), Browser::Folder);
+        QVERIFY(openedAt(browser, dir.path()));
+        browser.forward();
+        QCOMPARE(browser.page(), Browser::Trash);
+        // A relative path typed on a page is taken from Home.
+        QVERIFY(browser.goTyped(QStringLiteral(".")));
+        QVERIFY(openedAt(browser, QDir::homePath()));
+    }
+
+    void aSessionsTabsComeBack() {
+        QTemporaryDir dir;
+        {
+            BackendClient backend(TestSupport::backend());
+            backend.start();
+            TabModel tabs(&backend);
+            tabs.openTab(dir.path());
+            tabs.openTab(QDir::homePath());
+            tabs.current()->goPage(Browser::Recent);
+            tabs.setCurrentIndex(0);
+            // Saved a moment after the last change.
+            QTest::qWait(800);
+        }
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        TabModel tabs(&backend);
+        QVERIFY(tabs.restoreSession());
+        QCOMPARE(tabs.rowCount(), 2);
+        QCOMPARE(tabs.currentIndex(), 0);
+        QVERIFY(openedAt(*tabs.at(0), dir.path()));
+        QCOMPARE(tabs.at(1)->page(), Browser::Recent);
+        // A new tab opened on a page starts on that page.
+        tabs.setCurrentIndex(1);
+        tabs.openTab();
+        QCOMPARE(tabs.current()->page(), Browser::Recent);
+    }
+
     void tabsOpenCloseAndMove() {
         QTemporaryDir dir;
         BackendClient backend(TestSupport::backend());

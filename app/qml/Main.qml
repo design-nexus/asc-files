@@ -13,6 +13,10 @@ ApplicationWindow {
 
     required property var tabs
     required property var places
+    required property var recent
+    required property var favorites
+    required property var trash
+    required property var downloads
     required property var jobModel
     required property var backend
 
@@ -25,23 +29,10 @@ ApplicationWindow {
     color: Theme.window
     title: browser ? browser.title : ""
 
-    property int selectedRow: -1
-    // List view columns that give way as the panel narrows: the gap, then Mode, then Kind.
-    readonly property bool showGap: list.width >= 1000
-    readonly property bool showMode: list.width >= 720
-    readonly property bool showKind: list.width >= 600
-
-    Connections {
-        target: window.browser
-        function onLocationChanged() { window.selectedRow = -1 }
-    }
-    onBrowserChanged: selectedRow = -1
-
-    function openSelected() {
-        if (selectedRow >= 0 && folderModel.isFolder(selectedRow)) {
-            browser.goRow(selectedRow)
-        }
-    }
+    // The view the current tab shows, by its page (Browser.Folder, Overview, Recent, Favorites,
+    // Trash, in that order).
+    readonly property int page: browser ? browser.page : 0
+    readonly property var view: pages.children[page]
 
     ColumnLayout {
         anchors.fill: parent
@@ -73,7 +64,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 60
                 Layout.maximumWidth: 520
-                onEdited: list.forceActiveFocus()
+                onEdited: window.view.focusList()
             }
             Item { Layout.fillWidth: true }
             SearchField { Layout.fillWidth: true; Layout.maximumWidth: 352; Layout.minimumWidth: 120; placeholderText: qsTr("Search Home and drives") }
@@ -127,24 +118,35 @@ ApplicationWindow {
                     boundsBehavior: Flickable.StopAtBounds
                     model: window.places
                     spacing: 2
-                    section.property: "section"
-                    section.delegate: SectionHeading {
-                        required property string section
-                        width: ListView.view.width
-                        title: section === "0" ? qsTr("Folders") : section === "1" ? qsTr("Pinned") : qsTr("Storage")
-                        color: section === "0" ? Theme.sectionFolders : section === "1" ? Theme.sectionPinned : Theme.sectionStorage
-                    }
-                    delegate: PlaceItem {
+                    delegate: Column {
                         // Roles are read through `model`: `icon` would clash with the button's own.
                         required property var model
+                        // A section's first place carries its heading (the pages at the top have none).
+                        readonly property var titles: ({ 1: qsTr("Folders"), 2: qsTr("Pinned"), 3: qsTr("Storage") })
+                        readonly property var colors: ({ 1: Theme.sectionFolders, 2: Theme.sectionPinned, 3: Theme.sectionStorage })
                         width: ListView.view.width
-                        text: model.name
-                        iconPath: model.icon
-                        sectionColor: model.section === 0 ? Theme.sectionFolders : model.section === 1 ? Theme.sectionPinned : Theme.sectionStorage
-                        used: model.section === 2 ? model.used : -1
-                        badge: model.section === 2 ? model.freeText : ""
-                        selected: window.browser !== null && window.browser.location === model.path
-                        onClicked: window.browser.goPath(model.path)
+                        spacing: 2
+
+                        SectionHeading {
+                            visible: model.firstInSection && model.section > 0
+                            width: parent.width
+                            title: visible ? titles[model.section] : ""
+                            color: visible ? colors[model.section] : "transparent"
+                        }
+                        PlaceItem {
+                            width: parent.width
+                            text: model.name
+                            iconPath: model.icon
+                            iconFilled: model.page === 3
+                            sectionColor: model.section > 0 ? colors[model.section] : Theme.sectionFolders
+                            used: model.section === 3 && model.page === 0 ? model.used : -1
+                            badge: model.page === 2 ? (window.recent.count > 0 ? String(window.recent.count) : "")
+                                 : model.page === 4 ? (window.trash.count > 0 ? String(window.trash.count) : "")
+                                 : model.section === 3 ? model.freeText : ""
+                            selected: window.browser !== null && (model.page !== 0 ? window.page === model.page
+                                                                                   : window.page === 0 && window.browser.location === model.path)
+                            onClicked: model.page !== 0 ? window.browser.goPage(model.page) : window.browser.goPath(model.path)
+                        }
                     }
                 }
                 Text { Layout.leftMargin: 26; Layout.bottomMargin: 18; Layout.topMargin: 8; text: qsTr("F1 Shortcuts"); color: "#c9cbd6"; font.family: Theme.family; font.pointSize: Theme.tiny; font.weight: Font.Bold }
@@ -194,65 +196,39 @@ ApplicationWindow {
                         }
                         Item { Layout.fillWidth: true }
                     }
-                    RowLayout {
-                        Layout.preferredHeight: 36
-                        Layout.leftMargin: 24
-                        spacing: 0
-                        Repeater {
-                            // The name takes what the other columns leave, up to 600 px.
-                            model: [[qsTr("Name"), -1, false], [qsTr("Mode"), 70, false], [qsTr("Size"), 91, true], ["", 40, false], [qsTr("Kind"), 119, false], [qsTr("Modified"), 140, false]]
-                            Text {
-                                required property var modelData
-                                required property int index
-                                visible: index === 1 ? window.showMode : index === 4 ? window.showKind : true
-                                Layout.fillWidth: modelData[1] < 0
-                                Layout.maximumWidth: modelData[1] < 0 ? 600 : index === 3 && !window.showGap ? 16 : modelData[1]
-                                Layout.preferredWidth: modelData[1] < 0 ? 600 : index === 3 && !window.showGap ? 16 : modelData[1]
-                                horizontalAlignment: modelData[2] ? Text.AlignRight : Text.AlignLeft
-                                text: modelData[0]
-                                color: Theme.textMute
-                                font.family: Theme.family
-                                font.pointSize: Theme.tiny
-                                font.weight: Font.DemiBold
-                            }
-                        }
-                        Item { Layout.fillWidth: true }
-                    }
-                    ListView {
-                        id: list
-                        objectName: "fileList"
+                    StackLayout {
+                        id: pages
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        Layout.leftMargin: 8
-                        Layout.rightMargin: 8
-                        clip: true
-                        reuseItems: true
-                        cacheBuffer: 600
-                        focus: true
-                        model: window.folderModel
-                        boundsBehavior: Flickable.StopAtBounds
-                        ScrollBar.vertical: ScrollBar {}
-                        currentIndex: window.selectedRow
-                        delegate: FileRow {
-                            width: ListView.view.width
-                            selected: index === window.selectedRow
-                            showGap: window.showGap
-                            showMode: window.showMode
-                            showKind: window.showKind
-                            onClicked: { window.selectedRow = index; list.forceActiveFocus() }
-                            onActivated: if (isFolder) window.browser.goRow(index)
+                        currentIndex: window.page
+
+                        FolderView { browser: window.browser }
+                        OverviewPage {
+                            browser: window.browser
+                            places: window.places
+                            recent: window.recent
+                            favorites: window.favorites
+                            trash: window.trash
+                            downloads: window.downloads
                         }
-                        Keys.onUpPressed: { window.selectedRow = Math.max(0, window.selectedRow - 1); positionViewAtIndex(window.selectedRow, ListView.Contain) }
-                        Keys.onDownPressed: { window.selectedRow = Math.min(count - 1, window.selectedRow + 1); positionViewAtIndex(window.selectedRow, ListView.Contain) }
-                        Keys.onReturnPressed: window.openSelected()
-                        Keys.onEnterPressed: window.openSelected()
-                        Text {
-                            anchors.centerIn: parent
-                            visible: window.folderModel !== null && (window.folderModel.error.length > 0 || (!window.folderModel.loading && list.count === 0))
-                            text: window.folderModel !== null && window.folderModel.error.length > 0 ? window.folderModel.error : qsTr("This folder is empty")
-                            color: Theme.textMute
-                            font.family: Theme.family
-                            font.pointSize: Theme.body
+                        ItemsView {
+                            browser: window.browser
+                            items: window.recent
+                            whenTitle: qsTr("Used")
+                            emptyText: qsTr("Files you open show up here")
+                        }
+                        ItemsView {
+                            browser: window.browser
+                            items: window.favorites
+                            emptyText: qsTr("Star files and folders to keep them at hand")
+                        }
+                        ItemsView {
+                            browser: window.browser
+                            items: window.trash
+                            whenTitle: qsTr("Deleted")
+                            folderTitle: qsTr("Deleted from")
+                            emptyText: qsTr("The Trash is empty")
+                            opensFolders: false
                         }
                     }
                     Text {
@@ -260,9 +236,7 @@ ApplicationWindow {
                         Layout.rightMargin: 18
                         Layout.bottomMargin: 14
                         Layout.topMargin: 6
-                        text: window.selectedRow >= 0
-                              ? qsTr("%n items", "", list.count) + " · " + qsTr("1 selected")
-                              : qsTr("%n items", "", list.count)
+                        text: window.view ? window.view.status : ""
                         color: "#c9cbd6"
                         font.family: Theme.family
                         font.pointSize: Theme.small
@@ -282,4 +256,5 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Shift+Tab"; onActivated: window.tabs.previous() }
     Shortcut { sequence: "Ctrl+B"; onActivated: sidebarToggle.checked = !sidebarToggle.checked }
     Shortcut { sequence: "Ctrl+H"; onActivated: window.folderModel.showHidden = !window.folderModel.showHidden }
+    Shortcut { sequence: "Ctrl+1"; onActivated: window.browser.goPage(1) }
 }

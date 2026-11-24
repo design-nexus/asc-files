@@ -27,6 +27,7 @@ class FolderModel : public QAbstractListModel {
     Q_PROPERTY(bool followsChanges READ followsChanges NOTIFY folderChanged)
     Q_PROPERTY(qint64 generation READ generation NOTIFY generationChanged)
     Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
+    Q_PROPERTY(bool newestFirst READ newestFirst WRITE setNewestFirst NOTIFY newestFirstChanged)
 public:
     enum Role {
         NameRole = Qt::UserRole + 1,
@@ -75,6 +76,9 @@ public:
     qint64 generation() const { return m_generation; }
     bool showHidden() const { return m_showHidden; }
     void setShowHidden(bool show);
+    bool newestFirst() const { return m_newestFirst; }
+    /// Lists by modified time, newest first, without folders first (for "what's new").
+    void setNewestFirst(bool newest);
     bool isLoaded(int row) const;
     int pagesFetched() const { return m_pagesFetched; }
 
@@ -88,6 +92,7 @@ signals:
     void errorChanged();
     void generationChanged();
     void showHiddenChanged();
+    void newestFirstChanged();
     /// The folder is listed and its count known.
     void opened(int count);
     /// The folder went (deleted, moved away or unmounted); the model moved to `nearest`.
@@ -112,6 +117,7 @@ private:
     bool m_loading = false;
     bool m_followsChanges = false;
     bool m_showHidden = false;
+    bool m_newestFirst = false;
     QString m_error;
     QString m_errorKind;
     mutable QHash<int, QJsonArray> m_pages;

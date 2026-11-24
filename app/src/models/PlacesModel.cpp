@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "PlacesModel.h"
 
+#include "Browser.h"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QLocale>
@@ -27,6 +29,11 @@ const QString PinnedIcon = QStringLiteral("M2 4.5h4l1.5 1.5H14v6.5H2z");
 const QString DriveIcon = QStringLiteral(
     "M3.5 4h9A1.5 1.5 0 0 1 14 5.5v5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 10.5v-5A1.5 1.5 0 0 1 3.5 4zM2 8h12M4.5 10h.01");
 
+const QString OverviewIcon = QStringLiteral("M2.5 7.5 8 3l5.5 4.5V13h-11z");
+const QString RecentIcon = QStringLiteral("M8 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5v3l2 1.5");
+const QString FavoritesIcon = QStringLiteral("M8 2l1.8 3.7 4 .6-2.9 2.8.7 4L8 11.2 4.4 13.1l.7-4L2.2 6.3l4-.6z");
+const QString TrashIcon = QStringLiteral("M3 4.5h10M6 4.5V3h4v1.5M4.5 4.5l.7 9h5.6l.7-9");
+
 constexpr int DrivePollMs = 5000;
 
 QSettings settings() {
@@ -48,6 +55,12 @@ PlacesModel::PlacesModel(QObject *parent) : QAbstractListModel(parent) {
     m_drives.setInterval(DrivePollMs);
     connect(&m_drives, &QTimer::timeout, this, &PlacesModel::refreshDrives);
     m_drives.start();
+}
+
+QList<PlacesModel::Place> PlacesModel::pages() const {
+    return {{Pages, tr("Overview"), {}, OverviewIcon, -1, {}, Browser::Overview},
+            {Pages, tr("Recent"), {}, RecentIcon, -1, {}, Browser::Recent},
+            {Pages, tr("Favorites"), {}, FavoritesIcon, -1, {}, Browser::Favorites}};
 }
 
 QList<PlacesModel::Place> PlacesModel::folders() const {
@@ -98,7 +111,8 @@ QList<PlacesModel::Place> PlacesModel::drives() const {
 
 void PlacesModel::rebuild() {
     beginResetModel();
-    m_places = folders() + pinned() + drives();
+    m_places = pages() + folders() + pinned() + drives();
+    m_places.append({Storage, tr("Trash"), {}, TrashIcon, -1, {}, Browser::Trash});
     endResetModel();
 }
 
@@ -108,7 +122,8 @@ void PlacesModel::refreshDrives() {
     const int first = int(std::find_if(m_places.cbegin(), m_places.cend(), [](const Place &place) {
                               return place.section == Storage;
                           }) - m_places.cbegin());
-    const int old = int(m_places.size()) - first;
+    // The drives, then the Trash, which stays.
+    const int old = int(m_places.size()) - 1 - first;
     bool same = old == now.size();
     for (int i = 0; same && i < old; ++i) {
         same = m_places.at(first + i).path == now.at(i).path;
@@ -118,17 +133,19 @@ void PlacesModel::refreshDrives() {
             m_places[first + i] = now.at(i);
         }
         if (old > 0) {
-            emit dataChanged(index(first), index(first + old - 1), {UsedRole, FreeTextRole, NameRole});
+            emit dataChanged(index(first), index(first + old - 1), {UsedRole, FreeTextRole, NameRole, FirstInSectionRole});
         }
         return;
     }
     if (old > 0) {
         beginRemoveRows({}, first, first + old - 1);
-        m_places.erase(m_places.begin() + first, m_places.end());
+        m_places.erase(m_places.begin() + first, m_places.begin() + first + old);
         endRemoveRows();
     }
     beginInsertRows({}, first, first + int(now.size()) - 1);
-    m_places.append(now);
+    for (int i = 0; i < now.size(); ++i) {
+        m_places.insert(first + i, now.at(i));
+    }
     endInsertRows();
 }
 
@@ -167,7 +184,7 @@ QVariant PlacesModel::data(const QModelIndex &index, int role) const {
     const Place &place = m_places.at(index.row());
     switch (role) {
     case SectionRole:
-        return place.section;
+        return int(place.section);
     case NameRole:
         return place.name;
     case PathRole:
@@ -178,6 +195,10 @@ QVariant PlacesModel::data(const QModelIndex &index, int role) const {
         return place.used;
     case FreeTextRole:
         return place.freeText;
+    case PageRole:
+        return place.page;
+    case FirstInSectionRole:
+        return index.row() == 0 || m_places.at(index.row() - 1).section != place.section;
     default:
         return {};
     }
@@ -185,5 +206,6 @@ QVariant PlacesModel::data(const QModelIndex &index, int role) const {
 
 QHash<int, QByteArray> PlacesModel::roleNames() const {
     return {{SectionRole, "section"}, {NameRole, "name"},   {PathRole, "path"},
-            {IconRole, "icon"},       {UsedRole, "used"}, {FreeTextRole, "freeText"}};
+            {IconRole, "icon"},       {UsedRole, "used"}, {FreeTextRole, "freeText"},
+            {PageRole, "page"}, {FirstInSectionRole, "firstInSection"}};
 }

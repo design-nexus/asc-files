@@ -5,16 +5,17 @@
 #include <QList>
 #include <QTimer>
 
-/// The sidebar's places, section by section: Folders (Home and the XDG folders that exist),
-/// Pinned (folders the user pinned, kept in the settings file), and Storage (the system drive and
-/// mounted removable drives, with how full each is). Drives are looked at again every few
+/// The sidebar's places, section by section: the pages at the top (Overview, Recent,
+/// Favorites), Folders (Home and the XDG folders that exist), Pinned (folders the user pinned,
+/// kept in the settings file), and Storage (the system drive and mounted removable drives, with
+/// how full each is, then the Trash). Drives are looked at again every few
 /// seconds and when asked, so a stick plugged in shows up.
 class PlacesModel : public QAbstractListModel {
     Q_OBJECT
 public:
-    enum Role { SectionRole = Qt::UserRole + 1, NameRole, PathRole, IconRole, UsedRole, FreeTextRole };
+    enum Role { SectionRole = Qt::UserRole + 1, NameRole, PathRole, IconRole, UsedRole, FreeTextRole, PageRole, FirstInSectionRole };
     Q_ENUM(Role)
-    enum Section { Folders, Pinned, Storage };
+    enum Section { Pages, Folders, Pinned, Storage };
     Q_ENUM(Section)
 
     explicit PlacesModel(QObject *parent = nullptr);
@@ -37,7 +38,10 @@ private:
         /// How full a drive is, 0–1; negative for a folder.
         double used = -1;
         QString freeText;
+        /// The Browser::Page a page place shows; 0 (a folder) otherwise.
+        int page = 0;
     };
+    QList<Place> pages() const;
     QList<Place> folders() const;
     QList<Place> pinned() const;
     QList<Place> drives() const;

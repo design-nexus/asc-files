@@ -9,10 +9,13 @@
 class BackendClient;
 #include "FolderModel.h"
 
-/// One tab's browsing: the folder it shows, with back and forward history and the breadcrumb.
-/// Paths are kept as raw bytes, so history works for names that are not UTF-8.
+/// One tab's browsing: the folder or page it shows, with back and forward history and the
+/// breadcrumb. Besides folders, a tab can show a page of its own (Overview, Recent, Favorites,
+/// Trash); pages take their place in history like folders do. Paths are kept as raw bytes, so
+/// history works for names that are not UTF-8.
 class Browser : public QObject {
     Q_OBJECT
+    Q_PROPERTY(Page page READ page NOTIFY locationChanged)
     Q_PROPERTY(FolderModel *folderModel READ folderModel CONSTANT)
     Q_PROPERTY(bool canGoBack READ canGoBack NOTIFY historyChanged)
     Q_PROPERTY(bool canGoForward READ canGoForward NOTIFY historyChanged)
@@ -21,7 +24,17 @@ class Browser : public QObject {
     Q_PROPERTY(QString title READ title NOTIFY locationChanged)
     Q_PROPERTY(QString location READ location NOTIFY locationChanged)
 public:
+    enum Page { Folder, Overview, Recent, Favorites, Trash };
+    Q_ENUM(Page)
+
     explicit Browser(BackendClient *backend, QObject *parent = nullptr);
+
+    Page page() const { return m_here.page; }
+    /// Shows a page other than a folder.
+    Q_INVOKABLE void goPage(Page page);
+    /// Where the tab is, as text a session can be restored from: a path, or `page:<name>`.
+    QString saved() const;
+    Q_INVOKABLE void restore(const QString &saved);
 
     FolderModel *folderModel() const { return m_folders; }
     QByteArray rawLocation() const;
@@ -52,10 +65,18 @@ signals:
     void locationChanged();
 
 private:
+    struct Place {
+        Page page = Folder;
+        QByteArray path;
+        bool operator==(const Place &other) const { return page == other.page && path == other.path; }
+    };
+    void go(const Place &place);
+    void show(const Place &place);
     /// The raw paths the crumbs stand for, in the same order as crumbs().
     QList<QByteArray> crumbPaths() const;
 
     FolderModel *m_folders;
-    QList<QByteArray> m_back;
-    QList<QByteArray> m_forward;
+    Place m_here;
+    QList<Place> m_back;
+    QList<Place> m_forward;
 };

@@ -94,7 +94,11 @@ void FolderModel::open(const QByteArray &path) {
     endResetModel();
     emit folderChanged();
     QJsonObject params{{"path", Wire::encode(path)}, {"showHidden", m_showHidden}};
-    m_backend->call(QStringLiteral("list.open"), params,
+    if (m_newestFirst) {
+        params.insert(QStringLiteral("sort"),
+                      QJsonObject{{"key", "modified"}, {"descending", true}, {"foldersFirst", false}});
+    }
+    m_backend->call(QStringLiteral("list.open"), params, this,
                     [this, opening](const QJsonValue &result, const BackendError &error) {
                         if (opening != m_opening) {
                             // Opened somewhere else meanwhile: let this listing go.
@@ -139,7 +143,7 @@ void FolderModel::refresh() {
         return;
     }
     const qint64 listing = m_listing;
-    m_backend->call(QStringLiteral("list.refresh"), {{"listing", listing}},
+    m_backend->call(QStringLiteral("list.refresh"), {{"listing", listing}}, this,
                     [this, listing](const QJsonValue &result, const BackendError &error) {
                         if (listing != m_listing || !error.isNull()) {
                             return;
@@ -160,7 +164,7 @@ void FolderModel::setShowHidden(bool show) {
         return;
     }
     const qint64 listing = m_listing;
-    m_backend->call(QStringLiteral("list.reorder"), {{"listing", listing}, {"showHidden", show}},
+    m_backend->call(QStringLiteral("list.reorder"), {{"listing", listing}, {"showHidden", show}}, this,
                     [this, listing](const QJsonValue &result, const BackendError &error) {
                         if (listing != m_listing || !error.isNull()) {
                             return;
@@ -169,6 +173,16 @@ void FolderModel::setShowHidden(bool show) {
                         reread(counted.value(QStringLiteral("generation")).toInteger(),
                                counted.value(QStringLiteral("count")).toInt());
                     });
+}
+
+void FolderModel::setNewestFirst(bool newest) {
+    if (m_newestFirst != newest) {
+        m_newestFirst = newest;
+        emit newestFirstChanged();
+        if (!m_folder.isEmpty()) {
+            open(m_folder);
+        }
+    }
 }
 
 QString FolderModel::folder() const { return Wire::display(m_folder); }
@@ -323,7 +337,7 @@ void FolderModel::request(int page) const {
     const qint64 listing = m_listing;
     const qint64 generation = m_generation;
     m_backend->call(QStringLiteral("list.window"),
-                    {{"listing", listing}, {"start", page * PageSize}, {"count", PageSize}},
+                    {{"listing", listing}, {"start", page * PageSize}, {"count", PageSize}}, self,
                     [self, page, listing, generation](const QJsonValue &result, const BackendError &error) {
                         if (listing != self->m_listing || generation != self->m_generation) {
                             return; // Meant for a listing or a read the model has left.

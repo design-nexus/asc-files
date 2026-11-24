@@ -3,10 +3,13 @@
 
 #include "backend/BackendClient.h"
 #include "models/Browser.h"
+#include "models/FavoritesModel.h"
 #include "models/FolderModel.h"
 #include "models/JobModel.h"
 #include "models/PlacesModel.h"
+#include "models/RecentModel.h"
 #include "models/TabModel.h"
+#include "models/TrashModel.h"
 
 #include <QCommandLineParser>
 #include <QDir>
@@ -14,6 +17,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlExtensionPlugin>
 #include <QQuickStyle>
+#include <QStandardPaths>
 
 Q_IMPORT_QML_PLUGIN(AscFilesPlugin)
 
@@ -34,6 +38,13 @@ int main(int argc, char *argv[]) {
                                                                   : BackendClient::defaultProgram());
     TabModel tabs(&backend);
     PlacesModel places;
+    RecentModel recent;
+    FavoritesModel favorites;
+    TrashModel trash(&backend);
+    // What is new in Downloads, for the Overview.
+    FolderModel downloads(&backend);
+    downloads.setNewestFirst(true);
+    downloads.openPath(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
     JobModel jobs(&backend);
     QObject::connect(&backend, &BackendClient::failed, &app, [](const QString &why) {
         qCritical().noquote() << why;
@@ -42,6 +53,10 @@ int main(int argc, char *argv[]) {
     QQmlApplicationEngine engine;
     engine.setInitialProperties({{QStringLiteral("tabs"), QVariant::fromValue(&tabs)},
                                  {QStringLiteral("places"), QVariant::fromValue(&places)},
+                                 {QStringLiteral("recent"), QVariant::fromValue(&recent)},
+                                 {QStringLiteral("favorites"), QVariant::fromValue(&favorites)},
+                                 {QStringLiteral("trash"), QVariant::fromValue(&trash)},
+                                 {QStringLiteral("downloads"), QVariant::fromValue(&downloads)},
                                  {QStringLiteral("jobModel"), QVariant::fromValue(&jobs)},
                                  {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
@@ -50,13 +65,15 @@ int main(int argc, char *argv[]) {
 
     backend.start();
     const QStringList folders = parser.positionalArguments();
-    if (folders.isEmpty()) {
+    // Without folders to open, the tabs the last session left; else Home.
+    if (folders.isEmpty() && !tabs.restoreSession()) {
         tabs.openTab(QDir::homePath());
     }
     for (const QString &folder : folders) {
         tabs.openTab(QDir(folder).absolutePath());
     }
-    // The window was made before the first tab: start it on the first.
-    tabs.setCurrentIndex(0);
+    if (!folders.isEmpty()) {
+        tabs.setCurrentIndex(0);
+    }
     return app.exec();
 }
