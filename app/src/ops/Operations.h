@@ -54,7 +54,14 @@ public:
     Q_INVOKABLE void deleteFromTrash(const QString &info);
     /// Deletes everything in every Trash for good (the window asks first).
     Q_INVOKABLE void emptyTrash();
-    Q_INVOKABLE void undo();
+    /// Says what each leftover in `folder` holds, answered by `leftoversReviewed`.
+    Q_INVOKABLE void reviewLeftovers(FolderModel *folder);
+    /// Puts the originals in the leftover `name` of `folder` back under their names.
+    Q_INVOKABLE void recover(FolderModel *folder, const QString &name);
+    /// Undoes the newest entry. Where it would put an item back under a name something else
+    /// holds now, it asks first (`undoBlocked`); `overwrite`, once confirmed, moves those to the
+    /// Trash and goes ahead.
+    Q_INVOKABLE void undo(bool overwrite = false);
     Q_INVOKABLE void redo();
     Q_INVOKABLE void refreshHistory();
 
@@ -72,6 +79,10 @@ signals:
     void historyChanged();
     /// Something to tell the user: what started, what was undone, why something was refused.
     void notice(const QString &message);
+    /// What each leftover holds: `[{name, modified, kind, names, more, reason}]`.
+    void leftoversReviewed(const QVariantList &leftovers);
+    /// Undo would put items back where `names` (newer items) are now: the window asks.
+    void undoBlocked(const QStringList &names);
     /// The Trash changed through Files.
     void trashChanged();
     /// A new item was made in `folder`; the window starts renaming it.
@@ -84,8 +95,11 @@ private:
         QJsonArray items;
         /// Per clash: the plan's item for it.
         QList<QJsonObject> clashes;
+        /// Items numbered beside a name another item keeps; started after the rest.
+        QJsonArray numbered;
     };
     void startBatch(const QByteArray &into, const QJsonArray &items, bool cut);
+    void undoNow(bool overwrite);
     QList<QByteArray> selectedPaths(FolderModel *folder) const;
 
     BackendClient *m_backend;

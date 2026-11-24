@@ -118,6 +118,8 @@ pub struct Listing {
     options: Options,
     generation: u64,
     entries: Vec<Entry>,
+    /// What interrupted operations left here (originals set aside, probes), hidden or not.
+    leftovers: Vec<std::ffi::OsString>,
 }
 
 impl Listing {
@@ -127,6 +129,7 @@ impl Listing {
             options,
             generation: 0,
             entries: Vec::new(),
+            leftovers: Vec::new(),
         };
         listing.refresh()?;
         Ok(listing)
@@ -134,7 +137,7 @@ impl Listing {
 
     /// Reads the folder again; the listing keeps what it had if the read fails.
     pub fn refresh(&mut self) -> Result<(), Error> {
-        self.entries = read_entries(&self.folder, &self.options)?;
+        (self.entries, self.leftovers) = read_entries(&self.folder, &self.options)?;
         self.generation += 1;
         Ok(())
     }
@@ -147,6 +150,12 @@ impl Listing {
 
     pub fn folder(&self) -> &Path {
         &self.folder
+    }
+
+    /// The entries interrupted operations left in the folder, found as it was read, whether or
+    /// not hidden entries are listed: a client offers to put originals back.
+    pub fn leftovers(&self) -> &[std::ffi::OsString] {
+        &self.leftovers
     }
 
     pub fn options(&self) -> Options {
@@ -194,15 +203,22 @@ fn lstat(path: &Path) -> Option<Stat> {
     })
 }
 
-fn read_entries(folder: &Path, options: &Options) -> Result<Vec<Entry>, Error> {
+fn read_entries(
+    folder: &Path,
+    options: &Options,
+) -> Result<(Vec<Entry>, Vec<std::ffi::OsString>), Error> {
     let read = std::fs::read_dir(folder).map_err(os_io_error)?;
     let listed_hidden = native_hidden_names(folder);
     let wants_stats = options.order.key != SortKey::Name;
     let mut entries = Vec::new();
+    let mut leftovers = Vec::new();
     for entry in read {
         // An entry that went while the folder was read is simply not listed.
         let Ok(entry) = entry else { continue };
         let name = entry.file_name();
+        if crate::recovery::is_leftover(&name) {
+            leftovers.push(name.clone());
+        }
         let hidden = is_hidden_name(&name, &listed_hidden);
         if hidden && !options.show_hidden {
             continue;
@@ -238,7 +254,7 @@ fn read_entries(folder: &Path, options: &Options) -> Result<Vec<Entry>, Error> {
         });
     }
     entries.sort_by(|a, b| compare(a, b, options.order));
-    Ok(entries)
+    Ok((entries, leftovers))
 }
 
 fn compare(a: &Entry, b: &Entry, order: Order) -> Ordering {

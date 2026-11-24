@@ -244,8 +244,16 @@ impl Session {
                 };
                 now(json!({"undo": entry(history.undo), "redo": entry(history.redo)}))
             }
-            Call::Undo | Call::Redo => {
+            Call::UndoPreview => {
+                let journal = self.journal.as_ref().ok_or_else(no_history)?;
+                let blocked = journal.blocked()?;
+                now(
+                    json!({"blocked": blocked.iter().map(|path| wire::path(path)).collect::<Vec<_>>()}),
+                )
+            }
+            Call::Undo { .. } | Call::Redo => {
                 let redo = matches!(call, Call::Redo);
+                let overwrite = matches!(call, Call::Undo { overwrite: true });
                 let journal = self.journal.clone().ok_or_else(no_history)?;
                 // An undo in progress finishes at shutdown: stopping it halfway would leave its
                 // entry half done.
@@ -254,7 +262,7 @@ impl Session {
                     let outcome = if redo {
                         journal.redo(&cancel, &progress)
                     } else {
-                        journal.undo(&cancel, &progress)
+                        journal.undo_with(overwrite, &cancel, &progress)
                     };
                     Ok(undo_json(&outcome?))
                 });

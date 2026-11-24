@@ -58,6 +58,7 @@ qt_add_qml_module(asc_files_qml
         qml/components/IconButton.qml
         qml/components/ItemRow.qml
         qml/components/JobsIndicator.qml
+        qml/components/LeftoversDialog.qml
         qml/components/NameEditor.qml
         qml/components/Notice.qml
         qml/components/PlaceItem.qml

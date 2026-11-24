@@ -7,6 +7,7 @@
 
 #include <QDateTime>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QLocale>
 #include <QMimeDatabase>
@@ -97,6 +98,7 @@ void FolderModel::open(const QByteArray &path) {
     m_allSelected = false;
     m_anchor = -1;
     endResetModel();
+    takeLeftovers(QJsonArray());
     emit folderChanged();
     emit selectionChanged();
     QJsonObject params{{"path", Wire::encode(path)}, {"showHidden", m_showHidden}};
@@ -119,6 +121,7 @@ void FolderModel::open(const QByteArray &path) {
                         const QJsonObject listing = result.toObject();
                         m_listing = listing.value(QStringLiteral("listing")).toInteger();
                         m_followsChanges = listing.value(QStringLiteral("followsChanges")).toBool();
+                        takeLeftovers(listing.value(QStringLiteral("leftovers")));
                         reread(listing.value(QStringLiteral("generation")).toInteger(),
                                listing.value(QStringLiteral("count")).toInt());
                         emit folderChanged();
@@ -161,6 +164,7 @@ void FolderModel::refresh() {
                             return;
                         }
                         const QJsonObject counted = result.toObject();
+                        takeLeftovers(counted.value(QStringLiteral("leftovers")));
                         reread(counted.value(QStringLiteral("generation")).toInteger(),
                                counted.value(QStringLiteral("count")).toInt());
                     });
@@ -211,6 +215,7 @@ void FolderModel::reorder() {
                             return;
                         }
                         const QJsonObject counted = result.toObject();
+                        takeLeftovers(counted.value(QStringLiteral("leftovers")));
                         reread(counted.value(QStringLiteral("generation")).toInteger(),
                                counted.value(QStringLiteral("count")).toInt());
                     });
@@ -256,6 +261,7 @@ void FolderModel::notification(const QString &method, const QJsonObject &params)
         return;
     }
     if (method == QLatin1String("list.changed")) {
+        takeLeftovers(params.value(QStringLiteral("leftovers")));
         reread(params.value(QStringLiteral("generation")).toInteger(), params.value(QStringLiteral("count")).toInt());
     } else if (method == QLatin1String("list.gone") || method == QLatin1String("list.unmounted")) {
         const QString left = folder();
@@ -610,4 +616,33 @@ void FolderModel::rename(int row, const QString &name) {
                         selectionTouched();
                         emit renamed(Wire::display(now));
                     });
+}
+
+QStringList FolderModel::leftovers() const {
+    QStringList names;
+    for (const QByteArray &name : m_leftovers) {
+        names.append(Wire::display(name));
+    }
+    return names;
+}
+
+void FolderModel::takeLeftovers(const QJsonValue &names) {
+    QList<QByteArray> originals;
+    QJsonArray probes;
+    for (const QJsonValue &name : names.toArray()) {
+        const QByteArray raw = Wire::decode(name);
+        // Probes are only swept (the backend removes old empty ones); originals are offered back.
+        if (raw.startsWith(".asc-files-probe-")) {
+            probes.append(name);
+        } else if (!raw.isEmpty()) {
+            originals.append(raw);
+        }
+    }
+    if (!probes.isEmpty() && !m_folder.isEmpty()) {
+        m_backend->call(QStringLiteral("leftovers.sweep"), {{"folder", Wire::encode(m_folder)}, {"names", probes}});
+    }
+    if (originals != m_leftovers) {
+        m_leftovers = originals;
+        emit leftoversChanged();
+    }
 }

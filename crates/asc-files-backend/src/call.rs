@@ -105,7 +105,10 @@ pub enum Call {
         label: Option<String>,
     },
     UndoHistory,
-    Undo,
+    UndoPreview,
+    Undo {
+        overwrite: bool,
+    },
     Redo,
     TrashList,
     TrashRestore {
@@ -240,7 +243,12 @@ fn call(method: &str, params: &Params) -> Result<Call, Fault> {
             label: params.optional("label", Params::string_of)?,
         },
         "undo.history" => Call::UndoHistory,
-        "undo.undo" => Call::Undo,
+        "undo.preview" => Call::UndoPreview,
+        "undo.undo" => Call::Undo {
+            overwrite: params
+                .optional("overwrite", Params::bool_of)?
+                .unwrap_or(false),
+        },
         "undo.redo" => Call::Redo,
         "trash.list" => Call::TrashList,
         "trash.restore" => Call::TrashRestore {

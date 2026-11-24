@@ -29,6 +29,8 @@ class FolderModel : public QAbstractListModel {
     Q_PROPERTY(qint64 generation READ generation NOTIFY generationChanged)
     Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
     Q_PROPERTY(int selectionCount READ selectionCount NOTIFY selectionChanged)
+    /// Originals an interrupted operation set aside here, by name, for the leftovers notice.
+    Q_PROPERTY(QStringList leftovers READ leftovers NOTIFY leftoversChanged)
     Q_PROPERTY(QString sortKey READ sortKey NOTIFY sortChanged)
     Q_PROPERTY(bool sortDescending READ sortDescending NOTIFY sortChanged)
     Q_PROPERTY(bool foldersFirst READ foldersFirst NOTIFY sortChanged)
@@ -123,6 +125,8 @@ public:
     /// a folder not fully read).
     QList<QByteArray> selectedNames() const;
     bool allSelected() const { return m_allSelected; }
+    QStringList leftovers() const;
+    QList<QByteArray> rawLeftovers() const { return m_leftovers; }
 
     int rowCount(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role) const override;
@@ -138,6 +142,7 @@ signals:
     /// The folder is listed and its count known.
     void opened(int count);
     void selectionChanged();
+    void leftoversChanged();
     /// An operation on this folder was refused; `message` says why, for the user.
     void failed(const QString &message);
     void renamed(const QString &name);
@@ -187,4 +192,7 @@ private:
     /// Rows a range named before their pages arrived, in the generation it was made in.
     QSet<int> m_pendingRows;
     int m_anchor = -1;
+    QList<QByteArray> m_leftovers;
+    /// Keeps what a listing says interrupted operations left; old probes are swept away.
+    void takeLeftovers(const QJsonValue &names);
 };

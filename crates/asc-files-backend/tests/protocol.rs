@@ -530,6 +530,11 @@ fn originals_an_interrupted_replace_left_are_reviewed_and_put_back() {
     fs::write(root.path().join(container).join("song.flac"), "old").unwrap();
     fs::write(root.path().join("song.flac"), "new").unwrap();
 
+    // A listing names it, though hidden entries are not listed.
+    let open = backend.call("list.open", json!({"path": root.path()}), &mut notes);
+    assert_eq!(open["result"]["leftovers"], json!([container]), "{open}");
+    assert_eq!(open["result"]["count"], 1, "{open}");
+
     let reviewed = backend.call(
         "leftovers.review",
         json!({"folder": root.path(), "names": [container]}),
@@ -890,5 +895,51 @@ fn requests_are_checked_before_anything_is_done() {
     let after = backend.call("undo.history", json!({}), &mut notes);
     assert!(after.get("result").is_some(), "{after}");
     assert!(notes.is_empty(), "{notes:?}");
+    backend.call("shutdown", json!({}), &mut notes);
+}
+
+#[test]
+fn undo_asks_before_putting_back_over_a_newer_item() {
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    backend.call("initialize", json!({}), &mut notes);
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    let (from, to) = (root.path().join("from"), root.path().join("to"));
+    fs::create_dir_all(&from).unwrap();
+    fs::create_dir_all(&to).unwrap();
+    fs::write(from.join("report.txt"), b"moved").unwrap();
+    let start = backend.call(
+        "jobs.start",
+        json!({"into": to, "items": [{"source": from.join("report.txt"), "action": "move"}]}),
+        &mut notes,
+    );
+    let job = start["result"]["job"].clone();
+    backend.until(&mut notes, |n| {
+        n["method"] == "job.finished" && n["params"]["job"] == job
+    });
+    // Something new takes the name the move left.
+    fs::write(from.join("report.txt"), b"newer").unwrap();
+
+    let preview = backend.call("undo.preview", json!({}), &mut notes);
+    assert_eq!(
+        preview["result"]["blocked"],
+        json!([from.join("report.txt")]),
+        "{preview}"
+    );
+    let overwritten = backend.call("undo.undo", json!({"overwrite": true}), &mut notes);
+    assert_eq!(overwritten["result"]["done"], 1, "{overwritten}");
+    assert_eq!(fs::read(from.join("report.txt")).unwrap(), b"moved");
+    assert!(!to.join("report.txt").exists());
+    // The newer item is in the Trash, not lost.
+    let listed = backend.call("trash.list", json!({}), &mut notes);
+    let entry = listed["result"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["original"] == json!(from.join("report.txt")))
+        .cloned()
+        .expect("the newer item in the Trash");
+    assert_eq!(fs::read(entry["file"].as_str().unwrap()).unwrap(), b"newer");
+    backend.call("trash.delete", json!({"info": entry["info"]}), &mut notes);
     backend.call("shutdown", json!({}), &mut notes);
 }

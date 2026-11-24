@@ -360,6 +360,11 @@ ApplicationWindow {
         target: window.ops
         function onNotice(message) { notice.show(message) }
         function onTrashChanged() { window.trash.reload() }
+        function onUndoBlocked(names) {
+            confirm.ask(qsTr("Put back over newer items?"),
+                        qsTr("Undo would put items back where these are now: %1. They will go to the Trash, so nothing is lost.").arg(names.join(", ")),
+                        qsTr("Move to Trash and Undo"), () => window.ops.undo(true))
+        }
     }
     ConflictDialog { ops: window.ops }
     ConfirmDialog { id: confirm }

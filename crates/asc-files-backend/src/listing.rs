@@ -173,6 +173,7 @@ fn run(
             "generation": current.generation(),
             "count": current.len(),
             "followsChanges": watch.follows_changes(),
+            "leftovers": leftovers(&current),
         })),
     );
     let notify = |method: &str, params: Value| {
@@ -224,7 +225,18 @@ fn run(
 }
 
 fn counted(listing: &Listing) -> Value {
-    json!({"generation": listing.generation(), "count": listing.len()})
+    json!({"generation": listing.generation(), "count": listing.len(), "leftovers": leftovers(listing)})
+}
+
+/// What interrupted operations left in the folder, hidden or not.
+fn leftovers(listing: &Listing) -> Value {
+    json!(
+        listing
+            .leftovers()
+            .iter()
+            .map(|name| wire::name(name))
+            .collect::<Vec<_>>()
+    )
 }
 
 fn not_responding() -> Error {

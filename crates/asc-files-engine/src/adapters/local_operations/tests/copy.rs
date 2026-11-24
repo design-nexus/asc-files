@@ -1250,8 +1250,8 @@ fn a_paste_through_a_symbolic_link_takes_the_rules_of_the_mount_behind_it()
 }
 
 #[test]
-#[ignore = "gap: a paste's names are not planned together; legacy gave a name needing no fix \
-            priority over one fixed to it (a_b over a:b), which returns with the paste-planning call"]
+#[ignore = "planned by the client now: jobs.plan reports names that land together (aliasOf) and the \
+            app's paste gives a name needing no fix priority (a_b over a:b); a job alone keeps its order"]
 fn a_paste_fixes_the_names_it_brings_onto_fat_and_keeps_those_already_there()
 -> Result<(), Box<dyn Error>> {
     let _serial = serial()?;

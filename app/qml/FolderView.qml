@@ -132,9 +132,40 @@ Item {
         onDropped: (drop) => { if (view.transfers.dropHere(drop.urls, view.folderModel)) drop.accept() }
     }
 
+    // A notice above the folder when an interrupted operation left originals here.
+    Rectangle {
+        id: leftoversNotice
+        visible: view.folderModel !== null && view.folderModel.leftovers.length > 0
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.margins: 12
+        height: visible ? 40 : 0
+        radius: Theme.radius
+        color: Qt.rgba(238 / 255, 180 / 255, 63 / 255, 0.10)
+        border.width: 1
+        border.color: Qt.rgba(238 / 255, 180 / 255, 63 / 255, 0.35)
+        z: 2
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 14
+            anchors.rightMargin: 6
+            Icon { path: "M8 2.5 14 13H2zM8 6.5v3M8 11.5h.01"; color: Theme.warning }
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("Items left by an interrupted operation")
+                color: Theme.text
+                font.family: Theme.family
+                font.pointSize: Theme.body
+            }
+            Button { text: qsTr("Review…"); onClicked: leftoversDialog.review() }
+        }
+    }
+    LeftoversDialog { id: leftoversDialog; ops: view.ops; folderModel: view.folderModel }
+
     // List
     ColumnLayout {
         anchors.fill: parent
+        anchors.topMargin: leftoversNotice.visible ? 52 : 0
         visible: view.mode === 0
         spacing: 0
 

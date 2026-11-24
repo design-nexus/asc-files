@@ -526,6 +526,26 @@ impl Journal {
     /// Reverses the newest entry, newest step first. It leaves the history while it runs, so two
     /// windows never undo the same entry.
     pub fn undo(&self, cancel: &Cancel, progress: &Progress) -> Result<Outcome, Error> {
+        self.undo_with(false, cancel, progress)
+    }
+
+    /// The places the newest entry's undo would put items back where something else holds the
+    /// name now, so a prompt can ask whether to move those to the Trash first. Nothing changes.
+    pub fn blocked(&self) -> Result<Vec<PathBuf>, Error> {
+        let entry = self.change(|stacks| stacks.undo.last().cloned())?;
+        Ok(entry
+            .map(|entry| entry.steps.iter().filter_map(blocked_by).collect())
+            .unwrap_or_default())
+    }
+
+    /// [`undo`](Self::undo); with `overwrite`, the user having confirmed it, an item that took a
+    /// name undo puts something back under goes to the Trash first, so nothing is lost.
+    pub fn undo_with(
+        &self,
+        overwrite: bool,
+        cancel: &Cancel,
+        progress: &Progress,
+    ) -> Result<Outcome, Error> {
         let entry = self
             .change(|stacks| stacks.undo.pop())?
             .ok_or_else(|| nothing("There is nothing to undo"))?;
@@ -539,6 +559,12 @@ impl Journal {
             if cancel.is_cancelled() {
                 left.push((step.path().to_path_buf(), crate::error::cancelled()));
                 continue;
+            }
+            if overwrite && let Some(holder) = blocked_by(step) {
+                if let Err(error) = trash::put(&holder) {
+                    left.push((step.path().to_path_buf(), error));
+                    continue;
+                }
             }
             match reverse(step, cancel, progress) {
                 Ok((undone, given_back)) => {
@@ -759,6 +785,20 @@ fn trash_entry(info: &Path, identity: &Identity) -> Result<trash::Entry, Error> 
         })?;
     still(&entry.file, identity)?;
     Ok(entry)
+}
+
+/// Where undoing `step` would put an item back under a name something else holds now.
+fn blocked_by(step: &Step) -> Option<PathBuf> {
+    let target = match step {
+        Step::Moved { from, .. } | Step::MovedOver { from, .. } => from,
+        Step::Trashed { original, .. } => original,
+        // These take away what was made, or put the original back once the copy is gone.
+        Step::Copied { .. }
+        | Step::Created { .. }
+        | Step::RemovedFolder { .. }
+        | Step::Replaced { .. } => return None,
+    };
+    fs::symlink_metadata(target).is_ok().then(|| target.clone())
 }
 
 /// Reverses one step, giving what redo needs and any names inside it that stayed as they were.

@@ -295,7 +295,14 @@ ported with a reason. This list must be empty, or every entry justified, before 
 - **Added (A9):** `ops.rename` and `ops.create` on the protocol, filed for undo (`undo::Step::Created`, and a
   rename as a move within its folder, undone and redone as a rename so a change of case alone works). Undo
   without a Trash now also deletes an empty folder an operation made, while it is unchanged.
-- **Open:** a bulk path for many small items; a paste-planning call.
+- **Added (B-ops):** `jobs.plan`, a paste planned by the names the destination stores; the app's paste prompts
+  by them, passes the stored name on so Replace replaces what holds it, and gives a name needing no fix
+  priority over one fixed onto it. The two tests ignored for this stay ignored with that reason: a job on its
+  own, with no client planning it, keeps its order, and a merge's inner clashes are still found by source name.
+- **Added (B-ops):** undo onto a newer item, once confirmed: `undo.preview` names the places undo would put
+  something back where a newer item holds the name, and `undo.undo {overwrite: true}` moves those to the Trash
+  first, so nothing is lost. Without the confirmation, such a step is left as before.
+- **Open:** a bulk path for many small items; inner merge clashes by stored names.
 
 ## Archives (legacy: 225 tests)
 

@@ -759,12 +759,19 @@
             },
             "followsChanges": {
               "type": "boolean"
+            },
+            "leftovers": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
             }
           },
           "required": [
             "count",
             "followsChanges",
             "generation",
+            "leftovers",
             "listing"
           ],
           "additionalProperties": false
@@ -872,11 +879,18 @@
             "count": {
               "type": "integer",
               "minimum": 0
+            },
+            "leftovers": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
             }
           },
           "required": [
             "count",
-            "generation"
+            "generation",
+            "leftovers"
           ],
           "additionalProperties": false
         }
@@ -905,11 +919,18 @@
             "count": {
               "type": "integer",
               "minimum": 0
+            },
+            "leftovers": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
             }
           },
           "required": [
             "count",
-            "generation"
+            "generation",
+            "leftovers"
           ],
           "additionalProperties": false
         }
@@ -1433,10 +1454,37 @@
           "additionalProperties": false
         }
       },
-      "undo.undo": {
+      "undo.preview": {
         "params": {
           "type": "object",
           "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "blocked": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/path"
+              }
+            }
+          },
+          "required": [
+            "blocked"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "undo.undo": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "overwrite": {
+              "type": "boolean"
+            }
+          },
           "required": [],
           "additionalProperties": false
         },
@@ -1922,11 +1970,18 @@
           "count": {
             "type": "integer",
             "minimum": 0
+          },
+          "leftovers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/name"
+            }
           }
         },
         "required": [
           "count",
           "generation",
+          "leftovers",
           "listing"
         ],
         "additionalProperties": false

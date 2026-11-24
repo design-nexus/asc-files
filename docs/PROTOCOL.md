@@ -45,10 +45,10 @@ rows came from, the view asks for its windows again.
 
 | Method | Params | Result |
 |---|---|---|
-| `list.open` | `path`, `showHidden?` (false), `sort?: {key: "name"\|"size"\|"modified", descending?, foldersFirst?}` (name, ascending, folders first) | `{listing, generation, count, followsChanges}` |
+| `list.open` | `path`, `showHidden?` (false), `sort?: {key: "name"\|"size"\|"modified", descending?, foldersFirst?}` (name, ascending, folders first) | `{listing, generation, count, followsChanges, leftovers}` |
 | `list.window` | `listing, start, count` | `{listing, generation, start, rows}` |
-| `list.reorder` | `listing`, and any of `showHidden`, `sort` (what is left out keeps its value) | `{generation, count}` |
-| `list.refresh` | `listing` | `{generation, count}` |
+| `list.reorder` | `listing`, and any of `showHidden`, `sort` (what is left out keeps its value) | `{generation, count, leftovers}` |
+| `list.refresh` | `listing` | `{generation, count, leftovers}` |
 | `list.close` | `listing` | `null` |
 
 A row: `{name, kind: "folder"|"file"|"link"|"special", linkToFolder, hidden, size, modified, modifiedNs, mode}`;
@@ -58,7 +58,10 @@ an entry that went since the read is `{name, kind, linkToFolder, hidden, gone: t
 A drive whose two read places are still taken after two seconds (a stalled share) refuses `list.open` with kind `TimedOut`; folders opened together on a drive that answers just queue.
 
 Notifications:
-- `list.changed {listing, generation, count}`: the folder changed outside and was read again.
+- `list.changed {listing, generation, count, leftovers}`: the folder changed outside and was read again.
+
+`leftovers` names the entries in the folder that an interrupted operation left (see Leftovers), whether or not
+hidden entries are listed, so a client can offer to put originals back.
 - `list.gone {listing, path, nearest}`: the folder was deleted or moved away; `nearest` is the closest folder
   left above it.
 - `list.unmounted {listing, path, nearest}`: its drive was unmounted.
@@ -151,7 +154,8 @@ what it copied in and what it replaced; the folder merged into is never undone.
 | Method | Params | Result |
 |---|---|---|
 | `undo.history` | – | `{undo: {id, label} \| null, redo: {id, label} \| null}` |
-| `undo.undo` | – | `{id, label, done, left: [{path, error}], renamed, kept}` |
+| `undo.preview` | – | `{blocked: [path]}` |
+| `undo.undo` | `overwrite?` (false) | `{id, label, done, left: [{path, error}], renamed, kept}` |
 | `undo.redo` | – | the same |
 
 Undo reverses the newest entry, newest step first: a copy goes to the Trash (or, on a drive without one, an
@@ -160,7 +164,12 @@ the original back and the copy in the Trash. A step whose item changed since is 
 `left`; the rest still run. A move gives back the names it saved entries under where the destination refused
 them; one whose name is taken now, or which this drive refuses, keeps its saved name and is listed in `renamed`
 (`cause` `taken`, `invalid` or `tooLong`), one that could not be renamed otherwise in `kept` (`nameNotRestored`),
-and one gone since is left out. Redo does the entry again and never replaces what holds a name. Nothing to undo or
+and one gone since is left out.
+
+`undo.preview` lists the places the newest entry's undo would put an item back where something else holds the
+name now; such a step is otherwise left as it is (`left`, kind `exists`). Once the user has confirmed it,
+`undo.undo {overwrite: true}` moves each of those items to the Trash first and puts the item back, so nothing is
+lost. Redo does the entry again and never replaces what holds a name. Nothing to undo or
 redo is a code-1 error of kind `NotFound`; without a session folder, kind `NotSupported`, and `initialize` does
 not list the `undo` capability.
 

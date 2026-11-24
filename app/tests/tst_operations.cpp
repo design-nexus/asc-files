@@ -9,6 +9,8 @@
 #include <QClipboard>
 #include <QFile>
 #include <QGuiApplication>
+#include <QMimeData>
+#include <QUrl>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 
@@ -107,6 +109,89 @@ private slots:
         ops.undo();
         QTRY_COMPARE_WITH_TIMEOUT(read(dir.filePath("to/replace.txt")), QByteArray("existing"), 10000);
         QTRY_VERIFY(!QFile::exists(dir.filePath("to/new.txt")));
+    }
+
+    void twoItemsOnOneNameKeepTheOneThatNeedsNoFix() {
+        // Both land on "same.txt" (the second's own name; in a real FAT paste, a:b and a_b).
+        QTemporaryDir dir;
+        QDir().mkpath(dir.filePath("one"));
+        QDir().mkpath(dir.filePath("two"));
+        QDir().mkdir(dir.filePath("to"));
+        write(dir.filePath("one/same.txt"), "first");
+        write(dir.filePath("two/same.txt"), "second");
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        JobModel jobs(&backend);
+        Operations ops(&backend, &jobs);
+        FolderModel to(&backend);
+        QVERIFY(openAll(to, dir.filePath("to")));
+        auto *data = new QMimeData;
+        data->setUrls({QUrl::fromLocalFile(dir.filePath("one/same.txt")), QUrl::fromLocalFile(dir.filePath("two/same.txt"))});
+        QGuiApplication::clipboard()->setMimeData(data);
+        QSignalSpy finished(&jobs, &JobModel::finished);
+        ops.paste(&to);
+        QVERIFY(finished.wait(20000));
+        QVERIFY(ops.conflicts().isEmpty());
+        QCOMPARE(read(dir.filePath("to/same.txt")), QByteArray("first"));
+        QCOMPARE(read(dir.filePath("to/same (1).txt")), QByteArray("second"));
+    }
+
+    void originalsLeftBesideAFolderArePutBack() {
+        QTemporaryDir dir;
+        const QString container = dir.filePath(".asc-files-originals-0123abcd-4567-89ab-cdef-0123456789ab");
+        QDir().mkdir(container);
+        write(container + "/song.flac", "old");
+        write(dir.filePath("song.flac"), "new");
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        JobModel jobs(&backend);
+        Operations ops(&backend, &jobs);
+        FolderModel here(&backend);
+        QSignalSpy leftovers(&here, &FolderModel::leftoversChanged);
+        QVERIFY(openAll(here, dir.path()));
+        QTRY_COMPARE(here.leftovers(), QStringList{QFileInfo(container).fileName()});
+        QSignalSpy reviewed(&ops, &Operations::leftoversReviewed);
+        ops.reviewLeftovers(&here);
+        QVERIFY(reviewed.wait(10000));
+        const QVariantMap first = reviewed.first().first().toList().first().toMap();
+        QCOMPARE(first.value("kind").toString(), QStringLiteral("items"));
+        QCOMPARE(first.value("names").toStringList(), QStringList{"song.flac"});
+        QSignalSpy told(&ops, &Operations::notice);
+        ops.recover(&here, QFileInfo(container).fileName());
+        QVERIFY(told.wait(10000));
+        // The name was taken: the original came back numbered, nothing replaced.
+        QCOMPARE(read(dir.filePath("song.flac")), QByteArray("new"));
+        QCOMPARE(read(dir.filePath("song (1).flac")), QByteArray("old"));
+        QTRY_VERIFY_WITH_TIMEOUT(here.leftovers().isEmpty(), 10000);
+    }
+
+    void undoAsksBeforePuttingBackOverANewerItem() {
+        QTemporaryDir dir;
+        QDir().mkdir(dir.filePath("to"));
+        write(dir.filePath("report.txt"), "moved");
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        JobModel jobs(&backend);
+        Operations ops(&backend, &jobs);
+        FolderModel here(&backend), to(&backend);
+        QVERIFY(openAll(here, dir.path()));
+        QVERIFY(openAll(to, dir.filePath("to")));
+        QSignalSpy finished(&jobs, &JobModel::finished);
+        here.select(rowOf(here, "report.txt"));
+        ops.copy(&here, true);
+        ops.paste(&to);
+        QVERIFY(finished.wait(20000));
+        write(dir.filePath("report.txt"), "newer");
+        QTRY_VERIFY(!ops.undoLabel().isEmpty());
+        QSignalSpy blocked(&ops, &Operations::undoBlocked);
+        ops.undo();
+        QVERIFY(blocked.wait(10000));
+        QCOMPARE(blocked.first().first().toStringList(), QStringList{"report.txt"});
+        QCOMPARE(read(dir.filePath("report.txt")), QByteArray("newer"));
+        QSignalSpy told(&ops, &Operations::notice);
+        ops.undo(true);
+        QVERIFY(told.wait(10000));
+        QCOMPARE(read(dir.filePath("report.txt")), QByteArray("moved"));
     }
 
     void aCutMovesOnceAndACopyIntoItsOwnFolderDuplicates() {
