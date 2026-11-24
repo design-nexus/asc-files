@@ -1,0 +1,2034 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/design-nexus/asc-files/blob/main/docs/protocol.schema.json",
+  "title": "Files backend protocol, version 2",
+  "description": "Every message asc-files-backend sends and accepts. Requests are {jsonrpc, id, method, params}; a method's params and result are under $defs/methods, a notification's params under $defs/notifications. See PROTOCOL.md.",
+  "$defs": {
+    "path": {
+      "description": "Absolute in requests. A string when UTF-8, else its bytes in base64 (with display text when sent by the backend).",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "properties": {
+            "bytes": {
+              "type": "string",
+              "contentEncoding": "base64"
+            },
+            "display": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "bytes"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "name": {
+      "description": "One name within a folder: no '/', not '.' or '..'.",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "properties": {
+            "bytes": {
+              "type": "string",
+              "contentEncoding": "base64"
+            },
+            "display": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "bytes"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "errorKind": {
+      "enum": [
+        "failed",
+        "notFound",
+        "exists",
+        "isDirectory",
+        "notDirectory",
+        "notEmpty",
+        "notRegularFile",
+        "notSymbolicLink",
+        "filenameTooLong",
+        "invalidFilename",
+        "tooManyLinks",
+        "noSpace",
+        "invalidArgument",
+        "permissionDenied",
+        "notSupported",
+        "notMounted",
+        "cancelled",
+        "readOnly",
+        "timedOut",
+        "busy",
+        "wouldBlock",
+        "tooManyOpenFiles",
+        "invalidData",
+        "brokenPipe",
+        "noSuchDevice",
+        "symlinkUnheld"
+      ]
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/errorKind"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "renamed": {
+      "type": "object",
+      "properties": {
+        "requested": {
+          "$ref": "#/$defs/path"
+        },
+        "savedAs": {
+          "$ref": "#/$defs/path"
+        },
+        "cause": {
+          "enum": [
+            "alias",
+            "taken",
+            "invalid",
+            "tooLong"
+          ]
+        }
+      },
+      "required": [
+        "cause",
+        "requested",
+        "savedAs"
+      ],
+      "additionalProperties": false
+    },
+    "keptCause": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "enum": [
+                "changed",
+                "replacementChanged",
+                "copyGone"
+              ]
+            }
+          },
+          "required": [
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "const": "undeletable"
+            },
+            "error": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "error",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "const": "skipped"
+            },
+            "kind": {
+              "enum": [
+                "pipe",
+                "socket",
+                "device",
+                "symlink"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "const": "stillOpen"
+            },
+            "program": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "program",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "const": "nameNotRestored"
+            },
+            "savedAs": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/path"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "error",
+            "reason",
+            "savedAs"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "const": "originalNotRemoved"
+            },
+            "error": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "error",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "kept": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "cause": {
+          "$ref": "#/$defs/keptCause"
+        }
+      },
+      "required": [
+        "cause",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "outcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "const": "done"
+            },
+            "path": {
+              "$ref": "#/$defs/path"
+            },
+            "renamed": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/renamed"
+              }
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "$ref": "#/$defs/path"
+                  },
+                  "kind": {
+                    "enum": [
+                      "pipe",
+                      "socket",
+                      "device",
+                      "symlink"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "path"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "kept": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/kept"
+              }
+            },
+            "originalDeleted": {
+              "type": "boolean"
+            },
+            "leftOut": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kept",
+            "leftOut",
+            "originalDeleted",
+            "path",
+            "renamed",
+            "skipped",
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "const": "failed"
+            },
+            "error": {
+              "$ref": "#/$defs/error"
+            },
+            "renamed": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/renamed"
+              }
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "$ref": "#/$defs/path"
+                  },
+                  "kind": {
+                    "enum": [
+                      "pipe",
+                      "socket",
+                      "device",
+                      "symlink"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "path"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "kept": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/kept"
+              }
+            },
+            "originalDeleted": {
+              "type": "boolean"
+            },
+            "leftOut": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "error",
+            "kept",
+            "leftOut",
+            "originalDeleted",
+            "renamed",
+            "skipped",
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "const": "notAttempted"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "row": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "kind": {
+          "enum": [
+            "folder",
+            "file",
+            "link",
+            "special"
+          ]
+        },
+        "linkToFolder": {
+          "type": "boolean"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "modified": {
+          "type": "integer"
+        },
+        "modifiedNs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mode": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gone": {
+          "const": true
+        }
+      },
+      "required": [
+        "hidden",
+        "kind",
+        "linkToFolder",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "item": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/path"
+        },
+        "action": {
+          "enum": [
+            "copy",
+            "merge",
+            "move",
+            "replace",
+            "trash",
+            "delete",
+            "restore"
+          ]
+        },
+        "conflict": {
+          "enum": [
+            "fail",
+            "keepBoth",
+            "merge",
+            "replace"
+          ]
+        },
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "move": {
+          "type": "boolean"
+        },
+        "choices": {
+          "type": "object",
+          "additionalProperties": {
+            "enum": [
+              "keepBoth",
+              "replace",
+              "skip"
+            ]
+          }
+        },
+        "otherwise": {
+          "enum": [
+            "keepBoth",
+            "replace",
+            "skip"
+          ]
+        },
+        "to": {
+          "$ref": "#/$defs/path"
+        }
+      },
+      "required": [
+        "action",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer",
+        "null"
+      ]
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "method": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "params": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "method"
+      ],
+      "additionalProperties": false
+    },
+    "reply": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "result": true
+          },
+          "required": [
+            "id",
+            "jsonrpc",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "error": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "integer"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "data": true
+              },
+              "required": [
+                "code",
+                "message"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "error",
+            "id",
+            "jsonrpc"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "operationError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "const": 1
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "$ref": "#/$defs/errorKind"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "code",
+        "data",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "notification": {
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "method": {
+          "enum": [
+            "list.changed",
+            "list.gone",
+            "list.unmounted",
+            "job.queued",
+            "job.started",
+            "job.progress",
+            "job.flushing",
+            "job.itemDone",
+            "job.finished"
+          ]
+        },
+        "params": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "methods": {
+      "initialize": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "protocolVersion": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "protocolVersion": {
+              "const": 2
+            },
+            "server": {
+              "type": "string"
+            },
+            "capabilities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "capabilities",
+            "protocolVersion",
+            "server"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "shutdown": {
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "null"
+        }
+      },
+      "list.open": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/path"
+            },
+            "showHidden": {
+              "type": "boolean"
+            },
+            "sort": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "enum": [
+                    "name",
+                    "size",
+                    "modified"
+                  ]
+                },
+                "descending": {
+                  "type": "boolean"
+                },
+                "foldersFirst": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "listing": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "followsChanges": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "count",
+            "followsChanges",
+            "generation",
+            "listing"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "list.window": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "listing": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "start": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "count",
+            "listing",
+            "start"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "listing": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "start": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/row"
+              }
+            }
+          },
+          "required": [
+            "generation",
+            "listing",
+            "rows",
+            "start"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "list.reorder": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "listing": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "showHidden": {
+              "type": "boolean"
+            },
+            "sort": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "enum": [
+                    "name",
+                    "size",
+                    "modified"
+                  ]
+                },
+                "descending": {
+                  "type": "boolean"
+                },
+                "foldersFirst": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "listing"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "generation": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "count",
+            "generation"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "list.refresh": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "listing": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "listing"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "generation": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "count",
+            "generation"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "list.close": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "listing": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "listing"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "null"
+        }
+      },
+      "jobs.start": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "into": {
+              "$ref": "#/$defs/path"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/item"
+              }
+            },
+            "names": {
+              "enum": [
+                "fix",
+                "keep"
+              ]
+            },
+            "label": {
+              "type": "string"
+            },
+            "durable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "into",
+            "items"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "job": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "job"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "jobs.cancel": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "job": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "job"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "null"
+        }
+      },
+      "jobs.clashes": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "into": {
+              "$ref": "#/$defs/path"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/path"
+              }
+            }
+          },
+          "required": [
+            "into",
+            "sources"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "$ref": "#/$defs/path"
+                      },
+                      "clashes": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "path": {
+                              "$ref": "#/$defs/path"
+                            },
+                            "incoming": {
+                              "type": "object",
+                              "properties": {
+                                "isFolder": {
+                                  "type": "boolean"
+                                },
+                                "size": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "modified": {
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "isFolder",
+                                "modified",
+                                "size"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "existing": {
+                              "type": "object",
+                              "properties": {
+                                "isFolder": {
+                                  "type": "boolean"
+                                },
+                                "size": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "modified": {
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "isFolder",
+                                "modified",
+                                "size"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "existing",
+                            "incoming",
+                            "path"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "clashes",
+                      "source"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "$ref": "#/$defs/path"
+                      },
+                      "error": {
+                        "$ref": "#/$defs/error"
+                      }
+                    },
+                    "required": [
+                      "error",
+                      "source"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          },
+          "required": [
+            "items"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "ops.rename": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/path"
+            },
+            "name": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "path"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/path"
+            },
+            "undo": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "undoError": {
+              "$ref": "#/$defs/error"
+            }
+          },
+          "required": [
+            "path",
+            "undo"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "ops.create": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "into": {
+              "$ref": "#/$defs/path"
+            },
+            "name": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "folder",
+                "file"
+              ]
+            },
+            "unique": {
+              "type": "boolean"
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "into",
+            "kind",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/path"
+            },
+            "undo": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "undoError": {
+              "$ref": "#/$defs/error"
+            }
+          },
+          "required": [
+            "path",
+            "undo"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "undo.history": {
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "undo": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "redo": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "redo",
+            "undo"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "undo.undo": {
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "label": {
+              "type": "string"
+            },
+            "done": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "left": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "$ref": "#/$defs/path"
+                  },
+                  "error": {
+                    "$ref": "#/$defs/error"
+                  }
+                },
+                "required": [
+                  "error",
+                  "path"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "renamed": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/renamed"
+              }
+            },
+            "kept": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/kept"
+              }
+            }
+          },
+          "required": [
+            "done",
+            "id",
+            "kept",
+            "label",
+            "left",
+            "renamed"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "undo.redo": {
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "label": {
+              "type": "string"
+            },
+            "done": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "left": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "$ref": "#/$defs/path"
+                  },
+                  "error": {
+                    "$ref": "#/$defs/error"
+                  }
+                },
+                "required": [
+                  "error",
+                  "path"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "renamed": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/renamed"
+              }
+            },
+            "kept": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/kept"
+              }
+            }
+          },
+          "required": [
+            "done",
+            "id",
+            "kept",
+            "label",
+            "left",
+            "renamed"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "trash.list": {
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "info": {
+                    "$ref": "#/$defs/path"
+                  },
+                  "file": {
+                    "$ref": "#/$defs/path"
+                  },
+                  "original": {
+                    "$ref": "#/$defs/path"
+                  },
+                  "deleted": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "deleted",
+                  "file",
+                  "info",
+                  "original"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "entries"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "trash.restore": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "info": {
+              "$ref": "#/$defs/path"
+            }
+          },
+          "required": [
+            "info"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/path"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "trash.delete": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "info": {
+              "$ref": "#/$defs/path"
+            }
+          },
+          "required": [
+            "info"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "null"
+        }
+      },
+      "trash.empty": {
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "deleted": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "info": {
+                    "$ref": "#/$defs/path"
+                  },
+                  "error": {
+                    "$ref": "#/$defs/error"
+                  }
+                },
+                "required": [
+                  "error",
+                  "info"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "deleted",
+            "failed"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "leftovers.recover": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/path"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "restored": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/path"
+              }
+            },
+            "renamed": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/renamed"
+              }
+            },
+            "kept": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/kept"
+              }
+            },
+            "failed": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "$ref": "#/$defs/path"
+                  },
+                  "error": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "error",
+                  "path"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "notAttempted": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/path"
+              }
+            },
+            "removed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "failed",
+            "kept",
+            "notAttempted",
+            "removed",
+            "renamed",
+            "restored"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "leftovers.review": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "folder": {
+              "$ref": "#/$defs/path"
+            },
+            "names": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            }
+          },
+          "required": [
+            "folder",
+            "names"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "leftovers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "$ref": "#/$defs/name"
+                  },
+                  "modified": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "inside": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "item",
+                              "gone"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "const": "items"
+                          },
+                          "names": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/$defs/name"
+                            }
+                          },
+                          "more": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "more",
+                          "names"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "stillOpen",
+                              "unreadable"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "inside",
+                  "modified",
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "leftovers"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "leftovers.sweep": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "folder": {
+              "$ref": "#/$defs/path"
+            },
+            "names": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            }
+          },
+          "required": [
+            "folder",
+            "names"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "null"
+        }
+      }
+    },
+    "notifications": {
+      "list.changed": {
+        "type": "object",
+        "properties": {
+          "listing": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "count",
+          "generation",
+          "listing"
+        ],
+        "additionalProperties": false
+      },
+      "list.gone": {
+        "type": "object",
+        "properties": {
+          "listing": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "path": {
+            "$ref": "#/$defs/path"
+          },
+          "nearest": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "required": [
+          "listing",
+          "nearest",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "list.unmounted": {
+        "type": "object",
+        "properties": {
+          "listing": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "path": {
+            "$ref": "#/$defs/path"
+          },
+          "nearest": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "required": [
+          "listing",
+          "nearest",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "job.queued": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ahead": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "ahead",
+          "job"
+        ],
+        "additionalProperties": false
+      },
+      "job.started": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "totalBytes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "totalFiles": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "job",
+          "total",
+          "totalBytes",
+          "totalFiles"
+        ],
+        "additionalProperties": false
+      },
+      "job.progress": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "item": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "files": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "flushes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "bytes",
+          "files",
+          "flushes",
+          "item",
+          "job"
+        ],
+        "additionalProperties": false
+      },
+      "job.flushing": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "job"
+        ],
+        "additionalProperties": false
+      },
+      "job.itemDone": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "outcome": {
+            "$ref": "#/$defs/outcome"
+          }
+        },
+        "required": [
+          "index",
+          "job",
+          "outcome"
+        ],
+        "additionalProperties": false
+      },
+      "job.finished": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "done": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "notAttempted": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cancelled": {
+            "type": "boolean"
+          },
+          "undo": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "durable": {
+            "type": "boolean"
+          },
+          "undoError": {
+            "$ref": "#/$defs/error"
+          },
+          "settled": {
+            "type": "boolean"
+          },
+          "settleError": {
+            "$ref": "#/$defs/error"
+          }
+        },
+        "required": [
+          "cancelled",
+          "done",
+          "durable",
+          "failed",
+          "job",
+          "notAttempted",
+          "undo"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "anyOf": [
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/reply"
+    },
+    {
+      "$ref": "#/$defs/notification"
+    }
+  ]
+}

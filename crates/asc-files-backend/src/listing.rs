@@ -16,11 +16,14 @@ use std::{
 
 use asc_files_engine::{
     error::{Error, ErrorKind},
-    listing::{Change, Kind, Listing, Options, Order, Readers, Row, SortKey, Watch},
+    listing::{Change, Kind, Listing, Options, Readers, Row, Watch},
 };
 use serde_json::{Value, json};
 
-use super::{INVALID_PARAMS, error_reply, lossy, operation_error, path_param, u64_param};
+use crate::{
+    call::OptionsPatch,
+    wire::{self, Fault},
+};
 
 enum Command {
     Window {
@@ -28,10 +31,10 @@ enum Command {
         start: usize,
         count: usize,
     },
-    /// Parsed on the listing's thread, so what a request leaves out keeps its current value.
+    /// Applied on the listing's thread, so what a request leaves out keeps its current value.
     Reorder {
         id: Value,
-        params: Value,
+        options: OptionsPatch,
     },
     Refresh {
         id: Value,
@@ -58,65 +61,69 @@ impl Listings {
         }
     }
 
-    /// Handles one `list.*` request. Ok(None) means the listing's thread will answer `id`.
-    pub(crate) fn handle(
+    /// Opens a listing of `folder`; its thread answers `id`.
+    pub(crate) fn open(&mut self, id: Value, folder: PathBuf, options: &OptionsPatch) {
+        let options = options.apply(Options::default());
+        self.next += 1;
+        let listing = self.next;
+        let (send, commands) = mpsc::channel();
+        let (out, readers, changes) = (self.out.clone(), self.readers.clone(), send.clone());
+        self.open.insert(listing, send);
+        thread::Builder::new()
+            .name(format!("asc-files-listing-{listing}"))
+            .spawn(move || {
+                run(
+                    listing,
+                    (folder, options),
+                    (id, &out),
+                    &readers,
+                    (changes, commands),
+                );
+            })
+            .expect("a listing thread");
+    }
+
+    pub(crate) fn window(
         &mut self,
-        method: &str,
         id: Value,
-        params: &Value,
-    ) -> Result<Option<Value>, (i64, String)> {
-        if method == "list.open" {
-            let folder = path_param(params, "path")?;
-            let options = options(params, Options::default())?;
-            self.next += 1;
-            let listing = self.next;
-            let (send, commands) = mpsc::channel();
-            let (out, readers, changes) = (self.out.clone(), self.readers.clone(), send.clone());
-            self.open.insert(listing, send);
-            thread::Builder::new()
-                .name(format!("asc-files-listing-{listing}"))
-                .spawn(move || {
-                    run(
-                        listing,
-                        (folder, options),
-                        (id, &out),
-                        &readers,
-                        (changes, commands),
-                    );
-                })
-                .expect("a listing thread");
-            return Ok(None);
+        listing: u64,
+        start: usize,
+        count: usize,
+    ) -> Result<(), Fault> {
+        self.send(listing, Command::Window { id, start, count })
+    }
+
+    pub(crate) fn reorder(
+        &mut self,
+        id: Value,
+        listing: u64,
+        options: OptionsPatch,
+    ) -> Result<(), Fault> {
+        self.send(listing, Command::Reorder { id, options })
+    }
+
+    pub(crate) fn refresh(&mut self, id: Value, listing: u64) -> Result<(), Fault> {
+        self.send(listing, Command::Refresh { id })
+    }
+
+    /// The thread ends once it has answered what it already holds.
+    pub(crate) fn close(&mut self, listing: u64) {
+        if let Some(listing) = self.open.remove(&listing) {
+            let _ = listing.send(Command::Close);
         }
-        let listing = u64_param(params, "listing")?;
-        if method == "list.close" {
-            // The thread ends once it has answered what it already holds.
-            if let Some(listing) = self.open.remove(&listing) {
-                let _ = listing.send(Command::Close);
-            }
-            return Ok(Some(Value::Null));
-        }
-        let command = match method {
-            "list.window" => Command::Window {
-                id,
-                start: usize::try_from(u64_param(params, "start")?).unwrap_or(usize::MAX),
-                count: usize::try_from(u64_param(params, "count")?).unwrap_or(usize::MAX),
-            },
-            "list.reorder" => Command::Reorder {
-                id,
-                params: params.clone(),
-            },
-            "list.refresh" => Command::Refresh { id },
-            other => return Err((super::METHOD_NOT_FOUND, format!("unknown method {other}"))),
-        };
+    }
+
+    /// Hands `command` to its listing's thread, which answers it.
+    fn send(&mut self, listing: u64, command: Command) -> Result<(), Fault> {
         let sent = self
             .open
             .get(&listing)
             .is_some_and(|listing| listing.send(command).is_ok());
         if sent {
-            Ok(None)
+            Ok(())
         } else {
             self.open.remove(&listing);
-            Err((INVALID_PARAMS, "unknown listing".to_owned()))
+            Err(Fault::invalid_params("unknown listing"))
         }
     }
 
@@ -135,14 +142,11 @@ fn run(
     readers: &Arc<Readers>,
     (changes, commands): (Sender<Command>, Receiver<Command>),
 ) {
-    let reply = |id: Value, result: Result<Value, (i64, String)>| {
-        let _ = out.send(match result {
-            Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
-            Err((code, message)) => error_reply(id, code, &message),
-        });
+    let reply = |id: Value, result: Result<Value, Fault>| {
+        let _ = out.send(wire::reply(id, result));
     };
     let Some(reading) = readers.claim(&folder) else {
-        reply(id, Err(operation_error(not_responding())));
+        reply(id, Err(Fault::operation(&not_responding())));
         return;
     };
     // Armed before the read, so nothing that changes during it is missed.
@@ -154,7 +158,7 @@ fn run(
     let mut current = match read {
         Ok(read) => read,
         Err(error) => {
-            reply(id, Err(operation_error(error)));
+            reply(id, Err(error.into()));
             return;
         }
     };
@@ -168,7 +172,7 @@ fn run(
         })),
     );
     let notify = |method: &str, params: Value| {
-        let _ = out.send(json!({"jsonrpc": "2.0", "method": method, "params": params}));
+        let _ = out.send(wire::notification(method, params));
     };
     for command in commands {
         match command {
@@ -184,13 +188,14 @@ fn run(
                     })),
                 );
             }
-            Command::Reorder { id, params } => {
-                let result = options(&params, current.options())
-                    .and_then(|options| current.set_options(options).map_err(operation_error));
+            Command::Reorder { id, options } => {
+                let result = current
+                    .set_options(options.apply(current.options()))
+                    .map_err(Fault::from);
                 reply(id, result.map(|()| counted(&current)));
             }
             Command::Refresh { id } => {
-                let result = current.refresh().map_err(operation_error);
+                let result = current.refresh().map_err(Fault::from);
                 reply(id, result.map(|()| counted(&current)));
             }
             Command::Changed(Change::Changed) => {
@@ -203,11 +208,11 @@ fn run(
             }
             Command::Changed(Change::Gone { nearest }) => notify(
                 "list.gone",
-                json!({"listing": listing, "path": lossy(current.folder()), "nearest": lossy(&nearest)}),
+                json!({"listing": listing, "path": wire::path(current.folder()), "nearest": wire::path(&nearest)}),
             ),
             Command::Changed(Change::Unmounted { nearest }) => notify(
                 "list.unmounted",
-                json!({"listing": listing, "path": lossy(current.folder()), "nearest": lossy(&nearest)}),
+                json!({"listing": listing, "path": wire::path(current.folder()), "nearest": wire::path(&nearest)}),
             ),
             Command::Close => break,
         }
@@ -225,43 +230,6 @@ fn not_responding() -> Error {
     )
 }
 
-/// `showHidden` and `sort: {key, descending, foldersFirst}`, each defaulting to `base`'s.
-fn options(params: &Value, base: Options) -> Result<Options, (i64, String)> {
-    let show_hidden = match params.get("showHidden") {
-        None => base.show_hidden,
-        Some(value) => value
-            .as_bool()
-            .ok_or((INVALID_PARAMS, "showHidden must be a boolean".to_owned()))?,
-    };
-    let Some(sort) = params.get("sort") else {
-        return Ok(Options {
-            show_hidden,
-            ..base
-        });
-    };
-    let key = match sort.get("key").and_then(Value::as_str) {
-        None => base.order.key,
-        Some("name") => SortKey::Name,
-        Some("size") => SortKey::Size,
-        Some("modified") => SortKey::Modified,
-        Some(other) => return Err((INVALID_PARAMS, format!("unknown sort key {other}"))),
-    };
-    let flag = |name: &str, default: bool| match sort.get(name) {
-        None => Ok(default),
-        Some(value) => value
-            .as_bool()
-            .ok_or((INVALID_PARAMS, format!("sort.{name} must be a boolean"))),
-    };
-    Ok(Options {
-        show_hidden,
-        order: Order {
-            key,
-            descending: flag("descending", base.order.descending)?,
-            folders_first: flag("foldersFirst", base.order.folders_first)?,
-        },
-    })
-}
-
 fn row(row: &Row) -> Value {
     let kind = match row.kind {
         Kind::Folder => "folder",
@@ -270,7 +238,7 @@ fn row(row: &Row) -> Value {
         Kind::Special => "special",
     };
     let mut value = json!({
-        "name": row.name.to_string_lossy(),
+        "name": wire::name(&row.name),
         "kind": kind,
         "linkToFolder": row.link_to_folder,
         "hidden": row.hidden,

@@ -11,6 +11,10 @@ use std::{
 
 use serde_json::{Value, json};
 
+mod common;
+
+/// Every reply and notification a test receives is checked against the protocol's schema, and
+/// the params of every request that succeeded.
 struct Backend {
     child: Child,
     /// Its own session folder, so tests running side by side keep separate undo histories.
@@ -18,6 +22,7 @@ struct Backend {
     stdin: ChildStdin,
     lines: mpsc::Receiver<Value>,
     next: u64,
+    checker: common::Checker,
 }
 
 impl Backend {
@@ -51,6 +56,7 @@ impl Backend {
             stdin,
             lines,
             next: 0,
+            checker: common::Checker::default(),
         }
     }
 
@@ -67,25 +73,32 @@ impl Backend {
             &json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string(),
         );
         loop {
-            let message = self
-                .lines
-                .recv_timeout(Duration::from_secs(30))
-                .expect("a reply");
+            let message = self.receive("a reply");
             if message.get("id") == Some(&json!(id)) {
+                self.checker.reply(method, &params, &message);
                 return message;
             }
             notes.push(message);
         }
     }
 
-    fn until(&self, notes: &mut Vec<Value>, done: impl Fn(&Value) -> bool) {
+    fn until(&mut self, notes: &mut Vec<Value>, done: impl Fn(&Value) -> bool) {
         while !notes.iter().any(&done) {
-            notes.push(
-                self.lines
-                    .recv_timeout(Duration::from_secs(30))
-                    .expect("a notification"),
-            );
+            let message = self.receive("a notification");
+            notes.push(message);
         }
+    }
+
+    /// The next line, its schema checked if it is a notification.
+    fn receive(&mut self, what: &str) -> Value {
+        let message = self
+            .lines
+            .recv_timeout(Duration::from_secs(30))
+            .expect(what);
+        if message.get("method").is_some() {
+            self.checker.notification(&message);
+        }
+        message
     }
 }
 
@@ -98,7 +111,7 @@ fn the_protocol_end_to_end() {
     assert_eq!(early["error"]["code"], -32600, "{early}");
 
     let init = backend.call("initialize", json!({}), &mut notes);
-    assert_eq!(init["result"]["protocolVersion"], 1, "{init}");
+    assert_eq!(init["result"]["protocolVersion"], 2, "{init}");
 
     let unknown = backend.call("no.such", json!({}), &mut notes);
     assert_eq!(unknown["error"]["code"], -32601, "{unknown}");
@@ -200,7 +213,7 @@ fn the_protocol_end_to_end() {
         .unwrap();
     assert_eq!(failed["params"]["outcome"]["status"], "failed");
     assert_eq!(
-        failed["params"]["outcome"]["error"]["kind"], "Exists",
+        failed["params"]["outcome"]["error"]["kind"], "exists",
         "{failed}"
     );
     assert!(
@@ -237,7 +250,8 @@ fn the_protocol_end_to_end() {
     assert_eq!(fs::read(&doomed).unwrap(), b"bye");
     let stale = backend.call("trash.restore", json!({"info": entry["info"]}), &mut notes);
     assert_eq!(
-        stale["error"]["code"], 1,
+        (&stale["error"]["code"], &stale["error"]["data"]["kind"]),
+        (&json!(1), &json!("notFound")),
         "a restored entry is gone: {stale}"
     );
     let start = backend.call(
@@ -352,6 +366,7 @@ fn a_listing_follows_its_folder_and_answers_on_its_own() {
         &mut notes,
     );
     assert_eq!(missing["error"]["code"], 1, "{missing}");
+    assert_eq!(missing["error"]["data"]["kind"], "notFound", "{missing}");
 
     let shutdown = backend.call("shutdown", json!({}), &mut notes);
     assert_eq!(shutdown["result"], Value::Null);
@@ -379,6 +394,11 @@ fn a_batch_is_filed_for_undo_and_undone_and_redone_over_the_wire() {
 
     let empty = backend.call("undo.undo", json!({}), &mut notes);
     assert_eq!(empty["error"]["code"], 1, "{empty}");
+    assert_eq!(empty["error"]["data"]["kind"], "notFound", "{empty}");
+    assert_eq!(
+        empty["error"]["message"], "There is nothing to undo",
+        "{empty}"
+    );
 
     let start = backend.call(
         "jobs.start",
@@ -671,4 +691,204 @@ fn a_started_job_says_how_much_it_will_write() {
         .unwrap();
     assert_eq!(started["params"]["totalBytes"], json!(8), "{started}");
     assert_eq!(started["params"]["totalFiles"], json!(2), "{started}");
+}
+
+#[test]
+fn names_that_are_not_utf8_survive_the_round_trip() {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    backend.call("initialize", json!({"protocolVersion": 2}), &mut notes);
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    let folder = root.path().join("music");
+    fs::create_dir(&folder).unwrap();
+    let latin1 = OsString::from_vec(b"caf\xe9.txt".to_vec());
+    fs::write(folder.join(&latin1), b"x").unwrap();
+
+    let open = backend.call("list.open", json!({"path": folder}), &mut notes);
+    let listing = open["result"]["listing"].clone();
+    let window = backend.call(
+        "list.window",
+        json!({"listing": listing, "start": 0, "count": 10}),
+        &mut notes,
+    );
+    let name = &window["result"]["rows"][0]["name"];
+    assert_eq!(name["bytes"], "Y2Fm6S50eHQ=", "{window}");
+    assert_eq!(name["display"], "caf\u{fffd}.txt");
+
+    // The path goes back as bytes: the folder's text, then the name's.
+    let mut bytes = folder.as_os_str().to_owned().into_vec();
+    bytes.push(b'/');
+    bytes.extend_from_slice(b"caf\xe9.txt");
+    use base64::Engine;
+    let path = json!({"bytes": base64::engine::general_purpose::STANDARD.encode(&bytes)});
+    let renamed = backend.call(
+        "ops.rename",
+        json!({"path": path, "name": "café.txt"}),
+        &mut notes,
+    );
+    assert_eq!(
+        renamed["result"]["path"],
+        json!(folder.join("café.txt")),
+        "{renamed}"
+    );
+    assert_eq!(fs::read(folder.join("café.txt")).unwrap(), b"x");
+    assert!(!folder.join(&latin1).exists());
+
+    let undone = backend.call("undo.undo", json!({}), &mut notes);
+    assert_eq!(undone["result"]["done"], 1, "{undone}");
+    assert!(folder.join(&latin1).exists(), "the name it had is back");
+    backend.call("shutdown", json!({}), &mut notes);
+}
+
+#[test]
+fn rename_and_create_are_filed_for_undo() {
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    backend.call("initialize", json!({}), &mut notes);
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    let dir = root.path();
+    fs::write(dir.join("a.txt"), b"a").unwrap();
+    fs::write(dir.join("b.txt"), b"b").unwrap();
+
+    // A taken name is refused, with its kind.
+    let taken = backend.call(
+        "ops.rename",
+        json!({"path": dir.join("a.txt"), "name": "b.txt"}),
+        &mut notes,
+    );
+    assert_eq!(taken["error"]["data"]["kind"], "exists", "{taken}");
+    assert_eq!(taken["error"]["message"], "“b.txt” already exists");
+    let renamed = backend.call(
+        "ops.rename",
+        json!({"path": dir.join("a.txt"), "name": "c.txt"}),
+        &mut notes,
+    );
+    assert_eq!(
+        renamed["result"]["path"],
+        json!(dir.join("c.txt")),
+        "{renamed}"
+    );
+    assert!(renamed["result"]["undo"].is_u64());
+    let history = backend.call("undo.history", json!({}), &mut notes);
+    assert_eq!(history["result"]["undo"]["label"], "Rename", "{history}");
+
+    // A default name is numbered; a typed one that is taken fails.
+    let first = backend.call(
+        "ops.create",
+        json!({"into": dir, "name": "New Folder", "kind": "folder", "unique": true}),
+        &mut notes,
+    );
+    assert_eq!(
+        first["result"]["path"],
+        json!(dir.join("New Folder")),
+        "{first}"
+    );
+    let second = backend.call(
+        "ops.create",
+        json!({"into": dir, "name": "New Folder", "kind": "folder", "unique": true}),
+        &mut notes,
+    );
+    assert_eq!(
+        second["result"]["path"],
+        json!(dir.join("New Folder (1)")),
+        "{second}"
+    );
+    let typed = backend.call(
+        "ops.create",
+        json!({"into": dir, "name": "c.txt", "kind": "file"}),
+        &mut notes,
+    );
+    assert_eq!(typed["error"]["data"]["kind"], "exists", "{typed}");
+    let file = backend.call(
+        "ops.create",
+        json!({"into": dir, "name": "notes.txt", "kind": "file", "label": "New Document"}),
+        &mut notes,
+    );
+    assert!(dir.join("notes.txt").is_file(), "{file}");
+
+    // Undone newest first: the file, the folders, then the rename.
+    let undo = |backend: &mut Backend, notes: &mut Vec<Value>| {
+        let undone = backend.call("undo.undo", json!({}), notes);
+        assert_eq!(undone["result"]["done"], 1, "{undone}");
+        undone["result"]["label"].clone()
+    };
+    assert_eq!(undo(&mut backend, &mut notes), "New Document");
+    assert!(!dir.join("notes.txt").exists());
+    assert_eq!(undo(&mut backend, &mut notes), "New Folder");
+    assert!(!dir.join("New Folder (1)").exists());
+    // A folder something was put into since is left as it is.
+    fs::write(dir.join("New Folder/kept.txt"), b"k").unwrap();
+    let left = backend.call("undo.undo", json!({}), &mut notes);
+    assert_eq!(left["result"]["done"], 0, "{left}");
+    assert_eq!(
+        left["result"]["left"][0]["path"],
+        json!(dir.join("New Folder"))
+    );
+    assert!(dir.join("New Folder/kept.txt").exists());
+    assert_eq!(undo(&mut backend, &mut notes), "Rename");
+    assert!(dir.join("a.txt").exists() && !dir.join("c.txt").exists());
+
+    // Redo renames it again.
+    let redone = backend.call("undo.redo", json!({}), &mut notes);
+    assert_eq!(redone["result"]["done"], 1, "{redone}");
+    assert!(dir.join("c.txt").exists());
+    backend.call("shutdown", json!({}), &mut notes);
+}
+
+#[test]
+fn requests_are_checked_before_anything_is_done() {
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    let old = backend.call("initialize", json!({"protocolVersion": 1}), &mut notes);
+    assert_eq!(old["error"]["code"], -32600, "{old}");
+    assert_eq!(old["error"]["data"]["supported"], json!([2]));
+    backend.call("initialize", json!({}), &mut notes);
+
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    fs::write(root.path().join("keep.txt"), b"k").unwrap();
+    for (method, params, field) in [
+        ("list.open", json!({"path": "relative/dir"}), "path"),
+        (
+            "jobs.start",
+            json!({"into": root.path(), "items": [{"source": "keep.txt", "action": "delete"}]}),
+            "items[0].source",
+        ),
+        (
+            "jobs.start",
+            json!({"into": root.path(), "items": [{"source": root.path().join("keep.txt"), "action": "copy", "name": "../x"}]}),
+            "items[0].name",
+        ),
+        (
+            "leftovers.sweep",
+            json!({"folder": root.path(), "names": ["../.asc-files-probe-1"]}),
+            "names[0]",
+        ),
+        (
+            "ops.create",
+            json!({"into": root.path(), "name": "x", "kind": "pipe"}),
+            "kind",
+        ),
+    ] {
+        let refused = backend.call(method, params, &mut notes);
+        assert_eq!(refused["error"]["code"], -32602, "{refused}");
+        let message = refused["error"]["message"].as_str().unwrap();
+        assert!(message.contains(field), "{method}: {message}");
+    }
+    assert!(root.path().join("keep.txt").exists());
+
+    // Not JSON-RPC 2.0: refused, with the request's id.
+    backend.send_raw(r#"{"id": 99, "method": "trash.list"}"#);
+    let bare = backend.receive("a reply");
+    assert_eq!(
+        (&bare["id"], &bare["error"]["code"]),
+        (&json!(99), &json!(-32600)),
+        "{bare}"
+    );
+    // A notification gets no reply, even when it is refused; the next request is answered.
+    backend.send_raw(r#"{"jsonrpc": "2.0", "method": "list.window", "params": {"listing": "x"}}"#);
+    let after = backend.call("undo.history", json!({}), &mut notes);
+    assert!(after.get("result").is_some(), "{after}");
+    assert!(notes.is_empty(), "{notes:?}");
+    backend.call("shutdown", json!({}), &mut notes);
 }

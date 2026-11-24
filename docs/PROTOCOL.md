@@ -1,18 +1,40 @@
-# Backend protocol (version 1)
+# Backend protocol (version 2)
 
 `asc-files-backend` speaks JSON-RPC 2.0 on stdin and stdout, one message per line. stdout carries only protocol
 lines; diagnostics go to stderr. Replies may arrive out of order (a listing answers on its own thread), so match
-them by `id`. Paths are UTF-8 strings in version 1; byte-safe names come with version 2 (A9).
+them by `id`. Every message, and each method's params and result, is described by
+[`protocol.schema.json`](protocol.schema.json) (JSON Schema 2020-12); the backend's tests check every message they
+exchange against it.
 
-Errors: `-32700` parse, `-32600` invalid request (including anything before `initialize`), `-32601` unknown
-method, `-32602` invalid params (including an unknown listing), `1` the operation was refused. A code-1 error's
-`message` is JSON: `{"kind": "<ErrorKind>", "message": "<sentence for the user>"}`.
+**Messages.** A request is `{"jsonrpc": "2.0", "id", "method", "params"?}`, with `id` a string, a number or null
+and `params` an object; batches are not supported. A message without `id` is a notification: it is carried out
+and never answered, not even with an error. Every request is checked in full before anything is done.
+
+**Paths and names** are JSON strings when they are UTF-8. One that is not is sent as
+`{"bytes": "<base64>", "display": "<the name with U+FFFD for what is not UTF-8>"}`; show `display`, and send the
+object (or just `{"bytes": …}`) back to name the item. Paths sent to the backend must be absolute, and names
+(`name`, `names`) plain: no `/`, not `.` or `..`. Names the user types (`ops.rename`, `ops.create`) are strings.
+
+**Errors.** `-32700` parse; `-32600` invalid request (not JSON-RPC 2.0, or anything before `initialize`);
+`-32601` unknown method; `-32602` invalid params, with the field named in the message (`items[2].source must be
+an absolute path`), and an unknown listing; `1` the operation was refused: `message` is a sentence for the user
+and `data.kind` one of the kinds below, for code to branch on. Errors inside results and notifications are
+`{kind, message}` with the same kinds:
+
+`failed`, `notFound`, `exists`, `isDirectory`, `notDirectory`, `notEmpty`, `notRegularFile`, `notSymbolicLink`,
+`filenameTooLong`, `invalidFilename`, `tooManyLinks`, `noSpace`, `invalidArgument`, `permissionDenied`,
+`notSupported`, `notMounted`, `cancelled`, `readOnly`, `timedOut`, `busy`, `wouldBlock`, `tooManyOpenFiles`,
+`invalidData`, `brokenPipe`, `noSuchDevice`, `symlinkUnheld`.
+
+**Changes from version 1.** Non-UTF-8 paths and names travel as bytes instead of being mangled; a refusal's kind
+is in `data.kind` (camelCase), not JSON inside `message`; `jsonrpc: "2.0"` is required; relative paths and
+non-plain names are refused; `ops.rename` and `ops.create` are new.
 
 ## Session
 
 | Method | Params | Result |
 |---|---|---|
-| `initialize` | – | `{protocolVersion, server, capabilities}` |
+| `initialize` | `protocolVersion?` (the version the client speaks; any other than 2 is refused, with `data.supported`) | `{protocolVersion: 2, server, capabilities}` |
 | `shutdown` | – | `null`; running jobs are cancelled, then the process exits |
 
 ## Listings
@@ -95,6 +117,24 @@ moved source is deleted, say), and `job.flushing` says a durable batch waits for
 Items may also take `name` (the name a conflict prompt offered; one plain name), and moves take `conflict`
 `"fail"`, `"keepBoth"` or `"replace"`; a `merge` item with `move: true` merges by moving.
 
+## Rename and create
+
+Each answers from a thread of its own (a share may make it wait) and is filed for undo; `undo` is its history
+entry's id, or `null` with `undoError` when the history could not be written. `label` names it in the history.
+
+| Method | Params | Result |
+|---|---|---|
+| `ops.rename` | `path`, `name`, `label?` ("Rename") | `{path, undo}` |
+| `ops.create` | `into`, `name`, `kind: "folder"\|"file"`, `unique?` (false), `label?` ("New Folder", "New File") | `{path, undo}` |
+
+`ops.rename` renames within the item's folder, never over what holds the name (kind `exists`, "“b.txt” already
+exists"). A name its drive would store otherwise (a character FAT cannot hold, too long for the share, a reserved
+word) is refused before anything changes, kind `invalidFilename`, with the reason. On a drive that ignores case, a
+change of case alone renames the item. `ops.create` makes an empty folder or file, never over anything: with
+`unique`, as for a default name, a taken name becomes "New Folder (1)" and so on; without, as for a typed name, it
+is refused like a rename's. Undo of a rename gives the old name back; undo of a create takes away the item while it
+is unchanged (an edited file or a folder with something in it is left, in `left`), and redo makes it again.
+
 ## Undo
 
 One history per session, shared by every Files process (`$XDG_RUNTIME_DIR/asc-files/undo-journal`), 50 entries deep.
@@ -136,7 +176,7 @@ Each runs on a thread of its own, since it may wait on a share.
 
 | Method | Params | Result |
 |---|---|---|
-| `leftovers.review` | `folder`, `names` (leftovers listed there) | `{leftovers: [{name, modified, inside}]}`, `inside` `{kind: "item"}`, `{kind: "items", names, more}` (up to 1,000 names; a merge's by their path inside it), `{kind: "stillOpen", reason}`, `{kind: "gone"}` or `{kind: "unreadable", reason}` |
+| `leftovers.review` | `folder`, `names` (leftovers listed there) | `{leftovers: [{name, modified, inside}]}`, `inside` `{kind: "item"}`, `{kind: "items", names, more}` (up to 1,000 names, `more` the count left out; a merge's by their path inside it), `{kind: "stillOpen", reason}`, `{kind: "gone"}` or `{kind: "unreadable", reason}` |
 | `leftovers.recover` | `path` (an originals folder) | `{restored, renamed, kept, failed: [{path, error}], notAttempted, removed}` |
 | `leftovers.sweep` | `folder`, `names` | `null` |
 

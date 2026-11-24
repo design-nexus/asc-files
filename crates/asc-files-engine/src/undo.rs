@@ -90,6 +90,10 @@ impl Identity {
     fn is_file(&self) -> bool {
         self.kind == 0o100_000
     }
+
+    fn is_folder(&self) -> bool {
+        self.kind == 0o040_000
+    }
 }
 
 /// One thing an operation did, with what undo needs to reverse it.
@@ -137,6 +141,12 @@ pub enum Step {
         #[serde(with = "crate::serde_path")]
         path: PathBuf,
         mode: u32,
+    },
+    /// A new, empty file or folder was made at `path`.
+    Created {
+        #[serde(with = "crate::serde_path")]
+        path: PathBuf,
+        identity: Identity,
     },
     /// A copy of `source` took the place of `target`; what held it went to the Trash.
     Replaced {
@@ -192,6 +202,11 @@ pub enum Redo {
         #[serde(with = "crate::serde_path")]
         path: PathBuf,
     },
+    Create {
+        #[serde(with = "crate::serde_path")]
+        path: PathBuf,
+        folder: bool,
+    },
     /// `original` is what undo put back at `target`, or None when it left the name empty.
     Replace {
         #[serde(with = "crate::serde_path")]
@@ -235,6 +250,19 @@ impl Step {
                 .iter()
                 .map(|renamed| (renamed.requested.clone(), renamed.saved_as.clone()))
                 .collect(),
+        })
+    }
+
+    /// The step for a rename of `item` within its folder.
+    pub fn renamed(item: &Path, renamed: &ops::Moved) -> Option<Self> {
+        Self::moved(item, (item.parent()?, renamed))
+    }
+
+    /// The step for a new item [`ops::create`] made at `path`.
+    pub fn created(path: &Path) -> Option<Self> {
+        Some(Self::Created {
+            path: path.to_path_buf(),
+            identity: Identity::of(path)?,
         })
     }
 
@@ -337,6 +365,7 @@ impl Step {
             Self::Trashed { original, .. } => original,
             Self::MovedOver { to, .. } => to,
             Self::RemovedFolder { path, .. } => path,
+            Self::Created { path, .. } => path,
             Self::Replaced { target, .. } => target,
         }
     }
@@ -373,6 +402,7 @@ impl Redo {
             Self::Trash { original, .. } => original,
             Self::MoveOver { from, .. } => from,
             Self::RemoveFolder { path } => path,
+            Self::Create { path, .. } => path,
             Self::Replace { target, .. } => target,
         }
     }
@@ -664,9 +694,9 @@ fn parent_and_name(path: &Path) -> Result<(&Path, &std::ffi::OsStr), Error> {
     ))
 }
 
-/// Takes away an item the operation made: to the Trash, or where its drive has none, deleted
-/// if it is a file not written to since.
-/// Takes away a copy an operation made. One gone already needs no undoing, as legacy counted it.
+/// Takes away an item an operation made: to the Trash, or where its drive has none, deleted if
+/// it is a file or an empty folder not changed since. One gone already needs no undoing, as
+/// legacy counted it.
 fn discard(path: &Path, identity: &Identity) -> Result<(), Error> {
     if fs::symlink_metadata(path).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
         return Ok(());
@@ -681,8 +711,16 @@ fn discard(path: &Path, identity: &Identity) -> Result<(), Error> {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == ErrorKind::NotSupported => {
             let now = Identity::of(path);
-            if identity.is_file() && now.is_some_and(|now| now.unchanged(identity)) {
+            let unchanged = now.is_some_and(|now| now.unchanged(identity));
+            if unchanged && identity.is_file() {
                 fs::remove_file(path).map_err(crate::error::os_io_error)
+            } else if unchanged && identity.is_folder() {
+                // Fails, leaving it, if anything is in it.
+                fs::remove_dir(path).map_err(|_| {
+                    translated_io_error(
+                        "This drive has no Trash and the folder is not empty, so it was left in place",
+                    )
+                })
             } else {
                 Err(translated_io_error(
                     "This drive has no Trash and the item changed since, so it was left in place",
@@ -691,6 +729,22 @@ fn discard(path: &Path, identity: &Identity) -> Result<(), Error> {
         }
         Err(error) => Err(error),
     }
+}
+
+/// Moves the item at `from` to `to`: within one folder a rename, which, on a drive that ignores
+/// case, may change only the case of its name.
+fn move_back(
+    from: &Path,
+    to: &Path,
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<ops::Moved, Error> {
+    let (into, name) = parent_and_name(to)?;
+    if from.parent() == Some(into) {
+        return ops::rename(from, name, names, cancel);
+    }
+    ops::move_as(from, (into, name), names, cancel, progress)?.finished()
 }
 
 fn trash_entry(info: &Path, identity: &Identity) -> Result<trash::Entry, Error> {
@@ -738,9 +792,8 @@ fn reverse(
             renamed,
         } => {
             still(to, identity)?;
-            let (into, name) = parent_and_name(from)?;
             // The name it had: it was valid where it came from.
-            ops::move_as(to, (into, name), NameMode::Keep, cancel, progress)?.finished()?;
+            move_back(to, from, NameMode::Keep, cancel, progress)?;
             let nested = give_names_back(from, to, renamed);
             let identity = Identity::of(from).ok_or_else(changed)?;
             Ok((
@@ -803,6 +856,16 @@ fn reverse(
             }
             Ok((
                 Redo::RemoveFolder { path: path.clone() },
+                ops::Changes::default(),
+            ))
+        }
+        Step::Created { path, identity } => {
+            discard(path, identity)?;
+            Ok((
+                Redo::Create {
+                    path: path.clone(),
+                    folder: identity.is_folder(),
+                },
                 ops::Changes::default(),
             ))
         }
@@ -966,9 +1029,8 @@ fn replay(redo: &Redo, cancel: &Cancel, progress: &Progress) -> Result<Option<St
         }
         Redo::Move { from, to, identity } => {
             still(from, identity)?;
-            let (into, name) = parent_and_name(to)?;
-            let moved =
-                ops::move_as(from, (into, name), NameMode::Fix, cancel, progress)?.finished()?;
+            let (into, _) = parent_and_name(to)?;
+            let moved = move_back(from, to, NameMode::Fix, cancel, progress)?;
             Ok(Step::moved(from, (into, &moved)))
         }
         Redo::Trash { original, identity } => {
@@ -1001,6 +1063,15 @@ fn replay(redo: &Redo, cancel: &Cancel, progress: &Progress) -> Result<Option<St
                 path: path.clone(),
                 mode: mode.permissions().mode() & 0o7777,
             }))
+        }
+        // Made again under the same name, never over what took it.
+        Redo::Create { path, folder } => {
+            let (into, name) = parent_and_name(path)?;
+            let name = name
+                .to_str()
+                .ok_or_else(|| translated_io_error("The item has no name"))?;
+            let made = ops::create(into, name, *folder, false)?;
+            Ok(Step::created(&made))
         }
         Redo::Replace {
             source,

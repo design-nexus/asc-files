@@ -131,7 +131,7 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `undo::undoing_a_cross_volume_move_deletes_the_moved_items_once_they_are_flushed` | Legacy flushed once for a whole undo and deleted every moved item after. The journal undoes item by item, each item's source deleted only after its own copy is flushed, so a failed flush keeps that item whole and leaves the ones before it done. |
 | `merge::a_merge_onto_fat_takes_the_rules_of_a_folder_inside_it_only_from_another_device_mounted_there` | Its FAT row replaces an original by the name FAT stores, the planning gap above; it returns with it. |
 | `merge::undoing_a_merge_without_trash_opens_only_its_own_read_only_folders_to_remove_them` | **Gap.** On a drive without a Trash, undo deletes only copies of files that are unchanged; a folder an operation created is left, so undoing a folder copy to a FAT stick leaves the folder. Legacy removed a created tree whose every entry was as placed, opening its own read-only folders to do so. |
-| `merge::a_created_folder_changed_while_undo_deletes_it_fails_as_not_empty` | Same gap: the engine does not delete created folders without a Trash at all. |
+| `merge::a_created_folder_changed_while_undo_deletes_it_fails_as_not_empty` | Same gap: without a Trash, the engine deletes a created folder only while it is empty and unchanged (since A9), never a tree. |
 | `merge::what_an_operation_placed_is_read_back_only_until_its_tick_passes`, `merge::an_item_put_at_a_placed_name_right_after_placing_stays_there`, `merge::a_merge_undo_compares_what_it_placed_as_a_move_compares_its_sources`, `merge::a_merge_undo_restores_an_original_only_over_a_path_it_checked`, `merge::an_undo_keeps_what_a_cancel_stopped_the_operation_from_recording`, `merge::a_merge_records_what_it_creates_only_where_undo_cannot_trash_it`, `merge::undoing_a_replace_deletes_what_it_placed_only_if_all_of_it_is_unchanged` | Legacy's placed snapshots: what an operation placed, read back within a clock tick and compared at undo. The journal records each step's identity and undoes it only if the item is the same one and unchanged (`a_merge_undo_deletes_only_what_the_merge_left_unchanged`). |
 | `merge::an_undo_keeps_what_was_too_big_to_record`, `merge::a_created_tree_too_big_to_record_leaves_its_entries_to_the_rest` | Legacy's budget of snapshots; the journal caps steps (`undo::MAX_STEPS`) and files a larger entry as too large to undo. |
 | `merge::a_merge_undo_without_trash_deletes_only_what_the_merge_created_unchanged`, `merge::a_merge_undo_without_trash_deletes_what_its_paste_copied_only_if_unchanged` | Covered by the Trash-less row of `a_merge_undo_deletes_only_what_the_merge_left_unchanged`. |
@@ -292,7 +292,10 @@ ported with a reason. This list must be empty, or every entry justified, before 
   unexplained system error; it is now left out and reported (kept at its source by a move), and the paste goes
   on, as inside a folder (`Changes::left_out`, `leftOut` on `job.itemDone`). Nothing is filed for undo for it.
 - **Open:** undo of created folders without a Trash (see above).
-- **Open:** a bulk path for many small items; `rename` and `create` on the protocol; a paste-planning call.
+- **Added (A9):** `ops.rename` and `ops.create` on the protocol, filed for undo (`undo::Step::Created`, and a
+  rename as a move within its folder, undone and redone as a rename so a change of case alone works). Undo
+  without a Trash now also deletes an empty folder an operation made, while it is unchanged.
+- **Open:** a bulk path for many small items; a paste-planning call.
 
 ## Archives (legacy: 225 tests)
 
