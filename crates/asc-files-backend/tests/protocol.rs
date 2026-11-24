@@ -591,3 +591,55 @@ fn a_delete_removes_a_tree_for_good_and_files_nothing_for_undo() {
     let history = backend.call("undo.history", json!({}), &mut notes);
     assert_eq!(history["result"]["undo"], Value::Null, "{history}");
 }
+
+#[test]
+fn a_trashed_item_is_restored_by_a_job_to_the_destination_confirmed() {
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    backend.call("initialize", json!({}), &mut notes);
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    let item = root.path().join("letter.txt");
+    fs::write(&item, "dear").unwrap();
+    let run = |backend: &mut Backend, notes: &mut Vec<Value>, items: Value| {
+        let start = backend.call(
+            "jobs.start",
+            json!({"into": root.path(), "items": items}),
+            notes,
+        );
+        let job = start["result"]["job"].clone();
+        backend.until(notes, |n| {
+            n["method"] == "job.finished" && n["params"]["job"] == job
+        });
+        notes
+            .iter()
+            .find(|n| n["method"] == "job.itemDone" && n["params"]["job"] == job)
+            .unwrap()["params"]["outcome"]
+            .clone()
+    };
+
+    let trashed = run(
+        &mut backend,
+        &mut notes,
+        json!([{"source": item, "action": "trash"}]),
+    );
+    assert_eq!(trashed["status"], "done", "{trashed}");
+    assert!(!item.exists());
+    let in_trash = trashed["path"].clone();
+
+    let elsewhere = run(
+        &mut backend,
+        &mut notes,
+        json!([{"source": in_trash, "action": "restore", "to": root.path().join("other.txt")}]),
+    );
+    assert_eq!(elsewhere["status"], "failed", "{elsewhere}");
+    assert!(!item.exists());
+
+    let restored = run(
+        &mut backend,
+        &mut notes,
+        json!([{"source": in_trash, "action": "restore", "to": item}]),
+    );
+    assert_eq!(restored["status"], "done", "{restored}");
+    assert_eq!(restored["path"], json!(item));
+    assert_eq!(fs::read_to_string(&item).unwrap(), "dear");
+}

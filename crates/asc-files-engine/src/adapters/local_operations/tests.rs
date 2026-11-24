@@ -60,6 +60,7 @@ mod paste_results;
 mod paths;
 mod placement;
 mod replacement;
+mod restore_safety;
 
 /// Tests that change process-wide state (the clock, the kernel release, mount capabilities)
 /// run one at a time; legacy held the GLib main context for this.
@@ -836,28 +837,104 @@ fn numbers_at(path: &Path) -> (u64, u64) {
 /// Delivers the events of every deletion started with [`LocalOperationProvider`] until each has
 /// finished, as legacy's tests turned the GLib loop.
 fn wait_for_operation<T: ?Sized>(_events: &T, _ended: impl Fn(&OperationEvent) -> bool) {
-    pump();
+    pump_all();
 }
 
-/// Legacy's operation provider, as far as deleting and restoring from the Trash go: a deletion is
-/// a batch of jobs (`Action::Delete` or `Action::Trash`), reported as legacy's `run_deletion`
-/// did. Its events reach `emit` only as [`pump`] delivers them, on the test's thread, so a test can
-/// cancel by dropping the handle from inside `emit`, as it could under GLib.
+/// Legacy's operation provider, as far as deleting and restoring from the Trash go: each is a
+/// batch of jobs (`Action::Delete`, `Action::Trash` or `Action::Restore`), reported as legacy's
+/// provider did. Its events reach `emit` only as [`pump`] delivers them, on the test's thread, so
+/// a test can cancel by dropping the handle from inside `emit`, as it could under GLib.
 struct LocalOperationProvider;
 
-struct Deleting {
-    id: OperationRequestId,
-    permanent: bool,
-    entries: Vec<crate::model::FileEntry>,
+/// A running batch: its job's events, and what turns each into legacy's events. The handler
+/// returns true once it has seen the batch finish.
+struct Running {
+    /// The batch until the loop first turns: as a GLib task, it starts only then.
+    pending: Option<(
+        crate::jobs::Request,
+        std::sync::mpsc::Sender<crate::jobs::Event>,
+    )>,
+    cancel: crate::ops::Cancel,
     events: std::sync::mpsc::Receiver<crate::jobs::Event>,
-    emit: Rc<dyn Fn(OperationEvent)>,
-    _job: Rc<crate::jobs::Handle>,
+    handle: Box<dyn FnMut(crate::jobs::Event) -> bool>,
+    job: Option<crate::jobs::Handle>,
 }
 
 thread_local! {
-    static DELETING: RefCell<Vec<Deleting>> = const { RefCell::new(Vec::new()) };
-    /// The flag the next deletion's job shares, set by [`run_deletion`].
+    static RUNNING: RefCell<Vec<Running>> = const { RefCell::new(Vec::new()) };
+    /// The flag the next batch's job shares, set by [`run_deletion`].
     static SHARED_CANCEL: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+}
+
+/// Starts `request`; its events go to `handle` as [`pump`] delivers them.
+fn start_running(
+    request: crate::jobs::Request,
+    handle: Box<dyn FnMut(crate::jobs::Event) -> bool>,
+) -> crate::services::LoadHandle {
+    let (send, events) = std::sync::mpsc::channel();
+    let cancel = match SHARED_CANCEL.with(|shared| shared.borrow_mut().take()) {
+        Some(flag) => crate::ops::Cancel::sharing(flag),
+        None => crate::ops::Cancel::new(),
+    };
+    let cancelling = cancel.clone();
+    RUNNING.with(|running| {
+        running.borrow_mut().push(Running {
+            pending: Some((request, send)),
+            cancel,
+            events,
+            handle,
+            job: None,
+        });
+    });
+    crate::services::LoadHandle::new(move || cancelling.cancel())
+}
+
+/// One turn of legacy's GLib loop: delivers the events that arrive within a moment, keeping
+/// each batch's state for the next turn.
+fn pump() {
+    let deadline = Instant::now() + Duration::from_millis(20);
+    loop {
+        let Some(mut running) = RUNNING.with(|running| {
+            let mut running = running.borrow_mut();
+            (!running.is_empty()).then(|| running.remove(0))
+        }) else {
+            return;
+        };
+        if let Some((request, send)) = running.pending.take() {
+            // A batch cancelled before its first turn starts cancelled: nothing of it is tried.
+            running.job = Some(crate::jobs::start_sharing(
+                request,
+                send,
+                running.cancel.clone(),
+            ));
+        }
+        let mut finished = false;
+        while !finished {
+            match running.events.recv_timeout(Duration::from_millis(2)) {
+                Ok(event) => finished = (running.handle)(event),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => finished = true,
+            }
+        }
+        let more = RUNNING.with(|all| {
+            if !finished {
+                all.borrow_mut().push(running);
+            }
+            !all.borrow().is_empty()
+        });
+        if !more || Instant::now() >= deadline {
+            return;
+        }
+    }
+}
+
+/// Turns the loop until every batch started has finished.
+fn pump_all() {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while RUNNING.with(|running| !running.borrow().is_empty()) {
+        assert!(Instant::now() < deadline, "a batch never finished");
+        pump();
+    }
 }
 
 impl LocalOperationProvider {
@@ -866,7 +943,7 @@ impl LocalOperationProvider {
         request: crate::services::DeleteRequest,
         emit: Rc<dyn Fn(OperationEvent)>,
     ) -> crate::services::LoadHandle {
-        use crate::jobs::{self, Action, Item, Request};
+        use crate::jobs::{Action, Event, Item, Outcome, Request};
         let path = |entry: &crate::model::FileEntry| {
             entry
                 .location
@@ -874,12 +951,13 @@ impl LocalOperationProvider {
                 .expect("a native entry")
                 .to_path_buf()
         };
+        let permanent = request.permanent;
         let items = request
             .entries
             .iter()
             .map(|entry| Item {
                 source: path(entry),
-                action: if request.permanent {
+                action: if permanent {
                     Action::Delete
                 } else {
                     Action::Trash
@@ -892,124 +970,9 @@ impl LocalOperationProvider {
             .first()
             .and_then(|entry| path(entry).parent().map(Path::to_path_buf))
             .unwrap_or_default();
-        let (send, events) = std::sync::mpsc::channel();
-        let request_items = Request {
-            into,
-            items,
-            names: crate::ops::NameMode::Fix,
-            record: None,
-            durable: Some(false),
-        };
-        let job = Rc::new(
-            match SHARED_CANCEL.with(|shared| shared.borrow_mut().take()) {
-                Some(flag) => {
-                    jobs::start_sharing(request_items, send, crate::ops::Cancel::sharing(flag))
-                }
-                None => jobs::start(request_items, send),
-            },
-        );
-        let cancelling = job.clone();
-        DELETING.with(|deleting| {
-            deleting.borrow_mut().push(Deleting {
-                id: request.id,
-                permanent: request.permanent,
-                entries: request.entries,
-                events,
-                emit,
-                _job: job,
-            });
-        });
-        crate::services::LoadHandle::new(move || cancelling.cancel())
-    }
-
-    fn restore(
-        &self,
-        request: crate::services::RestoreRequest,
-        emit: Rc<dyn Fn(OperationEvent)>,
-    ) -> crate::services::LoadHandle {
-        let crate::services::RestoreSource::OriginalLocations { locations, .. } = request.source
-        else {
-            panic!("the stand-in restores by original location only");
-        };
-        let (mut restored, mut failed) = (Vec::new(), Vec::new());
-        for location in locations {
-            let original = location.native_path().map(Path::to_path_buf);
-            let entry = off_ui_thread(crate::trash::list)
-                .into_iter()
-                .filter(|entry| Some(&entry.original) == original.as_ref())
-                .max_by_key(|entry| entry.deleted.clone());
-            match entry.map(|entry| off_ui_thread(|| crate::trash::restore(&entry))) {
-                Some(Ok(path)) => {
-                    if let Some(identity) =
-                        off_ui_thread(|| super::native_fs::identity_at_path(&path))
-                    {
-                        emit(OperationEvent::ItemRestored {
-                            request_id: request.id,
-                            location: Location::local(&path),
-                            identity,
-                        });
-                    }
-                    restored.push(Location::local(&path));
-                }
-                _ => failed.push(location),
-            }
-        }
-        emit(if failed.is_empty() {
-            OperationEvent::Restored {
-                request_id: request.id,
-                locations: restored.clone(),
-                restored,
-            }
-        } else {
-            OperationEvent::RestoreCompletedWithErrors {
-                request_id: request.id,
-                restored_locations: restored.clone(),
-                restored,
-                message: "restore failed".to_owned(),
-            }
-        });
-        crate::services::LoadHandle::new(|| {})
-    }
-}
-
-/// Runs file calls off a test marked as the UI thread, as legacy's provider did on its workers.
-fn off_ui_thread<T: Send>(call: impl FnOnce() -> T + Send) -> T {
-    thread::scope(|scope| scope.spawn(call).join().expect("the call returns"))
-}
-
-/// Legacy's `run_deletion`: deletes or trashes `entries`, stopping when `cancellable` is set.
-fn run_deletion(
-    id: OperationRequestId,
-    entries: Vec<crate::model::FileEntry>,
-    permanent: bool,
-    emit: Rc<dyn Fn(OperationEvent)>,
-    cancellable: Cancellable,
-) {
-    // The job reads the test's flag itself, as legacy's walk read its cancellable.
-    SHARED_CANCEL.with(|shared| shared.replace(Some(cancellable.flag())));
-    let _operation = LocalOperationProvider.delete(
-        crate::services::DeleteRequest {
-            id,
-            entries,
-            permanent,
-        },
-        emit,
-    );
-    pump();
-}
-
-/// Delivers every pending deletion's events, as legacy's `run_deletion` emitted them, until each
-/// has finished.
-fn pump() {
-    use crate::jobs::{Event, Outcome};
-    loop {
-        let Some(mut deleting) = DELETING.with(|deleting| deleting.borrow_mut().pop()) else {
-            return;
-        };
-        let (id, permanent, total) = (deleting.id, deleting.permanent, deleting.entries.len());
-        let location = |index: usize| deleting.entries[index].location.clone();
+        let (id, entries, total) = (request.id, request.entries, items.len());
         let mut affected = std::collections::HashSet::new();
-        for entry in &deleting.entries {
+        for entry in &entries {
             affected.extend(entry.location.parent());
             if entry.kind == crate::model::EntryKind::Directory {
                 affected.insert(entry.location.clone());
@@ -1021,8 +984,8 @@ fn pump() {
         let (mut deleted, mut failed, mut cut_off) = (Vec::new(), Vec::new(), Vec::new());
         let (mut errors, mut retryable, mut completed) = (Vec::new(), Vec::new(), 0);
         let mut cancelled = false;
-        let emit = deleting.emit.clone();
-        while let Ok(event) = deleting.events.recv_timeout(Duration::from_secs(60)) {
+        let handle = move |event| {
+            let location = |index: usize| entries[index].location.clone();
             match event {
                 Event::ItemDone { index, outcome, .. } => {
                     let mut progressed = Vec::new();
@@ -1059,7 +1022,7 @@ fn pump() {
                             }
                             errors.push(format!(
                                 "{}: {}",
-                                deleting.entries[index].display_name,
+                                entries[index].display_name,
                                 error.message()
                             ));
                             failed.push(location(index));
@@ -1067,7 +1030,7 @@ fn pump() {
                         Outcome::NotAttempted => {
                             cancelled = true;
                             cut_off.push(location(index));
-                            continue;
+                            return false;
                         }
                     }
                     emit(OperationEvent::DeleteProgress {
@@ -1076,36 +1039,350 @@ fn pump() {
                         total,
                         deleted_locations: progressed,
                     });
+                    false
                 }
-                Event::Finished { .. } => break,
-                _ => {}
+                Event::Finished {
+                    cancelled: batch_cancelled,
+                    ..
+                } => {
+                    cancelled |= batch_cancelled;
+                    let (deleted, failed, cut_off) = (
+                        std::mem::take(&mut deleted),
+                        std::mem::take(&mut failed),
+                        std::mem::take(&mut cut_off),
+                    );
+                    emit(if cancelled {
+                        OperationEvent::Cancelled {
+                            request_id: id,
+                            result: crate::services::CancelledOperation {
+                                completed: deleted,
+                                failed,
+                                not_attempted: cut_off,
+                                affected_locations: std::mem::take(&mut affected),
+                            },
+                        }
+                    } else if errors.is_empty() {
+                        OperationEvent::Deleted {
+                            request_id: id,
+                            locations: deleted,
+                        }
+                    } else {
+                        OperationEvent::CompletedWithErrors {
+                            request_id: id,
+                            deleted_locations: deleted,
+                            has_non_retryable_failures: errors.len() > retryable.len(),
+                            retryable_locations: std::mem::take(&mut retryable),
+                            message: errors.join("\n"),
+                        }
+                    });
+                    true
+                }
+                _ => false,
+            }
+        };
+        start_running(
+            Request {
+                into,
+                items,
+                names: crate::ops::NameMode::Fix,
+                record: None,
+                durable: Some(false),
+            },
+            Box::new(handle),
+        )
+    }
+
+    fn restore(
+        &self,
+        request: crate::services::RestoreRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> crate::services::LoadHandle {
+        use crate::jobs::{Action, Event, Item, Outcome, Request};
+        let (mut items, mut sources, mut missing) = (Vec::new(), Vec::new(), Vec::new());
+        match request.source {
+            crate::services::RestoreSource::TrashEntries(chosen) => {
+                for chosen in chosen {
+                    let physical = chosen
+                        .entry
+                        .thumbnail_path
+                        .clone()
+                        .or_else(|| chosen.entry.location.native_path().map(Path::to_path_buf));
+                    let Some(physical) = physical else {
+                        missing.push((chosen.entry.location, chosen.entry.display_name));
+                        continue;
+                    };
+                    items.push(Item {
+                        source: physical,
+                        action: Action::Restore(Some(chosen.destination)),
+                        name: None,
+                    });
+                    sources.push((chosen.entry.location, chosen.entry.display_name));
+                }
+            }
+            crate::services::RestoreSource::OriginalLocations { locations, .. } => {
+                let listed = off_ui_thread(crate::trash::list);
+                for location in locations {
+                    let original = location.native_path().map(Path::to_path_buf);
+                    let name = location.display_name();
+                    match listed
+                        .iter()
+                        .filter(|entry| Some(&entry.original) == original.as_ref())
+                        .max_by_key(|entry| entry.deleted.clone())
+                    {
+                        Some(entry) => {
+                            items.push(Item {
+                                source: entry.file.clone(),
+                                action: Action::Restore(None),
+                                name: None,
+                            });
+                            sources.push((location, name));
+                        }
+                        // Nothing of it is in the Trash: the job's lookup fails for it.
+                        None => {
+                            items.push(Item {
+                                source: original.unwrap_or_default(),
+                                action: Action::Restore(None),
+                                name: None,
+                            });
+                            sources.push((location, name));
+                        }
+                    }
+                }
             }
         }
-        emit(if cancelled {
-            OperationEvent::Cancelled {
+        let into = items
+            .first()
+            .and_then(|item| item.source.parent().map(Path::to_path_buf))
+            .unwrap_or_default();
+        let id = request.id;
+        let total = sources.len() + missing.len();
+        let mut affected = std::collections::HashSet::from([Location::uri("trash:///")]);
+        let (mut restored_sources, mut restored, mut failed) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut cut_off, mut errors, mut completed, mut cancelled) =
+            (Vec::new(), Vec::new(), 0, false);
+        for (location, name) in &missing {
+            completed += 1;
+            errors.push(format!("{name}: Unable to find items in Trash"));
+            failed.push(location.clone());
+        }
+        let handle = move |event| {
+            let (index, outcome) = match event {
+                Event::ItemDone { index, outcome, .. } => (index, outcome),
+                Event::Finished {
+                    cancelled: batch_cancelled,
+                    ..
+                } => {
+                    cancelled |= batch_cancelled;
+                    let (restored, failed, cut_off) = (
+                        std::mem::take(&mut restored),
+                        std::mem::take(&mut failed),
+                        std::mem::take(&mut cut_off),
+                    );
+                    emit(if cancelled {
+                        OperationEvent::Cancelled {
+                            request_id: id,
+                            result: crate::services::CancelledOperation {
+                                completed: restored,
+                                failed,
+                                not_attempted: cut_off,
+                                affected_locations: std::mem::take(&mut affected),
+                            },
+                        }
+                    } else if errors.is_empty() {
+                        OperationEvent::Restored {
+                            request_id: id,
+                            locations: std::mem::take(&mut restored_sources),
+                            restored,
+                        }
+                    } else {
+                        OperationEvent::RestoreCompletedWithErrors {
+                            request_id: id,
+                            restored_locations: std::mem::take(&mut restored_sources),
+                            restored,
+                            message: errors.join("\n"),
+                        }
+                    });
+                    return true;
+                }
+                _ => return false,
+            };
+            let (source, name) = sources[index].clone();
+            let restored_location = match outcome {
+                Outcome::Done {
+                    name: path,
+                    changes,
+                } => {
+                    completed += 1;
+                    affected.extend(path.parent().map(Location::local));
+                    if !changes.kept.is_empty() {
+                        emit(OperationEvent::ItemsReported {
+                            request_id: id,
+                            report: TransferReport {
+                                kept_in_trash: changes
+                                    .kept
+                                    .into_iter()
+                                    .map(|kept| crate::services::KeptItem {
+                                        location: Location::local(kept.path),
+                                        cause: kept.cause,
+                                    })
+                                    .collect(),
+                                ..TransferReport::default()
+                            },
+                        });
+                    }
+                    if let Some(identity) =
+                        off_ui_thread(|| super::native_fs::identity_at_path(&path))
+                    {
+                        emit(OperationEvent::ItemRestored {
+                            request_id: id,
+                            location: Location::local(&path),
+                            identity,
+                        });
+                    }
+                    restored_sources.push(source);
+                    restored.push(Location::local(&path));
+                    Some(Location::local(&path))
+                }
+                Outcome::Failed { error, .. } if error.kind() == ErrorKind::Cancelled => {
+                    completed += 1;
+                    cancelled = true;
+                    cut_off.push(source);
+                    None
+                }
+                Outcome::Failed { error, .. } => {
+                    completed += 1;
+                    errors.push(format!("{name}: {}", error.message()));
+                    failed.push(source);
+                    None
+                }
+                Outcome::NotAttempted => {
+                    cancelled = true;
+                    cut_off.push(source);
+                    return false;
+                }
+            };
+            emit(OperationEvent::RestoreProgress {
                 request_id: id,
-                result: crate::services::CancelledOperation {
-                    completed: deleted,
-                    failed,
-                    not_attempted: cut_off,
-                    affected_locations: affected,
-                },
-            }
-        } else if errors.is_empty() {
-            OperationEvent::Deleted {
-                request_id: id,
-                locations: deleted,
-            }
-        } else {
-            OperationEvent::CompletedWithErrors {
-                request_id: id,
-                deleted_locations: deleted,
-                has_non_retryable_failures: errors.len() > retryable.len(),
-                retryable_locations: retryable,
-                message: errors.join("\n"),
-            }
-        });
+                completed,
+                total,
+                restored_location,
+            });
+            false
+        };
+        start_running(
+            Request {
+                into,
+                items,
+                names: crate::ops::NameMode::Keep,
+                record: None,
+                durable: Some(false),
+            },
+            Box::new(handle),
+        )
     }
+}
+
+/// Cancels from the main thread the first time a racer runs, holding that racer's worker
+/// until then, as a user's cancel lands while the worker is inside an item.
+#[derive(Clone, Default)]
+struct CancelFromMain(Arc<(std::sync::Mutex<Option<bool>>, std::sync::Condvar)>);
+
+impl CancelFromMain {
+    fn racer(&self) -> fs_quirks::Racer {
+        let this = self.clone();
+        Box::new(move || {
+            let (state, changed) = &*this.0;
+            let mut state = state.lock().expect("cancel state");
+            if state.is_none() {
+                *state = Some(false);
+                while *state == Some(false) {
+                    state = changed.wait(state).expect("cancel state");
+                }
+            }
+        })
+    }
+
+    fn waiter(&self) -> fs_quirks::Racer {
+        let this = self.clone();
+        Box::new(move || {
+            let (state, changed) = &*this.0;
+            let mut state = state.lock().expect("cancel state");
+            while *state != Some(true) {
+                state = changed.wait(state).expect("cancel state");
+            }
+        })
+    }
+
+    fn serve(&self, cancel: impl FnOnce()) {
+        let (state, changed) = &*self.0;
+        let mut state = state.lock().expect("cancel state");
+        if *state == Some(false) {
+            cancel();
+            *state = Some(true);
+            changed.notify_all();
+        }
+    }
+
+    fn served(&self) -> bool {
+        *self.0.0.lock().expect("cancel state") == Some(true)
+    }
+}
+
+/// Runs file calls off a test marked as the UI thread, as legacy's provider did on its workers.
+fn off_ui_thread<T: Send>(call: impl FnOnce() -> T + Send) -> T {
+    thread::scope(|scope| scope.spawn(call).join().expect("the call returns"))
+}
+
+/// Legacy's `run_deletion`: deletes or trashes `entries`, stopping when `cancellable` is set.
+fn run_deletion(
+    id: OperationRequestId,
+    entries: Vec<crate::model::FileEntry>,
+    permanent: bool,
+    emit: Rc<dyn Fn(OperationEvent)>,
+    cancellable: Cancellable,
+) {
+    // The job reads the test's flag itself, as legacy's walk read its cancellable.
+    SHARED_CANCEL.with(|shared| shared.replace(Some(cancellable.flag())));
+    let _operation = LocalOperationProvider.delete(
+        crate::services::DeleteRequest {
+            id,
+            entries,
+            permanent,
+        },
+        emit,
+    );
+    pump_all();
+}
+
+fn wait_for_restore(events: &Rc<RefCell<Vec<OperationEvent>>>) {
+    wait_for_operation(events, |event| {
+        matches!(
+            event,
+            OperationEvent::Restored { .. }
+                | OperationEvent::RestoreCompletedWithErrors { .. }
+                | OperationEvent::Failed { .. }
+                | OperationEvent::Cancelled { .. }
+        )
+    });
+}
+
+fn volume_trash_entry(
+    root: &Path,
+    name: &str,
+    orig_path: &str,
+    contents: &[u8],
+) -> Result<(PathBuf, crate::model::FileEntry), Box<dyn Error>> {
+    let uid = rustix::process::getuid().as_raw();
+    let trash = root.join(format!(".Trash-{uid}"));
+    fs::create_dir_all(trash.join("files"))?;
+    fs::create_dir_all(trash.join("info"))?;
+    let source = trash.join("files").join(name);
+    fs::write(&source, contents)?;
+    fs::write(
+        trash.join("info").join(format!("{name}.trashinfo")),
+        format!("[Trash Info]\nPath={orig_path}\nDeletionDate=2026-01-01T00:00:00\n"),
+    )?;
+    Ok((source.clone(), file_entry(&source)))
 }
 
 /// A listing's entry for `path`, as legacy's views handed to its provider.

@@ -52,12 +52,16 @@ pub enum Action {
     Trash,
     /// Delete for good, without the Trash; see [`ops::delete`]. Not filed for undo.
     Delete,
+    /// Put an item of a Trash's `files` folder back where it came from; see
+    /// [`crate::trash::restore_reporting`]. With a path, the destination the user confirmed: the
+    /// restore is refused if the record now says otherwise. Not filed for undo.
+    Restore(Option<PathBuf>),
 }
 
 impl Action {
     /// Whether the item only goes away, writing nothing into the batch's folder.
     fn removes(&self) -> bool {
-        matches!(self, Self::Trash | Self::Delete)
+        matches!(self, Self::Trash | Self::Delete | Self::Restore(_))
     }
 }
 
@@ -502,6 +506,18 @@ fn run_item(
                 .map(|trashed| {
                     let step = Step::trashed(source, &trashed);
                     (trashed.file, Changes::default(), Vec::from_iter(step))
+                })
+                .map_err(plain),
+            Action::Restore(confirmed) => crate::trash::entry_of(source)
+                .and_then(|entry| {
+                    crate::trash::restore_reporting(&entry, confirmed.as_deref(), cancel)
+                })
+                .map(|restored| {
+                    let changes = Changes {
+                        kept: restored.kept_in_trash,
+                        ..Changes::default()
+                    };
+                    (restored.path, changes, Vec::new())
                 })
                 .map_err(plain),
             Action::Delete => ops::delete_within(source, cancel, deadline)

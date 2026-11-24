@@ -237,7 +237,36 @@ pub fn list() -> Vec<Entry> {
 
 /// Puts `entry` back where it came from, refusing if something has its name there now.
 pub fn restore(entry: &Entry) -> Result<PathBuf, Error> {
+    restore_reporting(entry, None, &crate::ops::Cancel::new()).map(|restored| restored.path)
+}
+
+/// What [`restore_reporting`] did.
+#[derive(Clone, Debug)]
+pub struct Restored {
+    pub path: PathBuf,
+    /// What the item was in the Trash, read before it moved.
+    pub identity: crate::services::ItemIdentity,
+    /// Entries left in the Trash, changed after the copy read them or undeletable, with why;
+    /// empty when the item went back whole.
+    pub kept_in_trash: Vec<crate::ops::Kept>,
+}
+
+/// [`restore`], reporting what it left behind and stopping at `cancel` until its copy (where one
+/// is needed) is complete. The item goes back only to its own drive, never across a bind mount
+/// or subvolume boundary, never inside a Trash, and never over an item that took its name. With
+/// `confirmed`, the destination a prompt showed, it refuses if the record now says otherwise.
+pub fn restore_reporting(
+    entry: &Entry,
+    confirmed: Option<&Path>,
+    cancel: &crate::ops::Cancel,
+) -> Result<Restored, Error> {
     still_listed(entry)?;
+    if confirmed.is_some_and(|confirmed| confirmed != entry.original) {
+        return Err(crate::error::translated_io_error(
+            "The original location changed and no longer matches the confirmed destination",
+        ));
+    }
+    let invalid = |message: &str| Error::new(ErrorKind::InvalidArgument, &crate::i18n::tr(message));
     let parent = entry
         .original
         .parent()
@@ -248,24 +277,34 @@ pub fn restore(entry: &Entry) -> Result<PathBuf, Error> {
             &crate::i18n::tr("The folder this item came from no longer exists"),
         ));
     }
-    match move_out(&entry.file, &entry.original) {
-        Ok(()) => {}
-        Err(rustix::io::Errno::EXIST) => {
-            return Err(Error::new(
-                ErrorKind::Exists,
-                &crate::i18n::tr("An item with that name already exists"),
-            ));
-        }
-        Err(rustix::io::Errno::XDEV) => {
-            return Err(unsupported(
-                "The item's original folder is now on another drive",
-            ));
-        }
-        Err(error) => return Err(os_io_error(error)),
+    let root = entry
+        .file
+        .parent()
+        .and_then(topdir)
+        .ok_or_else(|| invalid("Unable to determine the trash volume"))?;
+    if !entry.original.starts_with(&root) || topdir(parent).as_deref() != Some(root.as_path()) {
+        return Err(unsupported(
+            "The original location crosses a bind mount or subvolume boundary and cannot be restored",
+        ));
     }
-    let _ = std::fs::remove_file(&entry.info);
+    let trash_tree = std::fs::canonicalize(&entry.trash).unwrap_or_else(|_| entry.trash.clone());
+    let real_parent = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    if real_parent.starts_with(&trash_tree) || parent.starts_with(&entry.trash) {
+        return Err(invalid(
+            "The original location must not be inside the trash directory",
+        ));
+    }
+    let put = crate::ops::put_back(&entry.file, &entry.original, &root, cancel)?;
+    // The record goes only once nothing of the item is left in the Trash under its name.
+    if !matches!(std::fs::symlink_metadata(&entry.file), Ok(_)) {
+        let _ = std::fs::remove_file(&entry.info);
+    }
     forget_size(entry);
-    Ok(entry.original.clone())
+    Ok(Restored {
+        path: entry.original.clone(),
+        identity: put.trashed,
+        kept_in_trash: put.kept,
+    })
 }
 
 /// Deletes `entry` from the Trash for good.
@@ -319,41 +358,86 @@ fn read_trash(trash: &Path, top: Option<&Path>) -> Vec<Entry> {
         return Vec::new();
     };
     infos
-        .filter_map(|info| {
-            let info = info.ok()?.path();
-            let stored = info
-                .file_name()?
-                .as_bytes()
-                .strip_suffix(b".trashinfo")?
-                .to_vec();
-            let file = trash.join("files").join(OsString::from_vec(stored));
-            let identity = std::fs::symlink_metadata(&file)
-                .ok()
-                .map(|meta| identity(&meta))?;
-            let (path, deleted) = parse_record(&std::fs::read(&info).ok()?)?;
-            let original = match top {
-                Some(top) if path.is_relative() => top.join(&path),
-                // A drive's record may not restore outside the drive, whatever an older writer put.
-                Some(top) if !path.starts_with(top) => return None,
-                _ if path.is_relative() => return None,
-                _ => path,
-            };
-            if original
-                .components()
-                .any(|part| matches!(part, Component::ParentDir))
-            {
-                return None;
-            }
-            Some(Entry {
-                file,
-                info,
-                original,
-                deleted,
-                trash: trash.to_path_buf(),
-                identity,
-            })
-        })
+        .filter_map(|info| record(trash, top, &info.ok()?.path()))
         .collect()
+}
+
+/// The entry `info` records in `trash`, whose relative paths are under `top` (a drive's Trash)
+/// or which takes only absolute ones (the home Trash, `top` None).
+fn record(trash: &Path, top: Option<&Path>, info: &Path) -> Option<Entry> {
+    let stored = info
+        .file_name()?
+        .as_bytes()
+        .strip_suffix(b".trashinfo")?
+        .to_vec();
+    let file = trash.join("files").join(OsString::from_vec(stored));
+    let identity = std::fs::symlink_metadata(&file)
+        .ok()
+        .map(|meta| identity(&meta))?;
+    let (path, deleted) = parse_record(&std::fs::read(info).ok()?)?;
+    let original = match top {
+        Some(top) if path.is_relative() => top.join(&path),
+        // A drive's record may not restore outside the drive, whatever an older writer put.
+        Some(top) if !path.starts_with(top) => return None,
+        _ if path.is_relative() => return None,
+        _ => path,
+    };
+    if original
+        .components()
+        .any(|part| matches!(part, Component::ParentDir))
+    {
+        return None;
+    }
+    Some(Entry {
+        file,
+        info: info.to_path_buf(),
+        original,
+        deleted,
+        trash: trash.to_path_buf(),
+        identity,
+    })
+}
+
+/// The entry for `file`, an item in a Trash's `files` folder, read from its record: what a Trash
+/// folder's listing shows before it is restored. A drive's Trash (`.Trash-$uid`, or `.Trash/$uid`)
+/// resolves a relative path against the folder holding it; any other Trash takes absolute paths.
+pub fn entry_of(file: &Path) -> Result<Entry, Error> {
+    let not_trashed = || {
+        Error::new(
+            ErrorKind::NotFound,
+            &crate::i18n::tr("This item is not in a Trash, or its record is missing"),
+        )
+    };
+    let files = file.parent().ok_or_else(not_trashed)?;
+    if files.file_name() != Some(std::ffi::OsStr::new("files")) {
+        return Err(not_trashed());
+    }
+    let trash = files.parent().ok_or_else(not_trashed)?;
+    let uid = rustix::process::getuid().as_raw().to_string();
+    let named = |path: &Path, name: &str| path.file_name() == Some(std::ffi::OsStr::new(name));
+    let top = if named(trash, &format!(".Trash-{uid}")) {
+        trash.parent()
+    } else if named(trash, &uid) && trash.parent().is_some_and(|shared| named(shared, ".Trash")) {
+        trash.parent().and_then(Path::parent)
+    } else {
+        None
+    };
+    let mut info = file.file_name().ok_or_else(not_trashed)?.to_os_string();
+    info.push(".trashinfo");
+    let info = trash.join("info").join(info);
+    record(trash, top, &info).ok_or_else(|| {
+        // A drive's record naming a place off the drive is refused, never followed.
+        let escapes = std::fs::read(&info)
+            .ok()
+            .and_then(|bytes| parse_record(&bytes))
+            .zip(top)
+            .is_some_and(|((path, _), top)| path.is_absolute() && !path.starts_with(top));
+        if escapes {
+            unsupported("The original location is outside the trash volume and cannot be restored.")
+        } else {
+            not_trashed()
+        }
+    })
 }
 
 /// A record's `Path` and `DeletionDate`; `None` for anything that is not a Trash record.
@@ -526,16 +610,6 @@ fn topdir_trash(top: &Path, create: bool) -> Option<PathBuf> {
 }
 
 /// Out of a Trash, never over what holds the name.
-fn move_out(from: &Path, to: &Path) -> Result<(), rustix::io::Errno> {
-    rustix::fs::renameat_with(
-        rustix::fs::CWD,
-        from,
-        rustix::fs::CWD,
-        to,
-        rustix::fs::RenameFlags::NOREPLACE,
-    )
-}
-
 /// Into a Trash, through the engine's filesystem. An SMB folder refused while a file below it
 /// waits for the client's deferred close is tried again until that closes.
 fn move_in(from: &Path, to: &Path, deadline: &Deadline) -> Result<(), rustix::io::Errno> {

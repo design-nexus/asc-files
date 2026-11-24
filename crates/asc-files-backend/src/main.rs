@@ -126,6 +126,24 @@ impl Session {
                 Ok(()) => return None,
                 Err(error) => Err(error),
             }
+        } else if method == "trash.restore" {
+            // A restore that must copy can take long; it answers from a thread of its own.
+            match listed_entry(&params) {
+                Ok(entry) => {
+                    let (out, id) = (self.out.clone(), id.clone().unwrap_or(Value::Null));
+                    self.workers.push(thread::spawn(move || {
+                        let _ = out.send(match trash::restore(&entry) {
+                            Ok(restored) => json!({"jsonrpc": "2.0", "id": id, "result": {"path": lossy(&restored)}}),
+                            Err(error) => {
+                                let (code, message) = operation_error(error);
+                                error_reply(id, code, &message)
+                            }
+                        });
+                    }));
+                    return None;
+                }
+                Err(error) => Err(error),
+            }
         } else if method == "jobs.clashes" {
             match self.start_clashes(id.clone().unwrap_or(Value::Null), &params) {
                 Ok(()) => return None,
@@ -202,11 +220,6 @@ impl Session {
             "trash.list" => Ok(json!({
                 "entries": trash::list().iter().map(entry_json).collect::<Vec<_>>(),
             })),
-            "trash.restore" => {
-                let entry = listed_entry(params)?;
-                let restored = trash::restore(&entry).map_err(operation_error)?;
-                Ok(json!({"path": lossy(&restored)}))
-            }
             "trash.delete" => {
                 let entry = listed_entry(params)?;
                 trash::delete(&entry).map_err(operation_error)?;
@@ -402,6 +415,13 @@ fn job_request(params: &Value) -> Result<Request, (i64, String)> {
                 Some("replace") => Action::Replace,
                 Some("trash") => Action::Trash,
                 Some("delete") => Action::Delete,
+                Some("restore") => Action::Restore(match item.get("to") {
+                    None | Some(Value::Null) => None,
+                    Some(to) => Some(PathBuf::from(
+                        to.as_str()
+                            .ok_or((INVALID_PARAMS, "to must be a string path".to_owned()))?,
+                    )),
+                }),
                 other => return Err((INVALID_PARAMS, format!("unknown action {other:?}"))),
             };
             let name = match item.get("name") {
@@ -491,6 +511,7 @@ fn capabilities(undo: bool) -> Vec<&'static str> {
         "jobs.replace",
         "jobs.trash",
         "jobs.delete",
+        "jobs.restore",
         "jobs.merge",
         "jobs.durable",
         "trash",
@@ -519,6 +540,7 @@ fn default_label(items: &[Item]) -> String {
         Action::Replace => "Replace",
         Action::Trash => "Move to Trash",
         Action::Delete => "Delete",
+        Action::Restore(_) => "Restore",
     };
     let first = items.first().map_or("Operation", |item| verb(&item.action));
     let same = items.iter().all(|item| verb(&item.action) == first);

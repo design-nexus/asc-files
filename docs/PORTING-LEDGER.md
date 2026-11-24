@@ -28,10 +28,11 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `placement.rs` | 39 | 37 | 0 | 2 |
 | `release.rs` | 5 | 0 | 0 | 5 |
 | `replacement.rs` | 28 | 25 | 0 | 3 |
+| `restore_safety.rs` | 28 | 28 | 0 | 0 |
 | `trash_capabilities.rs` | 1 | 0 | 0 | 1 (ignored upstream too) |
 | `merge.rs`, first pass | 66 | 14 | 0 | 2 (50 still to port: legacy's merge hooks and seams, and its snapshot undo) |
-| **So far** | **301** | **253** | **2** | **46** |
-| Remaining 5 files (`copy`, `progress`, `restore_safety`, `sync`, `undo`), and 50 of `merge.rs` | 191 | – | – | – |
+| **So far** | **329** | **281** | **2** | **46** |
+| Remaining 4 files (`copy`, `progress`, `sync`, `undo`), and 50 of `merge.rs` | 163 | – | – | – |
 
 ## Ignored
 
@@ -55,6 +56,9 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `deletion::trash_reports_the_item_it_moved_when_another_took_the_name_first`, the OpenAt row | Legacy swapped the item at the open it made before trashing; the native Trash makes none, so what holds the name at the rename goes. The rows swapping at the rename run. |
 | Same test, the nfs3 row | Legacy reported the item it had checked: it read the item at its name through NFS's attribute cache, which still showed it after another was renamed over. The Trash moved the arrival, and the engine reports what reached the Trash. |
 | `deletion::a_folder_only_leftovers_keep_goes_once_they_do_within_the_mount_s_wait`, the rows held by Files itself | Legacy knew what Files held (a preview's read, another of its operations) through `file_activity` and said so. Previews are the Qt app's (Phase B); the rows run held by a program or by nobody named. |
+| `restore_safety::restore_leaves_in_the_trash_what_it_cannot_copy_or_finds_changed`, the merge-undo row | It also ran through legacy's merge undo, which restored a staged original; the engine's merge undo is its journal's, ported with `undo`. |
+| `restore_safety::home_trash_fallback_finds_broken_symlinks_the_virtual_backend_has_not_refreshed`, the cancelled half | Legacy read records itself where GVfs's `trash://` listing lagged, and stopped at a cancel; the engine always reads them (`trash::entry_of`), and a lookup takes no cancel. That a broken link in the Trash is found with its record still runs. |
+| `restore_safety::trash_items_whose_files_share_names_are_restored_whole`, the order of copies and deletions | Legacy copied both items before deleting either Trash copy, and checked that order. Jobs restore item by item; the proven deletion of one copy leaves the item sharing its file whole, which the rest checks. |
 | `leftovers::stale_probes_go_only_when_empty_and_old`, the mount-lane half | Legacy swept on its mount's background lane and checked that a slow sweep kept the lane answering. The engine has no lanes: the backend runs the sweep on a thread of its own. That the sweep removes a listed stale probe is still checked. |
 | `paste_results::an_item_replaced_without_trash_is_left_out_of_the_paste_undo`, the order of moves | Legacy moved the items without a conflict first; jobs keep the order asked for. The moves are compared as a set. |
 
@@ -179,6 +183,15 @@ ported with a reason. This list must be empty, or every entry justified, before 
   parallel walk was there but nothing reached it.
 - **Fixed:** each item of a batch waited the whole budget for files still open on NFS or SMB, so a delete or Trash
   of N folders held open waited N times as long; one wait now covers the batch, as legacy's did.
+- **Fixed:** restoring from the Trash was a single no-replace rename: it failed outright where a drive has no such
+  rename (FAT, many FUSE and network drives) or none for folders, took no pinned folder (a symlink swapped into the
+  original's path could lead it elsewhere), and never checked the item was still the one read. It is now legacy's
+  restore (`ops::put_back`, ported): placed by identity, the original's folder opened beneath the drive's root,
+  copied where nothing can place it and the Trash copy deleted only once the copy is on the drive, with what stays
+  in the Trash reported. It refuses an original off the item's drive, across a bind mount or subvolume, or inside
+  a Trash, and a destination the user confirmed that the record no longer names.
+- **Added:** `jobs::Action::Restore` (`restore` on the protocol, with `to`, the confirmed destination) and
+  `trash::entry_of` for an item a Trash folder's listing shows; `trash.restore` now answers from its own thread.
 - **Open:** a bulk path for many small items; `rename` and `create` on the protocol; a paste-planning call.
 
 ## Archives (legacy: 225 tests)

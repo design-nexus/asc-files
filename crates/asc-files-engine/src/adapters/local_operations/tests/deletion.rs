@@ -938,7 +938,7 @@ fn delete(folders: &[PathBuf], permanent: bool) -> Vec<OperationEvent> {
         },
         Rc::new(move |event| emitted.borrow_mut().push(event)),
     );
-    pump();
+    pump_all();
     events.take()
 }
 
@@ -1059,8 +1059,6 @@ fn a_folder_only_leftovers_keep_goes_once_they_do_within_the_mount_s_wait()
                 },
             );
             folder_with_an_open_file(&folder, &holds)?;
-            let real_folder = folder.canonicalize()?;
-            let read_by_files = real_folder.join("open.txt");
             let events = delete_permanently(std::slice::from_ref(&folder));
 
             let waited = waited_since(start)?;

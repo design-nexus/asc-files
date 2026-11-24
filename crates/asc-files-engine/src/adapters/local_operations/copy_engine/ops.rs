@@ -707,6 +707,179 @@ fn moving(
     })
 }
 
+/// What [`put_back`] did.
+pub(crate) struct PutBack {
+    /// What the item was in the Trash, read before it moved.
+    pub trashed: crate::services::ItemIdentity,
+    /// Entries left in the Trash because they changed after the copy read them, or could not
+    /// be deleted, with why. Empty when the item was moved back whole.
+    pub kept: Vec<Kept>,
+}
+
+/// Puts `item` back at `original`, never over what holds that name now and never onto another
+/// drive. The original's folder is opened beneath `root` (the drive's mount point), so a
+/// symlink swapped into its path cannot lead the item elsewhere. Where no rename can place it (a
+/// drive without no-replace renames for a folder, say), it is copied, the copy reaches the drive,
+/// and only then is what was copied deleted from the Trash; a cancel after the copy is complete
+/// no longer stops it.
+pub(crate) fn put_back(
+    item: &Path,
+    original: &Path,
+    root: &Path,
+    cancel: &Cancel,
+) -> Result<PutBack, Error> {
+    use super::{Barrier, Published, manifest};
+    use crate::adapters::local_operations::{
+        fs_ops::Entry,
+        mount_profile::identity_at,
+        native_fs::{open_local_parent_beneath, os_error_detail, trashed_identity},
+        placement::{self, PlaceError},
+    };
+    let display = item
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let failed = |error: &str| {
+        crate::error::io_error(rust_i18n::t!(
+            "Could not restore %{name}: %{error}",
+            name = display,
+            error = error
+        ))
+    };
+    let exists = || {
+        Error::new(
+            crate::error::ErrorKind::Exists,
+            &rust_i18n::t!(
+                "Could not restore %{name}: something already exists at the destination",
+                name = display
+            ),
+        )
+    };
+    if cancel.is_cancelled() {
+        return Err(crate::error::cancelled());
+    }
+    let (source_parent, source_name) = split(item)?;
+    let (Some(target_folder), Some(target_name)) = (original.parent(), original.file_name()) else {
+        return Err(crate::error::translated_io_error(
+            "Invalid restore destination",
+        ));
+    };
+    let target_parent =
+        Arc::new(open_local_parent_beneath(target_folder, root).map_err(|error| failed(&error))?);
+    let from = Entry::new(&*source_parent, &source_name);
+    let stat = fs()
+        .stat(from, false)
+        .map_err(|error| failed(&os_error_detail(error)))?;
+    let trashed = trashed_identity(&stat, identity_at(fs(), source_parent.as_fd()));
+    if cancel.is_cancelled() {
+        return Err(crate::error::cancelled());
+    }
+    match placement::place(
+        fs(),
+        from,
+        Entry::new(&*target_parent, target_name),
+        Some(stat.identity),
+    ) {
+        Ok(_) => {
+            return Ok(PutBack {
+                trashed,
+                kept: Vec::new(),
+            });
+        }
+        Err(PlaceError::Unsupported) => {}
+        Err(PlaceError::CrossDevice) => {
+            return Err(Error::new(
+                crate::error::ErrorKind::NotSupported,
+                &rust_i18n::t!("Could not restore %{name} across volumes", name = display),
+            ));
+        }
+        Err(PlaceError::Exists) => return Err(exists()),
+        Err(error) => {
+            return Err(failed(
+                &crate::adapters::local_operations::placement_reason(error),
+            ));
+        }
+    }
+
+    // No rename can place it: copied, then what was copied deleted from the Trash once proven.
+    let barrier = Barrier::open(fs(), target_folder)?;
+    let root_folder = manifest::Folder::root();
+    let source = Source {
+        parent: source_parent,
+        name: source_name,
+        recorded_in: Some(root_folder.clone()),
+    };
+    let options = Options {
+        manifest: true,
+        durable: true,
+        ..with_names(NameMode::Keep)
+    };
+    let progress = Progress::new();
+    let copy = Copy::new(
+        fs(),
+        source.name.clone(),
+        cancel.0.clone(),
+        progress.0.clone(),
+        true,
+        options,
+        Deadline::default(),
+    );
+    let target_name = target_name.to_os_string();
+    // Written at its name, created exclusively, and only while the item is the one read above.
+    let (published, ownership) = copy_new(
+        &copy,
+        &source,
+        (&target_parent, &target_name),
+        super::NewItem::InPlace(stat.identity),
+        None,
+    )
+    .map_err(|failure| {
+        let error = failure.into_error(&source.name);
+        match error.kind() {
+            crate::error::ErrorKind::Cancelled => error,
+            crate::error::ErrorKind::Exists => exists(),
+            _ => failed(error.message()),
+        }
+    })?;
+    barrier.reach(fs(), false).map_err(|error| {
+        crate::error::io_error(rust_i18n::t!(
+            "The device could not finish writing: %{error}. Earlier writes may still be pending; wait for safe eject before unplugging.",
+            error = crate::adapters::local_operations::native_fs::os_error_text(error)
+        ))
+    })?;
+    let mut sources = manifest::of(source.parent.clone(), root_folder);
+    sources.copied_to(Published::proven(target_parent, published, ownership));
+    // The copy is complete, so a cancel no longer stops this restore.
+    let (kept, deleted) = manifest::delete(
+        fs(),
+        sources,
+        Arc::new(super::Unlinks::default()),
+        Arc::default(),
+    );
+    deleted.map_err(|error| {
+        crate::error::io_error(rust_i18n::t!(
+            "The item was restored, but its trash copy could not be removed: %{error}",
+            error = error.message()
+        ))
+    })?;
+    let folder = item.parent().unwrap_or(Path::new("/"));
+    Ok(PutBack {
+        trashed,
+        kept: kept
+            .into_iter()
+            .map(|(path, cause)| Kept {
+                path: if path.is_absolute() {
+                    path
+                } else {
+                    folder.join(path)
+                },
+                cause,
+            })
+            .collect(),
+    })
+}
+
 /// Why a move failed, as legacy worded it: a move says what it moved, a rename gives the reason
 /// alone. The kind stays the placement's.
 fn move_failure(

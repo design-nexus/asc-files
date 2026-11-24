@@ -45,7 +45,7 @@ Notifications:
 
 | Method | Params | Result |
 |---|---|---|
-| `jobs.start` | `into`, `names?: "fix"\|"keep"` (fix), `label?` (what undo calls it; default from the actions, e.g. "Move 2 items"), `durable?` (sync the drive before finishing; default: when it is removable), `items: [{source, action: "copy"\|"merge"\|"move"\|"replace"\|"trash"\|"delete", conflict?: "fail"\|"keepBoth"\|"merge", choices?, otherwise?}]` | `{job}` |
+| `jobs.start` | `into`, `names?: "fix"\|"keep"` (fix), `label?` (what undo calls it; default from the actions, e.g. "Move 2 items"), `durable?` (sync the drive before finishing; default: when it is removable), `items: [{source, action: "copy"\|"merge"\|"move"\|"replace"\|"trash"\|"delete"\|"restore", conflict?: "fail"\|"keepBoth"\|"merge", choices?, otherwise?}]` | `{job}` |
 | `jobs.cancel` | `job` | `null` |
 | `jobs.clashes` | `into`, `sources` | `{items: [{source, clashes: [{path, incoming, existing}]}]}`, each side `{isFolder, size, modified}`; or `{source, error}` |
 
@@ -77,6 +77,13 @@ A `delete` item is removed for good, without the Trash, and is never filed for u
 everything in it, links inside are removed rather than followed, and a folder renamed or swapped meanwhile is
 never followed out of the tree. Like `trash`, it ignores `into`.
 
+A `restore` item's `source` is an item in a Trash's `files` folder (the `path` a `trash` item reported, or
+`file` from `trash.list`); it goes back to where its record says it came from, never over an item that took that
+name, never off its drive or across a bind mount or subvolume boundary, and never inside a Trash. With `to`, the
+destination the user confirmed, it is refused if the record now says otherwise. Where no rename can place it, it
+is copied and the Trash copy deleted only once the copy is on the drive; entries left in the Trash (changed
+meanwhile, or undeletable) are its `kept`. Not filed for undo.
+
 Items may also take `name` (the name a conflict prompt offered; one plain name), and moves take `conflict`
 `"fail"`, `"keepBoth"` or `"replace"`; a `merge` item with `move: true` merges by moving.
 
@@ -104,7 +111,7 @@ not list the `undo` capability.
 | Method | Params | Result |
 |---|---|---|
 | `trash.list` | – | `{entries: [{info, file, original, deleted}]}` |
-| `trash.restore` | `info` (an entry's `.trashinfo` path from `trash.list`) | `{path}` |
+| `trash.restore` | `info` (an entry's `.trashinfo` path from `trash.list`) | `{path}`; answered from a thread of its own, as it may copy. A `restore` job reports progress and can be cancelled |
 | `trash.delete` | `info` | `null` |
 | `trash.empty` | – | `{deleted, failed}` |
 
