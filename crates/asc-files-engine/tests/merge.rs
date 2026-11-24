@@ -263,7 +263,7 @@ fn a_plain_merge_through_a_job_keeps_both_and_can_be_undone() {
 }
 
 #[test]
-fn an_item_that_fails_inside_a_merge_ends_only_itself_and_the_rest_is_filed() {
+fn a_merge_that_stops_on_an_unreadable_item_files_what_it_placed() {
     let fixture = Fixture::new();
     let journal = Journal::at(&fixture.path("journal")).unwrap();
     let unreadable = fixture.path("source/photos/only-new.jpg");
@@ -283,13 +283,24 @@ fn an_item_that_fails_inside_a_merge_ends_only_itself_and_the_rest_is_filed() {
         matches!(outcome, Some(Outcome::Failed { .. })),
         "{outcome:?}"
     );
-    assert!(
-        fixture.path("dest/photos/new-folder/d.jpg").exists(),
-        "the rest went on"
+    // The engine's merge stops at the item it cannot read, as legacy's did; what it placed
+    // before stays, and is filed, so undo takes away exactly that.
+    let placed: Vec<_> = ["a (1).jpg", "b (1).jpg", "new-folder"]
+        .into_iter()
+        .filter(|name| fixture.path("dest/photos").join(name).exists())
+        .collect();
+    if !placed.is_empty() {
+        let undone = journal.undo(&Cancel::new(), &Progress::new()).unwrap();
+        assert!(undone.left.is_empty(), "{undone:?}");
+    }
+    for name in placed {
+        assert!(!fixture.path("dest/photos").join(name).exists(), "{name}");
+    }
+    assert_eq!(fixture.read("dest/photos/a.jpg"), "old a.jpg");
+    assert_eq!(
+        fixture.read("dest/photos/only-mine.jpg"),
+        "old only-mine.jpg"
     );
-    let undone = journal.undo(&Cancel::new(), &Progress::new()).unwrap();
-    assert!(undone.done >= 4, "{undone:?}");
-    assert!(!fixture.path("dest/photos/new-folder").exists());
     fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644)).unwrap();
 }
 
@@ -302,4 +313,42 @@ fn clash_paths_survive_the_journal() {
     run(&fixture, &journal, Action::Merge(plan));
     let text = fs::read_to_string(Path::new(&journal_dir).join("undo-journal")).unwrap();
     assert!(text.contains("b (1).jpg"), "{text}");
+}
+
+#[test]
+fn a_merge_under_another_name_replaces_only_in_the_folder_merged_into() {
+    let fixture = Fixture::new();
+    // The source beside the folder it merges into, and a bystander of the source's own name.
+    let (source, target) = (fixture.path("dest/photos"), fixture.path("dest/album"));
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("a.jpg"), "album a").unwrap();
+    fs::write(source.join("extra.jpg"), "new extra").unwrap();
+    let bystander = fixture.path("elsewhere/photos");
+    fs::create_dir_all(&bystander).unwrap();
+    fs::write(bystander.join("a.jpg"), "bystander a").unwrap();
+    for (from, into) in [
+        (&source, fixture.path("dest")),
+        (&fixture.path("source/photos"), fixture.path("dest")),
+    ] {
+        let plan = MergePlan {
+            otherwise: Clash::Replace,
+            ..MergePlan::default()
+        };
+        merge::merge_as(
+            from,
+            (&into, "album".as_ref()),
+            &plan,
+            NameMode::Fix,
+            &Cancel::new(),
+            &Progress::new(),
+        )
+        .unwrap();
+        assert!(
+            from.join("a.jpg").exists(),
+            "the source keeps its own files"
+        );
+    }
+    assert_eq!(fixture.read("dest/album/a.jpg"), "new a.jpg");
+    assert_eq!(fixture.read("dest/photos/extra.jpg"), "new extra");
+    assert_eq!(fixture.read("elsewhere/photos/a.jpg"), "bystander a");
 }

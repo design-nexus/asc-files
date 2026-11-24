@@ -23,8 +23,9 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `paths.rs` | 3 | 2 | 0 | 1 |
 | `placement.rs` | 39 | 37 | 0 | 2 |
 | `replacement.rs` | 28 | 25 | 0 | 3 |
-| **So far** | **225** | **195** | **2** | **28** |
-| Remaining 11 files | 267 | – | – | – |
+| `merge.rs`, first pass | 66 | 14 | 0 | 2 (50 still to port: legacy's merge hooks and seams, and its snapshot undo) |
+| **So far** | **241** | **209** | **2** | **30** |
+| Remaining 10 files, and 50 of `merge.rs` | 251 | – | – | – |
 
 ## Ignored
 
@@ -73,6 +74,8 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `moves::deleting_a_source_gio_moved_keeps_the_links_it_left_out` | Same. |
 | `moves::moving_to_a_remote_target_keeps_a_source_entry_changed_during_the_copy` | Remote target: the remote adapter. |
 | `moves::moving_from_a_share_to_a_remote_target_right_after_a_paste_there_deletes_its_sources` | Same. |
+| `merge::a_paste_records_no_more_than_its_limit_across_its_merges` | Legacy's budget of placed snapshots for undo without a Trash; the undo journal records steps by identity, capped by `undo::MAX_STEPS`. |
+| `merge::a_flushed_merge_move_keeps_sources_when_published_entries_disappear` | Within one mount a merging move renames entry by entry: nothing is copied, so there is no flush and no published copy to vanish. |
 | `replacement::replacement_publication_preserves_concurrent_arrivals` | Legacy `replacement.rs` publication internals (`publish_staged_replacement`), superseded by `ops::replace`'s own staging, exchange and set-aside. |
 | `replacement::replacement_publication_reports_a_stage_it_cannot_remove` | Same. |
 | `replacement::replace_falls_back_to_aside_when_trash_lies` | GIO's `g_file_trash` reporting success without moving (GLib #4060); the native Trash moves by rename, which cannot. |
@@ -120,6 +123,15 @@ ported with a reason. This list must be empty, or every entry justified, before 
 - **Fixed:** a replace now refuses before copying anything where neither strategy is safe; a cancel as the copy
   finished is honoured; a staged copy left by a failure is removed; a merge on a drive without a Trash sets
   clashing originals aside and deletes them once replaced, or puts them back.
+- **Fixed, data loss:** a merge under a given name looked for clashes in the folder of the source's own name.
+  With the source beside the target that was the source itself, so Replace sent the source's own files to the
+  Trash; elsewhere it could replace in an unrelated folder of that name. Clashes are now found in the folder
+  merged into, and merging a folder into itself is refused.
+- **Changed, to legacy's behaviour:** a copy merge, and a merging move across drives, are the engine's own tree
+  merge (each entry staged and whole, hard links kept as links, a target folder swapped for a link not
+  followed, a taken name keeping both), not a walk of single copies; a merging move within one mount still
+  renames entry by entry. Like legacy's, the tree merge stops at an entry it cannot read, keeping what it placed,
+  which undo then takes away.
 - **Fixed:** a hard link under another name is replaced like any item; only the same name in the same folder
   (differing at most in case) is the item itself.
 - **Open:** a bulk path for many small items; `rename` on the protocol, new folder and new file with typed-name

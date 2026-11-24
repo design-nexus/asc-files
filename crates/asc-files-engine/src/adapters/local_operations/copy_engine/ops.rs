@@ -691,6 +691,41 @@ pub(crate) fn one_mount(one: &Path, other: &Path) -> bool {
     key(one).is_some_and(|one| key(other) == Some(one))
 }
 
+/// Merges the folder `source` into the existing folder `name` in `into` with the engine's merge:
+/// each entry is staged and appears whole, hard links stay links within what is copied together,
+/// a folder of the target swapped for a link is not followed, and a name that is taken keeps both.
+/// What it placed before a failure stays, and the error says what failed.
+pub(crate) fn merge_by_copying(
+    source: &Path,
+    (into, name): (&Path, &OsStr),
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> (Result<(), Error>, Changes) {
+    let (parent, item) = match split(source) {
+        Ok(split) => split,
+        Err(error) => return (Err(error), Changes::default()),
+    };
+    let source = Source {
+        parent,
+        name: item,
+        recorded_in: None,
+    };
+    let copy = Copy::new(
+        fs(),
+        source.name.clone(),
+        cancel.0.clone(),
+        progress.0.clone(),
+        true,
+        with_names(names),
+        Deadline::default(),
+    );
+    let merged = merge(&copy, &source, &into.join(name), None, None)
+        .map(drop)
+        .map_err(|failure| failure.into_error(&source.name));
+    (merged, Changes::of(&copy, name))
+}
+
 /// Merges the folder `source` into the folder `name` in `into` on another drive by moving: the
 /// engine's merge copies it in, keeping both where a name is taken, and once the copy is on the
 /// drive the source entries it copied are deleted while they are still what it read. Anything

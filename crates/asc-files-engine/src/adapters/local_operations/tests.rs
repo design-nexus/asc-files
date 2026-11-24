@@ -50,6 +50,7 @@ mod conflicts;
 mod file_copy;
 mod folder_copy;
 pub(crate) mod fs_quirks;
+mod merge;
 mod moves;
 mod naming;
 mod paths;
@@ -933,4 +934,71 @@ fn replace_local_with(
         );
     }
     Ok(())
+}
+
+/// What legacy's merge reported writing: the topmost paths it created, and those whose originals
+/// it replaced.
+#[derive(Clone, Debug, Default)]
+struct MergeWritten {
+    created: Vec<Location>,
+    overwritten: Vec<Location>,
+}
+
+/// Legacy's merge of the folder `source` into the existing folder `target`, incoming items taking
+/// the place of same-named ones, through the engine's merge.
+fn merge_local(
+    source: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+    move_source: bool,
+    cancellable: Cancellable,
+    on_merged: &dyn Fn(MergeWritten),
+) -> Result<(), EngineError> {
+    use crate::merge::{self, Clash, Did, MergePlan};
+    let target = target.as_ref();
+    let (into, name) = (
+        target.parent().expect("a target folder"),
+        target.file_name().expect("a target name"),
+    );
+    let plan = MergePlan {
+        otherwise: Clash::Replace,
+        ..MergePlan::default()
+    };
+    let cancel = crate::ops::Cancel::sharing(cancellable.flag());
+    let progress = crate::ops::Progress::new();
+    let merged = if move_source {
+        merge::merge_moving_as(
+            source.as_ref(),
+            (into, name),
+            &plan,
+            NameMode::Fix,
+            &cancel,
+            &progress,
+        )
+    } else {
+        merge::merge_as(
+            source.as_ref(),
+            (into, name),
+            &plan,
+            NameMode::Fix,
+            &cancel,
+            &progress,
+        )
+    }?;
+    let mut written = MergeWritten::default();
+    for did in &merged.done {
+        match did {
+            Did::Copied { copy: at, .. } | Did::Moved { to: at, .. } => {
+                written.created.push(Location::local(at));
+            }
+            Did::Replaced { target: at, .. } | Did::MovedOver { to: at, .. } => {
+                written.overwritten.push(Location::local(at));
+            }
+            Did::RemovedFolder { .. } => {}
+        }
+    }
+    on_merged(written);
+    match merged.failed.into_iter().next() {
+        Some((_, error)) => Err(error),
+        None => Ok(()),
+    }
 }
