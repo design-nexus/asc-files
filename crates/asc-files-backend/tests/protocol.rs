@@ -643,3 +643,32 @@ fn a_trashed_item_is_restored_by_a_job_to_the_destination_confirmed() {
     assert_eq!(restored["path"], json!(item));
     assert_eq!(fs::read_to_string(&item).unwrap(), "dear");
 }
+
+#[test]
+fn a_started_job_says_how_much_it_will_write() {
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    backend.call("initialize", json!({}), &mut notes);
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    let (source, into) = (root.path().join("source"), root.path().join("into"));
+    fs::create_dir_all(source.join("sub")).unwrap();
+    fs::create_dir_all(&into).unwrap();
+    fs::write(source.join("a.txt"), "12345").unwrap();
+    fs::write(source.join("sub/b.txt"), "123").unwrap();
+
+    let start = backend.call(
+        "jobs.start",
+        json!({"into": into, "items": [{"source": source, "action": "copy"}]}),
+        &mut notes,
+    );
+    let job = start["result"]["job"].clone();
+    backend.until(&mut notes, |n| {
+        n["method"] == "job.finished" && n["params"]["job"] == job
+    });
+    let started = notes
+        .iter()
+        .find(|n| n["method"] == "job.started" && n["params"]["job"] == job)
+        .unwrap();
+    assert_eq!(started["params"]["totalBytes"], json!(8), "{started}");
+    assert_eq!(started["params"]["totalFiles"], json!(2), "{started}");
+}

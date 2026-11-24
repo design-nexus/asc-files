@@ -1184,6 +1184,55 @@ pub(crate) fn delete_within(
     }
 }
 
+/// What an item holds, measured before it is copied, so a batch can say how much it will write.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Measured {
+    pub bytes: u64,
+    /// Everything but folders: files, links, and other entries.
+    pub files: usize,
+}
+
+/// Measures `item` without following links. A file larger than `largest` (FAT32 holds no file
+/// of 4 GiB or more) refuses the item before anything is written, naming the file. An entry that
+/// cannot be read leaves the size unknown (None); a cancel stops the measuring.
+pub fn measure(
+    item: &Path,
+    largest: Option<u64>,
+    cancel: &Cancel,
+) -> Result<Option<Measured>, Error> {
+    let mut measured = Measured::default();
+    let mut folders = vec![item.to_path_buf()];
+    let mut known = true;
+    while let Some(path) = folders.pop() {
+        if cancel.is_cancelled() {
+            return Err(crate::error::cancelled());
+        }
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            known = false;
+            continue;
+        };
+        if meta.is_dir() {
+            match std::fs::read_dir(&path) {
+                Ok(entries) => folders.extend(entries.flatten().map(|entry| entry.path())),
+                Err(_) => known = false,
+            }
+            continue;
+        }
+        if meta.is_file() && largest.is_some_and(|largest| meta.len() > largest) {
+            return Err(Error::new(
+                crate::error::ErrorKind::NoSpace,
+                &rust_i18n::t!(
+                    "%{name} is too large for a FAT32 drive (maximum file size: 4 GiB). Use an exFAT or another large-file-capable drive instead.",
+                    name = path.file_name().unwrap_or_default().to_string_lossy()
+                ),
+            ));
+        }
+        measured.files += 1;
+        measured.bytes = measured.bytes.saturating_add(meta.len());
+    }
+    Ok(known.then_some(measured))
+}
+
 /// Moves `item` to the Trash on its own drive; see [`crate::trash::put`].
 pub fn trash(item: &Path) -> Result<Trashed, Error> {
     crate::trash::put(item)

@@ -59,6 +59,7 @@ mod naming;
 mod paste_results;
 mod paths;
 mod placement;
+mod progress;
 mod replacement;
 mod restore_safety;
 mod undo;
@@ -654,10 +655,33 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
     let mut events = Vec::new();
     let mut completed = Vec::new();
     let mut failure = None;
-    let mut bytes = 0;
+    // The engine counts each item on its own; legacy counted the paste as a whole.
+    let (mut bytes, mut files) = (0, 0);
+    let mut item = crate::ops::ProgressSnapshot::default();
+    let (mut total_bytes, mut total_files) = (None, None);
     for event in received.try_iter() {
+        if let Event::Started { bytes, files, .. } = &event {
+            (total_bytes, total_files) = (*bytes, *files);
+        }
+        if let Event::ItemDone { .. } = &event {
+            bytes += item.bytes;
+            files += item.files;
+            item = crate::ops::ProgressSnapshot::default();
+        }
         match event {
-            Event::Progress { progress, .. } => bytes = progress.bytes,
+            Event::Progress { progress, .. } => {
+                item = progress;
+                events.push(OperationEvent::TransferProgress {
+                    request_id: id,
+                    completed_items: completed.len(),
+                    completed_files: files + item.files,
+                    total_files,
+                    current_file: None,
+                    transferred_bytes: bytes + item.bytes,
+                    total_bytes,
+                    created_location: None,
+                });
+            }
             Event::ItemDone { index, outcome, .. } => match outcome {
                 Outcome::Done { name, changes } => {
                     // Legacy left out of the paste's undo an item whose original was deleted.
@@ -673,11 +697,11 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
                     events.push(OperationEvent::TransferProgress {
                         request_id: id,
                         completed_items: completed.len() + 1,
-                        completed_files: 0,
-                        total_files: None,
+                        completed_files: files,
+                        total_files,
                         current_file: None,
                         transferred_bytes: bytes,
-                        total_bytes: None,
+                        total_bytes,
                         // Nor is a folder merged into, which was there before.
                         created_location: (!request.move_sources
                             && undoable
@@ -694,7 +718,7 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
                         });
                     }
                     if undoable {
-                        completed.push(Location::local(&name));
+                        completed.push(Location::local(&items[index].source));
                     }
                 }
                 Outcome::Failed { error, changes } => {
@@ -715,11 +739,11 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
     events.push(OperationEvent::TransferProgress {
         request_id: id,
         completed_items: completed.len(),
-        completed_files: 0,
-        total_files: None,
+        completed_files: files,
+        total_files,
         current_file: None,
         transferred_bytes: bytes,
-        total_bytes: None,
+        total_bytes,
         created_location: None,
     });
     events.push(match failure {

@@ -26,14 +26,15 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `paste_results.rs` | 8 | 6 | 0 | 2 |
 | `paths.rs` | 3 | 2 | 0 | 1 |
 | `placement.rs` | 39 | 37 | 0 | 2 |
+| `progress.rs` | 15 | 8 | 0 | 7 |
 | `release.rs` | 5 | 0 | 0 | 5 |
 | `replacement.rs` | 28 | 25 | 0 | 3 |
 | `restore_safety.rs` | 28 | 28 | 0 | 0 |
 | `undo.rs` | 23 | 16 | 0 | 7 |
 | `trash_capabilities.rs` | 1 | 0 | 0 | 1 (ignored upstream too) |
 | `merge.rs` | 66 | 37 | 1 | 28 |
-| **So far** | **402** | **320** | **3** | **79** |
-| Remaining 3 files (`copy`, `progress`, `sync`), set aside to port by hand | 90 | – | – | – |
+| **So far** | **417** | **328** | **3** | **86** |
+| Remaining 2 files (`copy`, `sync`), set aside to port by hand | 75 | – | – | – |
 
 ## Ignored
 
@@ -134,6 +135,11 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `merge::a_merge_undo_cut_off_counts_an_item_as_not_attempted_only_when_it_left_it_whole`, `merge::a_kept_item_counts_as_failed_when_a_later_item_is_cut_off`, `merge::a_merge_undo_never_counts_an_item_it_could_not_check_as_undone`, `merge::a_merge_undo_cancelled_while_it_restores_an_original_ends_as_a_cancel`, `merge::a_merge_undo_cancelled_while_it_compares_an_item_leaves_it_whole`, `merge::a_merge_a_cancel_cuts_off_counts_as_failed_as_it_keeps_what_it_placed` | How legacy's undo and paste events counted items a cancel cut off. The journal counts a step done only once it is, and lists every other with why, a cancel included (`a_cancelled_merge_undo_reports_everything_not_attempted`). |
 | `merge::a_merge_from_a_location_without_paths_does_not_claim_provenance_for_undo`, `merge::a_merge_from_a_location_without_paths_keeps_unproven_copies_during_no_trash_undo` | GIO locations without paths: the remote adapter. |
 | `merge::a_merge_undo_drops_from_view_only_what_it_removed` | The app's view (Phase B). |
+| `progress::completed_gio_result_wins_a_cancellation_race`, `progress::local_task_batches_wait_for_every_started_task_after_an_operation_error` | GLib task helpers: the engine has neither. |
+| `progress::transfer_progress_aggregates_file_bytes_without_emitting_per_file`, `progress::copy_byte_progress_crosses_worker_threads` | Legacy's `TransferProgressTracker`; the engine counts in shared atomics (`ops::Progress`) that jobs report as `job.progress`, which the other progress tests check. |
+| `progress::fat32_copy_errors_without_english_size_text_skip_an_uncancellable_flush` | Legacy read GIO's error text to tell FAT32's size refusal from others; the engine refuses an oversized file before copying (`fat32_size_check_rejects_oversized_nested_file_before_copy`). |
+| `progress::bulk_copy_reports_bytes_before_each_file_completes` | Legacy's bulk path for many small items, the gap above. |
+| `progress::cancelling_between_moves_reports_completed_and_unattempted_sources` | Lock step, as `deletion::cancelling_between_deletions_reports_completed_and_unattempted_items`; covered by `tests/jobs.rs`. |
 | `create_entry::a_folder_reported_by_a_file_create_is_a_taken_name` | Legacy's private helper `name_taken`; its rule (a folder at the name refuses an exclusive file create with `EISDIR`, so the name is taken) is in `ops::create` and runs in the ported concurrency tests. |
 | `paste_results::a_cancel_that_cuts_off_an_item_counts_it_as_not_attempted` | Drives the GTK app's `Browser`. Cancelling is the job runner's (`tests/jobs.rs`: items not begun are `NotAttempted`). |
 | `paste_results::only_a_cut_off_between_local_locations_counts_as_not_attempted` | Legacy's rule for remote (`sftp://`) ends of a cut-off paste: the remote adapter. |
@@ -257,6 +263,9 @@ ported with a reason. This list must be empty, or every entry justified, before 
   as left.
 - **Fixed:** undoing a copy with a Trash checked only that it was still the same item, so a copy the user had
   edited since went to the Trash. A copy changed since now stays in place and is reported, as legacy did.
+- **Added:** a batch measures its items before writing (`ops::measure`), and `job.started` says how much it will
+  write (`totalBytes`, `totalFiles`). An item holding a file too large for its destination (FAT32's 4 GiB) fails at
+  once, naming the file, where before the copy ran until the drive refused it at 4 GiB.
 - **Open:** undo of created folders without a Trash (see above).
 - **Open:** a bulk path for many small items; `rename` and `create` on the protocol; a paste-planning call.
 

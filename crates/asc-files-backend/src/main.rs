@@ -677,7 +677,15 @@ fn special_kind(kind: SpecialKind) -> &'static str {
 fn notification(event: Event) -> Value {
     let (method, params) = match event {
         Event::Queued { job, ahead } => ("job.queued", json!({"job": id(job), "ahead": ahead})),
-        Event::Started { job, total } => ("job.started", json!({"job": id(job), "total": total})),
+        Event::Started {
+            job,
+            total,
+            bytes,
+            files,
+        } => (
+            "job.started",
+            json!({"job": id(job), "total": total, "totalBytes": bytes, "totalFiles": files}),
+        ),
         Event::Progress {
             job,
             item,

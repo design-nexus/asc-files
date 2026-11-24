@@ -120,13 +120,13 @@ pub enum Outcome {
 #[derive(Debug)]
 pub enum Event {
     /// The batch waits for `ahead` batches writing to the same drive.
-    Queued {
-        job: JobId,
-        ahead: usize,
-    },
+    Queued { job: JobId, ahead: usize },
+    /// `bytes` and `files` are what the items hold, where every one could be measured.
     Started {
         job: JobId,
         total: usize,
+        bytes: Option<u64>,
+        files: Option<usize>,
     },
     Progress {
         job: JobId,
@@ -211,9 +211,35 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
     let _turn = lanes().wait_turn(lane_of(&request), job, cancel, |ahead| {
         send(Event::Queued { job, ahead });
     });
+    // Measured first, so a client can show how much is left, and so a file the destination
+    // cannot hold refuses its item before anything is written.
+    let largest = crate::adapters::local_operations::mount_profile::largest_file(&request.into);
+    let measured: Vec<Result<Option<ops::Measured>, Error>> = request
+        .items
+        .iter()
+        .map(|item| {
+            if item.action.removes() {
+                return Ok(None);
+            }
+            // Only data that reaches the destination's drive can be too large for it.
+            let crossing = !crate::adapters::local_operations::mount_profile::on_mount_of(
+                &item.source,
+                &request.into,
+            );
+            ops::measure(&item.source, largest.filter(|_| crossing), cancel)
+        })
+        .collect();
+    let total = |pick: fn(&ops::Measured) -> u64| -> Option<u64> {
+        measured.iter().try_fold(0u64, |sum, item| match item {
+            Ok(Some(item)) => Some(sum.saturating_add(pick(item))),
+            Ok(None) | Err(_) => None,
+        })
+    };
     send(Event::Started {
         job,
         total: request.items.len(),
+        bytes: total(|item| item.bytes),
+        files: total(|item| item.files as u64).and_then(|files| usize::try_from(files).ok()),
     });
     let writes = request.items.iter().any(|item| !item.action.removes());
     let durable = writes
@@ -240,8 +266,20 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
     // One wait for files still open elsewhere covers the whole batch, as legacy's did.
     let deadline = crate::adapters::local_operations::leftovers::Deadline::default();
     for (index, item) in request.items.iter().enumerate() {
+        let refused = measured[index]
+            .as_ref()
+            .err()
+            .filter(|error| error.kind() != crate::error::ErrorKind::Cancelled);
         let (outcome, step) = if cancel.is_cancelled() {
             (Outcome::NotAttempted, Vec::new())
+        } else if let Some(error) = refused {
+            (
+                Outcome::Failed {
+                    error: error.clone(),
+                    changes: Changes::default(),
+                },
+                Vec::new(),
+            )
         } else {
             run_item(
                 job,

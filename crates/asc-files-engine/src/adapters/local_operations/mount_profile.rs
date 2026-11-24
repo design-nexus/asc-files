@@ -30,6 +30,24 @@ use crate::{
     services::{IdentityTraits, InodeNumbers, NameMode},
 };
 
+/// Whether `item` is on the mount that holds `folder`, as the engine's filesystem sees it.
+pub(crate) fn on_mount_of(item: &std::path::Path, folder: &std::path::Path) -> bool {
+    let fs = super::fs_ops::fs();
+    let open = |path: &std::path::Path| super::native_fs::open_local_parent_directory(path).ok();
+    match (item.parent().and_then(open), open(folder)) {
+        (Some(item), Some(folder)) => fs.mount_key(item.as_fd()) == fs.mount_key(folder.as_fd()),
+        _ => false,
+    }
+}
+
+/// The largest file the drive holding `folder` can store, where it has such a limit (FAT32).
+pub(crate) fn largest_file(folder: &std::path::Path) -> Option<u64> {
+    let dir = super::native_fs::open_local_parent_directory(folder).ok()?;
+    known_mount(super::fs_ops::fs(), dir.as_fd())
+        .1
+        .max_file_size
+}
+
 pub(super) fn known_mount(fs: &dyn FsOps, dir: BorrowedFd<'_>) -> (MountKey, MountCapabilities) {
     let key = fs.mount_key(dir);
     (key, known(fs, dir, key))

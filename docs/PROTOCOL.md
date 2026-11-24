@@ -60,7 +60,7 @@ Batches writing to the same drive run one after another, in the order they were 
 wait sends `job.queued {job, ahead}` before `job.started`. Batches for different drives run side by side.
 
 `names: "fix"` saves a name the destination drive cannot store under the closest one it can; `"keep"` fails such
-an item instead (meant for undo). Notifications: `job.started {job, total}`, `job.progress {job, item, bytes, files}`,
+an item instead (meant for undo). Notifications: `job.started {job, total, totalBytes, totalFiles}`, `job.progress {job, item, bytes, files}`,
 `job.itemDone {job, index, outcome}`, `job.finished {job, done, failed, notAttempted, cancelled, undo, durable, settled?}`, where `undo` is the batch's
 history entry, or `null` when nothing it did can be undone (with `undoError` if the history could not be
 written), and for a durable batch `settled` says whether the drive confirmed everything was written
@@ -83,6 +83,12 @@ name, never off its drive or across a bind mount or subvolume boundary, and neve
 destination the user confirmed, it is refused if the record now says otherwise. Where no rename can place it, it
 is copied and the Trash copy deleted only once the copy is on the drive; entries left in the Trash (changed
 meanwhile, or undeletable) are its `kept`. Not filed for undo.
+
+Before anything is written, a batch measures what its items hold, without following links: `totalBytes` and
+`totalFiles` (everything but folders) are `null` when an item could not be measured, and for a batch that only
+trashes or deletes. An item holding a file larger than its destination drive can store (FAT32: 4 GiB) fails at
+once with a message naming the file, unless it is already on that drive; the others go ahead. `job.progress`
+counts each item on its own.
 
 Items may also take `name` (the name a conflict prompt offered; one plain name), and moves take `conflict`
 `"fail"`, `"keepBoth"` or `"replace"`; a `merge` item with `move: true` merges by moving.
