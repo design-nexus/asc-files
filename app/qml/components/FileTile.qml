@@ -15,7 +15,11 @@ Rectangle {
     required property bool selected
     property int iconSize: 64
 
+    property bool editing: false
+
     signal activated()
+    signal renameAccepted(string name)
+    signal renameCancelled()
     signal clicked(int modifiers)
 
     radius: 11
@@ -47,7 +51,18 @@ Rectangle {
                                     : "M4 2h5l3 3v9H4zM9 2v3h3"
             }
         }
+        NameEditor {
+            visible: tile.editing
+            Layout.fillWidth: true
+            original: tile.name
+            isFolder: tile.isFolder
+            horizontalAlignment: TextInput.AlignHCenter
+            onVisibleChanged: if (visible) begin()
+            onCommitted: (name) => tile.renameAccepted(name)
+            onCancelled: tile.renameCancelled()
+        }
         Text {
+            visible: !tile.editing
             Layout.fillWidth: true
             Layout.fillHeight: true
             text: tile.loaded ? tile.name : ""

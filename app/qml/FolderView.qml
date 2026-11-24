@@ -12,6 +12,7 @@ Item {
     id: view
 
     required property var browser
+    required property var transfers
     readonly property var folderModel: browser ? browser.folderModel : null
     readonly property int mode: browser ? browser.view : 0
     readonly property int selectionCount: folderModel ? folderModel.selectionCount : 0
@@ -19,6 +20,32 @@ Item {
         const items = qsTr("%n items", "", list.count)
         return selectionCount > 0 ? items + " · " + qsTr("%n selected", "", selectionCount) : items
     }
+    // The row whose name is being edited, or -1.
+    property int renamingRow: -1
+    signal notice(string message)
+
+    function startRename() {
+        const target = mode === 1 ? grid : list
+        if (folderModel.selectionCount === 1 && target.currentIndex >= 0 && folderModel.isSelected(target.currentIndex))
+            renamingRow = target.currentIndex
+    }
+    // Starts a drag of the selection (or `row`) from `item`, carrying file URIs.
+    function startDrag(item, row) {
+        item.Drag.mimeData = { "text/uri-list": transfers.dragUris(folderModel, row) }
+        item.Drag.active = true
+    }
+    function finishRename(name) {
+        const row = renamingRow
+        renamingRow = -1
+        if (name.length > 0) folderModel.rename(row, name)
+        focusList()
+    }
+    Connections {
+        target: view.folderModel
+        function onFailed(message) { view.notice(message) }
+        function onFolderChanged() { view.renamingRow = -1 }
+    }
+
     // List columns that give way as the view narrows.
     readonly property bool showGap: list.width >= 1000
     readonly property bool showMode: list.width >= 720
@@ -49,6 +76,14 @@ Item {
     Keys.onPressed: (event) => {
         if (event.matches(StandardKey.SelectAll)) { folderModel.selectAll(); event.accepted = true }
         else if (event.key === Qt.Key_Escape) { folderModel.clearSelection(); event.accepted = true }
+        else if (event.key === Qt.Key_F2 && mode !== 2) { startRename(); event.accepted = true }
+    }
+
+    // A drop anywhere else goes into the folder shown.
+    DropArea {
+        anchors.fill: parent
+        enabled: view.mode !== 2
+        onDropped: (drop) => { if (view.transfers.dropHere(drop.urls, view.folderModel)) drop.accept() }
     }
 
     // List
@@ -124,6 +159,23 @@ Item {
                 showGap: view.showGap
                 showMode: view.showMode
                 showKind: view.showKind
+                id: rowItem
+                editing: index === view.renamingRow
+                Drag.dragType: Drag.Automatic
+                Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
+                DragHandler {
+                    target: null
+                    enabled: !rowItem.editing
+                    onActiveChanged: active ? view.startDrag(rowItem, rowItem.index) : (rowItem.Drag.active = false)
+                }
+                DropArea {
+                    anchors.fill: parent
+                    enabled: rowItem.isFolder
+                    onDropped: (drop) => { if (view.transfers.dropInto(drop.urls, view.folderModel, rowItem.index)) drop.accept() }
+                    Rectangle { anchors.fill: parent; radius: Theme.radius; color: "transparent"; border.width: parent.containsDrag ? 1 : 0; border.color: Theme.accent }
+                }
+                onRenameAccepted: (name) => view.finishRename(name)
+                onRenameCancelled: { view.renamingRow = -1; view.focusList() }
                 onClicked: (modifiers) => { list.currentIndex = index; view.click(view.folderModel, index, modifiers); list.forceActiveFocus() }
                 onActivated: if (isFolder) view.browser.goRow(index)
             }
@@ -176,6 +228,23 @@ Item {
         delegate: FileTile {
             width: GridView.view.cellWidth - 8
             height: GridView.view.cellHeight - 8
+            id: tileItem
+            editing: index === view.renamingRow
+            Drag.dragType: Drag.Automatic
+            Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
+            DragHandler {
+                target: null
+                enabled: !tileItem.editing
+                onActiveChanged: active ? view.startDrag(tileItem, tileItem.index) : (tileItem.Drag.active = false)
+            }
+            DropArea {
+                anchors.fill: parent
+                enabled: tileItem.isFolder
+                onDropped: (drop) => { if (view.transfers.dropInto(drop.urls, view.folderModel, tileItem.index)) drop.accept() }
+                Rectangle { anchors.fill: parent; radius: 11; color: "transparent"; border.width: parent.containsDrag ? 1 : 0; border.color: Theme.accent }
+            }
+            onRenameAccepted: (name) => view.finishRename(name)
+            onRenameCancelled: { view.renamingRow = -1; view.focusList() }
             onClicked: (modifiers) => { grid.currentIndex = index; view.click(view.folderModel, index, modifiers); grid.forceActiveFocus() }
             onActivated: if (isFolder) view.browser.goRow(index)
         }

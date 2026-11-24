@@ -109,6 +109,10 @@ public:
     Q_INVOKABLE void selectRows(const QList<int> &rows, bool add);
     Q_INVOKABLE void selectAll();
     Q_INVOKABLE void clearSelection();
+
+    /// Renames the item at `row` to `name`, as typed: refused, with the reason, where its drive
+    /// would store another name or the name is taken. The item stays selected under its new name.
+    Q_INVOKABLE void rename(int row, const QString &name);
     /// The names selected among the rows that are here (all of them unless "all" is selected in
     /// a folder not fully read).
     QList<QByteArray> selectedNames() const;
@@ -128,6 +132,9 @@ signals:
     /// The folder is listed and its count known.
     void opened(int count);
     void selectionChanged();
+    /// An operation on this folder was refused; `message` says why, for the user.
+    void failed(const QString &message);
+    void renamed(const QString &name);
     /// The folder went (deleted, moved away or unmounted); the model moved to `nearest`.
     void folderLeft(const QString &folder, const QString &nearest, bool unmounted);
 

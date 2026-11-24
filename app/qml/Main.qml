@@ -18,6 +18,7 @@ ApplicationWindow {
     required property var trash
     required property var downloads
     required property var jobModel
+    required property var transfers
     required property var backend
 
     readonly property var browser: tabs.current
@@ -197,6 +198,13 @@ ApplicationWindow {
                                 keys: ["asc-files-place"]
                                 onDropped: (event) => window.places.moveFolder(event.source.key, placeRow.model.key)
                             }
+                            // Files dropped on a folder or drive go there.
+                            DropArea {
+                                anchors.fill: parent
+                                enabled: placeRow.model.path.length > 0
+                                keys: ["text/uri-list"]
+                                onDropped: (event) => { if (window.transfers.drop(event.urls, placeRow.model.path)) event.accept() }
+                            }
                         }
                     }
                 }
@@ -257,7 +265,7 @@ ApplicationWindow {
                         Layout.fillHeight: true
                         currentIndex: window.page
 
-                        FolderView { browser: window.browser }
+                        FolderView { browser: window.browser; transfers: window.transfers; onNotice: (message) => notice.show(message) }
                         OverviewPage {
                             browser: window.browser
                             places: window.places
@@ -299,6 +307,27 @@ ApplicationWindow {
                 }
             }
         }
+    }
+
+    Connections {
+        target: window.transfers
+        function onStarted(message) { notice.show(message) }
+    }
+    Connections {
+        target: window.jobModel
+        function onFinished(job, summary) {
+            if (summary.failed > 0)
+                notice.show(window.jobModel.errorOf(job))
+        }
+    }
+
+    Notice {
+        id: notice
+        objectName: "notice"
+        z: 50
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 28
     }
 
     // What a sidebar folder being dragged to a new place shows under the pointer.

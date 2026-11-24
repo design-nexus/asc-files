@@ -26,7 +26,12 @@ Rectangle {
     property bool showMode: true
     property bool showKind: true
 
+    /// The name is being edited in place.
+    property bool editing: false
+
     signal activated()
+    signal renameAccepted(string name)
+    signal renameCancelled()
     /// A click, with the keys held (Ctrl adds or removes, Shift extends).
     signal clicked(int modifiers)
 
@@ -65,7 +70,19 @@ Rectangle {
                     path: row.isFolder ? "M2 4.5h4l1.5 1.5H14v6.5H2z" : "M4 2h5l3 3v9H4zM9 2v3h3"
                 }
             }
+            NameEditor {
+                id: editor
+                visible: row.editing
+                Layout.fillWidth: true
+                Layout.preferredHeight: 26
+                original: row.name
+                isFolder: row.isFolder
+                onVisibleChanged: if (visible) begin()
+                onCommitted: (name) => row.renameAccepted(name)
+                onCancelled: row.renameCancelled()
+            }
             Text {
+                visible: !row.editing
                 Layout.fillWidth: true
                 text: row.loaded ? row.name : ""
                 elide: Text.ElideMiddle

@@ -9,6 +9,7 @@
 #include "models/PlacesModel.h"
 #include "models/RecentModel.h"
 #include "models/TabModel.h"
+#include "models/Transfers.h"
 #include "models/TrashModel.h"
 
 #include <QCommandLineParser>
@@ -46,6 +47,7 @@ int main(int argc, char *argv[]) {
     downloads.setNewestFirst(true);
     downloads.openPath(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
     JobModel jobs(&backend);
+    Transfers transfers(&jobs);
     QObject::connect(&backend, &BackendClient::failed, &app, [](const QString &why) {
         qCritical().noquote() << why;
     });
@@ -58,6 +60,7 @@ int main(int argc, char *argv[]) {
                                  {QStringLiteral("trash"), QVariant::fromValue(&trash)},
                                  {QStringLiteral("downloads"), QVariant::fromValue(&downloads)},
                                  {QStringLiteral("jobModel"), QVariant::fromValue(&jobs)},
+                                 {QStringLiteral("transfers"), QVariant::fromValue(&transfers)},
                                  {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
                      Qt::QueuedConnection);

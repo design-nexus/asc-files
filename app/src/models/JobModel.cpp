@@ -64,6 +64,11 @@ int JobModel::running() const {
     return int(std::count_if(m_jobs.cbegin(), m_jobs.cend(), [](const Job &job) { return job.state != Finished; }));
 }
 
+QString JobModel::errorOf(qint64 job) const {
+    const int row = rowOf(job);
+    return row >= 0 ? m_jobs.at(row).error : QString();
+}
+
 int JobModel::rowOf(qint64 job) const {
     for (int row = 0; row < m_jobs.size(); ++row) {
         if (m_jobs.at(row).id == job) {

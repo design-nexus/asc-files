@@ -9,6 +9,7 @@
 #include "models/JobModel.h"
 #include "models/PlacesModel.h"
 #include "models/TabModel.h"
+#include "models/Transfers.h"
 
 #include <QFile>
 #include <QQmlApplicationEngine>
@@ -47,6 +48,7 @@ private slots:
         TrashModel trash(&backend);
         FolderModel downloads(&backend);
         JobModel jobs(&backend);
+        Transfers transfers(&jobs);
         tabs.openTab(dir.path());
         FolderModel &folders = *tabs.current()->folderModel();
         QSignalSpy opened(&folders, &FolderModel::opened);
@@ -58,6 +60,7 @@ private slots:
                                      {"trash", QVariant::fromValue(&trash)},
                                      {"downloads", QVariant::fromValue(&downloads)},
                                      {"jobModel", QVariant::fromValue(&jobs)},
+                                     {"transfers", QVariant::fromValue(&transfers)},
                                      {"backend", QVariant::fromValue(&backend)}});
         engine.loadFromModule("AscFiles", "Main");
         QCOMPARE(engine.rootObjects().size(), 1);

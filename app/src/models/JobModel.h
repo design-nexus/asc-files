@@ -46,6 +46,8 @@ public:
     Q_INVOKABLE void cancel(qint64 job);
     /// Forgets the finished jobs.
     Q_INVOKABLE void clearFinished();
+    /// The first failure's message of `job`, or empty.
+    Q_INVOKABLE QString errorOf(qint64 job) const;
 
     int running() const;
     int rowCount(const QModelIndex &parent = {}) const override;

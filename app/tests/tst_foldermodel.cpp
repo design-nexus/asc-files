@@ -253,6 +253,35 @@ private slots:
         QTRY_VERIFY(loadAll(model) && names(model) == (QStringList{"c-medium", "b-small", "a-large"}));
     }
 
+    void renamingKeepsTheItemSelected() {
+        QTemporaryDir dir;
+        const QByteArray root = QFile::encodeName(dir.path());
+        touch(root + "/draft.txt");
+        touch(root + "/taken.txt");
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        FolderModel model(&backend);
+        QSignalSpy opened(&model, &FolderModel::opened);
+        QSignalSpy renamed(&model, &FolderModel::renamed);
+        QSignalSpy failed(&model, &FolderModel::failed);
+        model.open(root);
+        QVERIFY(opened.wait(10000));
+        QVERIFY(loadAll(model));
+        model.select(0);
+        model.rename(0, QStringLiteral("final.txt"));
+        QVERIFY(renamed.wait(10000));
+        QVERIFY(QFile::exists(dir.filePath("final.txt")));
+        QCOMPARE(model.selectedNames(), QList<QByteArray>{"final.txt"});
+        QTRY_VERIFY(loadAll(model) && names(model).contains("final.txt"));
+        const int row = int(names(model).indexOf("final.txt"));
+        QVERIFY(model.isSelected(row));
+        // A name that is taken is refused, with the reason.
+        model.rename(row, QStringLiteral("taken.txt"));
+        QVERIFY(failed.wait(10000));
+        QVERIFY2(failed.first().first().toString().contains("already exists"), qPrintable(failed.first().first().toString()));
+        QVERIFY(QFile::exists(dir.filePath("final.txt")));
+    }
+
     void modesShowOctalAndSymbolic() {
         QTemporaryDir dir;
         const QByteArray root = QFile::encodeName(dir.path());

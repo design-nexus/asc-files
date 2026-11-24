@@ -561,3 +561,28 @@ QList<QByteArray> FolderModel::selectedNames() const {
     }
     return names;
 }
+
+void FolderModel::rename(int row, const QString &name) {
+    const QByteArray from = rawName(row);
+    if (from.isEmpty() || name.isEmpty() || QFile::encodeName(name) == from) {
+        return;
+    }
+    const QByteArray folder = m_folder;
+    m_backend->call(QStringLiteral("ops.rename"), {{"path", Wire::encode(Wire::join(folder, from))}, {"name", name}}, this,
+                    [this, folder](const QJsonValue &result, const BackendError &error) {
+                        if (!error.isNull()) {
+                            emit failed(error.message);
+                            return;
+                        }
+                        if (folder != m_folder) {
+                            return;
+                        }
+                        // The listing hears of the change on its own; the selection moves with it.
+                        const QByteArray now = Wire::baseName(Wire::decode(result.toObject().value(QStringLiteral("path"))));
+                        m_selected = {now};
+                        m_pendingRows.clear();
+                        m_allSelected = false;
+                        selectionTouched();
+                        emit renamed(Wire::display(now));
+                    });
+}
