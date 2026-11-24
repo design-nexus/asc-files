@@ -31,6 +31,8 @@ class FolderModel : public QAbstractListModel {
     Q_PROPERTY(int selectionCount READ selectionCount NOTIFY selectionChanged)
     /// Originals an interrupted operation set aside here, by name, for the leftovers notice.
     Q_PROPERTY(QStringList leftovers READ leftovers NOTIFY leftoversChanged)
+    /// Text typed over the folder: only names it matches are listed.
+    Q_PROPERTY(QString filter READ filter WRITE setFilter NOTIFY filterChanged)
     Q_PROPERTY(QString sortKey READ sortKey NOTIFY sortChanged)
     Q_PROPERTY(bool sortDescending READ sortDescending NOTIFY sortChanged)
     Q_PROPERTY(bool foldersFirst READ foldersFirst NOTIFY sortChanged)
@@ -89,6 +91,8 @@ public:
     qint64 generation() const { return m_generation; }
     bool showHidden() const { return m_showHidden; }
     void setShowHidden(bool show);
+    QString filter() const { return m_filter; }
+    void setFilter(const QString &filter);
     QString sortKey() const { return m_sortKey; }
     bool sortDescending() const { return m_sortDescending; }
     bool foldersFirst() const { return m_foldersFirst; }
@@ -139,6 +143,7 @@ signals:
     void generationChanged();
     void showHiddenChanged();
     void sortChanged();
+    void filterChanged();
     /// The folder is listed and its count known.
     void opened(int count);
     void selectionChanged();
@@ -171,6 +176,7 @@ private:
     bool m_loading = false;
     bool m_followsChanges = false;
     bool m_showHidden = false;
+    QString m_filter;
     QString m_sortKey = QStringLiteral("name");
     bool m_sortDescending = false;
     bool m_foldersFirst = true;

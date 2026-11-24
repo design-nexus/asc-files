@@ -244,6 +244,16 @@ bool PlacesModel::hideable(const QString &key) {
     return !key.startsWith(QLatin1String("pinned:")) && !key.startsWith(QLatin1String("drive:"));
 }
 
+QStringList PlacesModel::searchRoots() const {
+    QStringList roots{QDir::homePath()};
+    for (const Place &drive : drives()) {
+        if (drive.path != QLatin1String("/") && !drive.path.startsWith(QDir::homePath() + u'/')) {
+            roots.append(drive.path);
+        }
+    }
+    return roots;
+}
+
 void PlacesModel::refreshDrives() {
     const QList<Place> now = drives();
     // The drives are the last rows; only they are replaced, so the view keeps its place.

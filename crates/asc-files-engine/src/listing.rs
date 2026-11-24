@@ -120,6 +120,8 @@ pub struct Listing {
     entries: Vec<Entry>,
     /// What interrupted operations left here (originals set aside, probes), hidden or not.
     leftovers: Vec<std::ffi::OsString>,
+    /// Text typed over the folder: only the names it matches are listed.
+    filter: String,
 }
 
 impl Listing {
@@ -130,6 +132,7 @@ impl Listing {
             generation: 0,
             entries: Vec::new(),
             leftovers: Vec::new(),
+            filter: String::new(),
         };
         listing.refresh()?;
         Ok(listing)
@@ -138,6 +141,11 @@ impl Listing {
     /// Reads the folder again; the listing keeps what it had if the read fails.
     pub fn refresh(&mut self) -> Result<(), Error> {
         (self.entries, self.leftovers) = read_entries(&self.folder, &self.options)?;
+        let mut filter = crate::search::Filter::new(&self.filter);
+        if !filter.is_empty() {
+            self.entries
+                .retain(|entry| filter.matches(&entry.name.to_string_lossy()));
+        }
         self.generation += 1;
         Ok(())
     }
@@ -146,6 +154,17 @@ impl Listing {
     pub fn set_options(&mut self, options: Options) -> Result<(), Error> {
         let previous = std::mem::replace(&mut self.options, options);
         self.refresh().inspect_err(|_| self.options = previous)
+    }
+
+    /// Lists only the names `text` matches (fuzzily; `!word` leaves out), reading the folder
+    /// again; empty lists them all.
+    pub fn set_filter(&mut self, text: &str) -> Result<(), Error> {
+        let previous = std::mem::replace(&mut self.filter, text.to_owned());
+        self.refresh().inspect_err(|_| self.filter = previous)
+    }
+
+    pub fn filter(&self) -> &str {
+        &self.filter
     }
 
     pub fn folder(&self) -> &Path {

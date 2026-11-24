@@ -45,9 +45,9 @@ rows came from, the view asks for its windows again.
 
 | Method | Params | Result |
 |---|---|---|
-| `list.open` | `path`, `showHidden?` (false), `sort?: {key: "name"\|"size"\|"modified", descending?, foldersFirst?}` (name, ascending, folders first) | `{listing, generation, count, followsChanges, leftovers}` |
+| `list.open` | `path`, `filter?`, `showHidden?` (false), `sort?: {key: "name"\|"size"\|"modified", descending?, foldersFirst?}` (name, ascending, folders first) | `{listing, generation, count, followsChanges, leftovers}` |
 | `list.window` | `listing, start, count` | `{listing, generation, start, rows}` |
-| `list.reorder` | `listing`, and any of `showHidden`, `sort` (what is left out keeps its value) | `{generation, count, leftovers}` |
+| `list.reorder` | `listing`, and any of `showHidden`, `sort`, `filter` (what is left out keeps its value) | `{generation, count, leftovers}` |
 | `list.refresh` | `listing` | `{generation, count, leftovers}` |
 | `list.close` | `listing` | `null` |
 
@@ -126,6 +126,28 @@ moved source is deleted, say), and `job.flushing` says a durable batch waits for
 
 Items may also take `name` (the name a conflict prompt offered; one plain name), and moves take `conflict`
 `"fail"`, `"keepBoth"` or `"replace"`; a `merge` item with `move: true` merges by moving.
+
+`filter` lists only the entries whose names match the text typed over the folder, as a search matches names
+(below); an empty filter lists them all.
+
+## Search
+
+| Method | Params | Result |
+|---|---|---|
+| `search.start` | `roots`, `query`, `hidden?` (false), `limit?` (100) | `{search}` |
+| `search.cancel` | `search` | `null` |
+
+A search walks `roots` for entries whose names match `query`, with no index, as legacy Files did. It never
+follows links or crosses onto another drive, skips hidden entries unless `hidden`, and leaves out what
+`.gitignore` files leave out and the trees programs generate (caches, `node_modules`, `target`, package stores).
+Each word of the query is matched fuzzily against an entry's name, or failing that its path below the root,
+in fzf's syntax: `!word` leaves out what matches it, `^word` and `word$` anchor it, `'word` asks for it exactly.
+A match in the name outranks one in the path only; an exact name ranks first. It stops at 200,000 entries,
+depth 64 or 10 seconds.
+
+Notifications: `search.found {search, items}` with new matches as the walk goes (every 50 ms at most);
+`search.finished {search, items, matched, entries, truncated, cancelled}` with the best `limit`, best first.
+Each item is `{path, isFolder, size, modified, score}`. `truncated` says a limit stopped it.
 
 ## Rename and create
 

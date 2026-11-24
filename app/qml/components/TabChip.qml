@@ -11,6 +11,8 @@ AbstractButton {
     id: tab
 
     property bool current: false
+    /// A tab can be closed; the same chip used as a choice cannot.
+    property bool closable: true
     signal closeRequested()
 
     implicitHeight: 30
@@ -47,7 +49,7 @@ AbstractButton {
                 Layout.maximumWidth: 220
             }
             Icon {
-                visible: tab.current
+                visible: tab.current && tab.closable
                 path: "m4.5 4.5 7 7M11.5 4.5l-7 7"
                 color: Theme.textMute
                 size: 12

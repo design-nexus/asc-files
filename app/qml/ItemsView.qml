@@ -27,6 +27,8 @@ ColumnLayout {
     signal restoreRequested(int row)
     signal deleteRequested(int row)
     signal emptyRequested()
+    /// A file was double-clicked or Entered: the window opens it.
+    signal fileActivated(string path)
 
     function focusList() { list.forceActiveFocus() }
     readonly property string currentPath: selectedRow >= 0 && items ? (items.count, items.pathAt(selectedRow)) : ""
@@ -36,8 +38,11 @@ ColumnLayout {
         list.positionViewAtIndex(selectedRow, ListView.Contain)
     }
     function open(row) {
-        if (opensFolders && items.isFolderAt(row)) {
-            browser.goPath(items.pathAt(row))
+        if (row < 0) return
+        if (items.isFolderAt(row)) {
+            if (opensFolders) browser.goPath(items.pathAt(row))
+        } else if (opensFolders) {
+            fileActivated(items.pathAt(row))
         }
     }
 

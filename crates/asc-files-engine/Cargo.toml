@@ -8,7 +8,9 @@ publish = false
 description = "The Files copy, move and trash engine, with no GLib or Qt dependency."
 
 [dependencies]
+frizbee = "0.13"
 futures-channel = "0.3.31"
+ignore = "0.4.34"
 libc = "0.2"
 ring = "0.17.14"
 rust-i18n = "4.2.4"

@@ -61,6 +61,7 @@ pub enum Call {
     ListOpen {
         path: PathBuf,
         options: OptionsPatch,
+        filter: Option<String>,
     },
     ListWindow {
         listing: u64,
@@ -70,6 +71,7 @@ pub enum Call {
     ListReorder {
         listing: u64,
         options: OptionsPatch,
+        filter: Option<String>,
     },
     ListRefresh {
         listing: u64,
@@ -91,6 +93,15 @@ pub enum Call {
     JobsPlan {
         into: PathBuf,
         sources: Vec<PathBuf>,
+    },
+    SearchStart {
+        roots: Vec<PathBuf>,
+        query: String,
+        hidden: bool,
+        limit: Option<u64>,
+    },
+    SearchCancel {
+        search: u64,
     },
     Rename {
         path: PathBuf,
@@ -191,6 +202,7 @@ fn call(method: &str, params: &Params) -> Result<Call, Fault> {
         "list.open" => Call::ListOpen {
             path: params.path("path")?,
             options: options(params)?,
+            filter: params.optional("filter", Params::string_of)?,
         },
         "list.window" => Call::ListWindow {
             listing: params.u64("listing")?,
@@ -200,6 +212,7 @@ fn call(method: &str, params: &Params) -> Result<Call, Fault> {
         "list.reorder" => Call::ListReorder {
             listing: params.u64("listing")?,
             options: options(params)?,
+            filter: params.optional("filter", Params::string_of)?,
         },
         "list.refresh" => Call::ListRefresh {
             listing: params.u64("listing")?,
@@ -225,6 +238,17 @@ fn call(method: &str, params: &Params) -> Result<Call, Fault> {
             sources: params.array("sources", |at, value| {
                 wire::absolute_path(value).ok_or_else(|| not_a_path(at))
             })?,
+        },
+        "search.start" => Call::SearchStart {
+            roots: params.array("roots", |at, value| {
+                wire::absolute_path(value).ok_or_else(|| not_a_path(at))
+            })?,
+            query: params.string("query")?,
+            hidden: params.optional("hidden", Params::bool_of)?.unwrap_or(false),
+            limit: params.optional("limit", Params::u64_of)?,
+        },
+        "search.cancel" => Call::SearchCancel {
+            search: params.u64("search")?,
         },
         "ops.rename" => Call::Rename {
             path: params.path("path")?,

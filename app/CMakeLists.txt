@@ -22,6 +22,7 @@ qt_add_library(asc_files_core STATIC
     src/models/FolderViews.cpp src/models/FolderViews.h
     src/models/ItemListModel.cpp src/models/ItemListModel.h
     src/models/RecentModel.cpp src/models/RecentModel.h
+    src/models/SearchModel.cpp src/models/SearchModel.h
     src/models/TrashModel.cpp src/models/TrashModel.h
     src/models/PlacesModel.cpp src/models/PlacesModel.h
     src/models/TabModel.cpp src/models/TabModel.h
@@ -46,6 +47,7 @@ qt_add_qml_module(asc_files_qml
         qml/FolderView.qml
         qml/ItemsView.qml
         qml/OverviewPage.qml
+        qml/SearchPage.qml
         qml/Theme.qml
         qml/components/Badge.qml
         qml/components/Breadcrumb.qml
@@ -83,7 +85,7 @@ target_link_libraries(asc-files PRIVATE asc_files_core asc_files_qmlplugin Qt6::
 # Tests run against the real backend: ASC_FILES_BACKEND names it (scripts/app.sh builds it).
 enable_testing()
 set(ASC_FILES_BACKEND "" CACHE FILEPATH "The asc-files-backend binary the tests run")
-foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview)
+foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search)
     qt_add_executable(tst_${test} tests/tst_${test}.cpp)
     target_link_libraries(tst_${test} PRIVATE asc_files_core Qt6::Test)
     add_test(NAME ${test} COMMAND tst_${test})

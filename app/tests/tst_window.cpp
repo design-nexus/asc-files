@@ -4,6 +4,7 @@
 #include "models/Browser.h"
 #include "models/FavoritesModel.h"
 #include "models/RecentModel.h"
+#include "models/SearchModel.h"
 #include "models/TrashModel.h"
 #include "models/FolderModel.h"
 #include "models/JobModel.h"
@@ -54,6 +55,7 @@ private slots:
         Transfers transfers(&jobs);
         Operations ops(&backend, &jobs);
         Preview preview;
+        SearchModel search(&backend);
         tabs.openTab(dir.path());
         FolderModel &folders = *tabs.current()->folderModel();
         QSignalSpy opened(&folders, &FolderModel::opened);
@@ -70,6 +72,7 @@ private slots:
                                      {"transfers", QVariant::fromValue(&transfers)},
                                      {"ops", QVariant::fromValue(&ops)},
                                      {"preview", QVariant::fromValue(&preview)},
+                                     {"search", QVariant::fromValue(&search)},
                                      {"backend", QVariant::fromValue(&backend)}});
         engine.loadFromModule("AscFiles", "Main");
         QCOMPARE(engine.rootObjects().size(), 1);
@@ -135,6 +138,19 @@ private slots:
         tabs.current()->back();
         tabs.current()->back();
         QTRY_COMPARE(tabs.current()->page(), Browser::Folder);
+
+        // Typing in the search field searches, in the Search page.
+        auto *field = window->findChild<QQuickItem *>(QStringLiteral("searchField"));
+        QVERIFY(field);
+        field->forceActiveFocus();
+        for (const char key : {'a', '.', 'm'}) {
+            QTest::keyClick(window, key);
+        }
+        QTRY_COMPARE(tabs.current()->page(), Browser::Search);
+        QTRY_VERIFY_WITH_TIMEOUT(!search.running() && search.query() == "a.m", 10000);
+        tabs.current()->back();
+        QTRY_COMPARE(tabs.current()->page(), Browser::Folder);
+        field->setProperty("text", "");
 
         // Tiled narrow, the panel and its list stay inside the window.
         window->resize(800, 900);

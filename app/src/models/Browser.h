@@ -29,7 +29,7 @@ class Browser : public QObject {
     Q_PROPERTY(QString title READ title NOTIFY locationChanged)
     Q_PROPERTY(QString location READ location NOTIFY locationChanged)
 public:
-    enum Page { Folder, Overview, Recent, Favorites, Trash };
+    enum Page { Folder, Overview, Recent, Favorites, Trash, Search };
     Q_ENUM(Page)
 
     explicit Browser(BackendClient *backend, QObject *parent = nullptr);

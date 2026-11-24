@@ -62,6 +62,8 @@ public:
     /// holds now, it asks first (`undoBlocked`); `overwrite`, once confirmed, moves those to the
     /// Trash and goes ahead.
     Q_INVOKABLE void undo(bool overwrite = false);
+    /// Opens a file in the program the desktop opens its kind with.
+    Q_INVOKABLE void open(const QString &path);
     Q_INVOKABLE void redo();
     Q_INVOKABLE void refreshHistory();
 

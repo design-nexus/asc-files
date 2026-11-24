@@ -8,6 +8,7 @@
 #include "models/JobModel.h"
 #include "models/PlacesModel.h"
 #include "models/RecentModel.h"
+#include "models/SearchModel.h"
 #include "models/TabModel.h"
 #include "models/Transfers.h"
 #include "ops/Operations.h"
@@ -53,6 +54,7 @@ int main(int argc, char *argv[]) {
     Transfers transfers(&jobs);
     Operations ops(&backend, &jobs);
     Preview preview;
+    SearchModel search(&backend);
     QObject::connect(&backend, &BackendClient::failed, &app, [](const QString &why) {
         qCritical().noquote() << why;
     });
@@ -70,6 +72,7 @@ int main(int argc, char *argv[]) {
                                  {QStringLiteral("transfers"), QVariant::fromValue(&transfers)},
                                  {QStringLiteral("ops"), QVariant::fromValue(&ops)},
                                  {QStringLiteral("preview"), QVariant::fromValue(&preview)},
+                                 {QStringLiteral("search"), QVariant::fromValue(&search)},
                                  {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
                      Qt::QueuedConnection);

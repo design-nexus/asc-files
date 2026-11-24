@@ -100,6 +100,35 @@
       ],
       "additionalProperties": false
     },
+    "found": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "isFolder": {
+          "type": "boolean"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "modified": {
+          "type": "integer"
+        },
+        "score": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "isFolder",
+        "modified",
+        "path",
+        "score",
+        "size"
+      ],
+      "additionalProperties": false
+    },
     "renamed": {
       "type": "object",
       "properties": {
@@ -639,6 +668,8 @@
             "list.changed",
             "list.gone",
             "list.unmounted",
+            "search.found",
+            "search.finished",
             "job.queued",
             "job.started",
             "job.progress",
@@ -735,6 +766,9 @@
               },
               "required": [],
               "additionalProperties": false
+            },
+            "filter": {
+              "type": "string"
             }
           },
           "required": [
@@ -862,6 +896,9 @@
               },
               "required": [],
               "additionalProperties": false
+            },
+            "filter": {
+              "type": "string"
             }
           },
           "required": [
@@ -1280,6 +1317,65 @@
             "items"
           ],
           "additionalProperties": false
+        }
+      },
+      "search.start": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "roots": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/path"
+              }
+            },
+            "query": {
+              "type": "string"
+            },
+            "hidden": {
+              "type": "boolean"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "query",
+            "roots"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "search": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "search"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "search.cancel": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "search": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "search"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "null"
         }
       },
       "ops.rename": {
@@ -2025,6 +2121,64 @@
           "listing",
           "nearest",
           "path"
+        ],
+        "additionalProperties": false
+      },
+      "search.found": {
+        "type": "object",
+        "properties": {
+          "search": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/found"
+            }
+          }
+        },
+        "required": [
+          "items",
+          "search"
+        ],
+        "additionalProperties": false
+      },
+      "search.finished": {
+        "type": "object",
+        "properties": {
+          "search": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/found"
+            }
+          },
+          "matched": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "entries": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "cancelled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "cancelled",
+          "entries",
+          "items",
+          "matched",
+          "search",
+          "truncated"
         ],
         "additionalProperties": false
       },

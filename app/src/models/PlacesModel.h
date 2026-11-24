@@ -48,6 +48,8 @@ public:
     Q_INVOKABLE void unpin(const QString &path);
     Q_INVOKABLE bool isPinned(const QString &path) const;
     Q_INVOKABLE void refreshDrives();
+    /// Home and the mounted drives the user plugged in or mounted: where a search goes.
+    Q_INVOKABLE QStringList searchRoots() const;
 
     int mode() const;
     void setMode(int mode);

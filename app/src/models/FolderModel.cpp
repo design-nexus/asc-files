@@ -84,6 +84,11 @@ void FolderModel::close() {
 }
 
 void FolderModel::open(const QByteArray &path) {
+    // A filter belongs to its folder: another folder opens unfiltered.
+    if (path != m_folder && !m_filter.isEmpty()) {
+        m_filter.clear();
+        emit filterChanged();
+    }
     close();
     const quint64 opening = ++m_opening;
     m_folder = path;
@@ -103,6 +108,9 @@ void FolderModel::open(const QByteArray &path) {
     emit selectionChanged();
     QJsonObject params{{"path", Wire::encode(path)}, {"showHidden", m_showHidden}};
     params.insert(QStringLiteral("sort"), sortParams());
+    if (!m_filter.isEmpty()) {
+        params.insert(QStringLiteral("filter"), m_filter);
+    }
     m_backend->call(QStringLiteral("list.open"), params, this,
                     [this, opening](const QJsonValue &result, const BackendError &error) {
                         if (opening != m_opening) {
@@ -195,6 +203,15 @@ void FolderModel::setSort(const QString &key, bool descending, bool foldersFirst
     reorder();
 }
 
+void FolderModel::setFilter(const QString &filter) {
+    if (filter == m_filter) {
+        return;
+    }
+    m_filter = filter;
+    emit filterChanged();
+    reorder();
+}
+
 void FolderModel::setNewestFirst(bool newest) {
     if (newest) {
         setSort(QStringLiteral("modified"), true, false);
@@ -209,7 +226,7 @@ void FolderModel::reorder() {
     }
     const qint64 listing = m_listing;
     m_backend->call(QStringLiteral("list.reorder"),
-                    {{"listing", listing}, {"showHidden", m_showHidden}, {"sort", sortParams()}}, this,
+                    {{"listing", listing}, {"showHidden", m_showHidden}, {"sort", sortParams()}, {"filter", m_filter}}, this,
                     [this, listing](const QJsonValue &result, const BackendError &error) {
                         if (listing != m_listing || !error.isNull()) {
                             return;

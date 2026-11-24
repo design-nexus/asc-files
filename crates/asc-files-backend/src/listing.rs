@@ -38,6 +38,8 @@ enum Command {
     Reorder {
         id: Value,
         options: OptionsPatch,
+        /// New filter text, or None to keep the one it has.
+        filter: Option<String>,
     },
     Refresh {
         id: Value,
@@ -65,7 +67,13 @@ impl Listings {
     }
 
     /// Opens a listing of `folder`; its thread answers `id`.
-    pub(crate) fn open(&mut self, id: Value, folder: PathBuf, options: &OptionsPatch) {
+    pub(crate) fn open(
+        &mut self,
+        id: Value,
+        folder: PathBuf,
+        options: &OptionsPatch,
+        filter: Option<String>,
+    ) {
         let options = options.apply(Options::default());
         self.next += 1;
         let listing = self.next;
@@ -77,7 +85,7 @@ impl Listings {
             .spawn(move || {
                 run(
                     listing,
-                    (folder, options),
+                    (folder, options, filter.unwrap_or_default()),
                     (id, &out),
                     &readers,
                     (changes, commands),
@@ -101,8 +109,16 @@ impl Listings {
         id: Value,
         listing: u64,
         options: OptionsPatch,
+        filter: Option<String>,
     ) -> Result<(), Fault> {
-        self.send(listing, Command::Reorder { id, options })
+        self.send(
+            listing,
+            Command::Reorder {
+                id,
+                options,
+                filter,
+            },
+        )
     }
 
     pub(crate) fn refresh(&mut self, id: Value, listing: u64) -> Result<(), Fault> {
@@ -140,7 +156,7 @@ impl Listings {
 
 fn run(
     listing: u64,
-    (folder, opened_with): (PathBuf, Options),
+    (folder, opened_with, filter): (PathBuf, Options, String),
     (id, out): (Value, &Sender<Value>),
     readers: &Arc<Readers>,
     (changes, commands): (Sender<Command>, Receiver<Command>),
@@ -157,7 +173,12 @@ fn run(
     let watch = Watch::start(&folder, move |change| {
         let _ = changes.send(Command::Changed(change));
     });
-    let read = Listing::read(&folder, opened_with);
+    let read = Listing::read(&folder, opened_with).and_then(|mut listing| {
+        if !filter.is_empty() {
+            listing.set_filter(&filter)?;
+        }
+        Ok(listing)
+    });
     drop(reading);
     let mut current = match read {
         Ok(read) => read,
@@ -193,9 +214,17 @@ fn run(
                     })),
                 );
             }
-            Command::Reorder { id, options } => {
+            Command::Reorder {
+                id,
+                options,
+                filter,
+            } => {
                 let result = current
                     .set_options(options.apply(current.options()))
+                    .and_then(|()| match &filter {
+                        Some(text) if text != current.filter() => current.set_filter(text),
+                        _ => Ok(()),
+                    })
                     .map_err(Fault::from);
                 reply(id, result.map(|()| counted(&current)));
             }

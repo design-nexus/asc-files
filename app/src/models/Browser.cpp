@@ -50,6 +50,8 @@ QString Browser::title() const {
         return tr("Favorites");
     case Trash:
         return tr("Trash");
+    case Search:
+        return tr("Search");
     case Folder:
         break;
     }
@@ -138,6 +140,8 @@ QString Browser::saved() const {
         return QStringLiteral("page:favorites");
     case Trash:
         return QStringLiteral("page:trash");
+    case Search:
+        return QStringLiteral("page:search");
     case Folder:
         break;
     }
@@ -148,7 +152,8 @@ void Browser::restore(const QString &saved) {
     static const QHash<QString, Page> pages{{QStringLiteral("page:overview"), Overview},
                                             {QStringLiteral("page:recent"), Recent},
                                             {QStringLiteral("page:favorites"), Favorites},
-                                            {QStringLiteral("page:trash"), Trash}};
+                                            {QStringLiteral("page:trash"), Trash},
+                                            {QStringLiteral("page:search"), Search}};
     if (pages.contains(saved)) {
         goPage(pages.value(saved));
     } else if (saved.startsWith(u'/')) {

@@ -943,3 +943,63 @@ fn undo_asks_before_putting_back_over_a_newer_item() {
     backend.call("trash.delete", json!({"info": entry["info"]}), &mut notes);
     backend.call("shutdown", json!({}), &mut notes);
 }
+
+#[test]
+fn a_search_streams_what_it_finds_and_a_listing_filters() {
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    backend.call("initialize", json!({}), &mut notes);
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    fs::create_dir_all(root.path().join("work/reports")).unwrap();
+    for file in [
+        "work/reports/q3-report.pdf",
+        "work/notes.txt",
+        "report.md",
+        "photo.jpg",
+    ] {
+        fs::write(root.path().join(file), b"x").unwrap();
+    }
+    let started = backend.call(
+        "search.start",
+        json!({"roots": [root.path()], "query": "report"}),
+        &mut notes,
+    );
+    let search = started["result"]["search"].clone();
+    backend.until(&mut notes, |n| {
+        n["method"] == "search.finished" && n["params"]["search"] == search
+    });
+    let finished = notes
+        .iter()
+        .find(|n| n["method"] == "search.finished")
+        .unwrap();
+    let best: Vec<_> = finished["params"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["path"].clone())
+        .collect();
+    assert_eq!(
+        best.first(),
+        Some(&json!(root.path().join("report.md"))),
+        "{finished}"
+    );
+    assert!(best.contains(&json!(root.path().join("work/reports/q3-report.pdf"))));
+    assert!(!best.contains(&json!(root.path().join("photo.jpg"))));
+    assert!(notes.iter().any(|n| n["method"] == "search.found"));
+
+    // A listing filtered by typing.
+    let open = backend.call(
+        "list.open",
+        json!({"path": root.path(), "filter": "rep"}),
+        &mut notes,
+    );
+    assert_eq!(open["result"]["count"], 1, "{open}");
+    let listing = open["result"]["listing"].clone();
+    let cleared = backend.call(
+        "list.reorder",
+        json!({"listing": listing, "filter": ""}),
+        &mut notes,
+    );
+    assert_eq!(cleared["result"]["count"], 3, "{cleared}");
+    backend.call("shutdown", json!({}), &mut notes);
+}

@@ -35,6 +35,8 @@ Item {
     // The row whose name is being edited, or -1.
     property int renamingRow: -1
     signal notice(string message)
+    /// A file was double-clicked or Entered: the window opens it.
+    signal fileActivated(string path)
 
     function startRename() {
         const target = mode === 1 ? grid : list
@@ -118,11 +120,24 @@ Item {
         target.positionViewAtIndex(next, target === grid ? GridView.Contain : ListView.Contain)
     }
     function openCurrent(target) {
-        if (target.currentIndex >= 0 && folderModel.isFolder(target.currentIndex))
-            browser.goRow(target.currentIndex)
+        activate(target.currentIndex)
+    }
+    function activate(row) {
+        if (row < 0) return
+        if (folderModel.isFolder(row)) browser.goRow(row)
+        else fileActivated(folderModel.pathAt(row))
     }
 
     Keys.onPressed: (event) => {
+        // Typing a name filters the folder to what matches it.
+        if (mode !== 2 && event.text.length === 1 && event.text >= " " && event.text !== " " &&
+                !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
+            filterField.text = event.text
+            filterField.forceActiveFocus()
+            folderModel.filter = event.text
+            event.accepted = true
+            return
+        }
         if (event.matches(StandardKey.SelectAll)) { folderModel.selectAll(); event.accepted = true }
         else if (event.key === Qt.Key_Escape) { folderModel.clearSelection(); event.accepted = true }
         else if (event.key === Qt.Key_F2 && mode !== 2) { startRename(); event.accepted = true }
@@ -170,6 +185,51 @@ Item {
         }
     }
     LeftoversDialog { id: leftoversDialog; ops: view.ops; folderModel: view.folderModel }
+
+    // The filter typed over the folder.
+    Rectangle {
+        id: filterBar
+        visible: view.folderModel !== null && view.folderModel.filter.length > 0
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: 10
+        anchors.topMargin: leftoversNotice.visible ? 56 : 4
+        width: 280
+        height: 34
+        radius: Theme.radius
+        color: Theme.field
+        border.width: 1
+        border.color: Theme.selectionEdge
+        z: 3
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 10
+            anchors.rightMargin: 4
+            spacing: 6
+            Icon { path: "M2.5 3.5h11l-4.5 5v4l-2 1v-5z"; color: Theme.textDim; size: 14 }
+            TextField {
+                id: filterField
+                objectName: "filterField"
+                Layout.fillWidth: true
+                color: Theme.text
+                font.family: Theme.family
+                font.pointSize: Theme.body
+                placeholderText: qsTr("Filter")
+                placeholderTextColor: Theme.textMute
+                background: null
+                onTextEdited: view.folderModel.filter = text
+                Keys.onEscapePressed: { view.folderModel.filter = ""; view.focusList() }
+                Keys.onDownPressed: view.focusList()
+                Keys.onReturnPressed: view.focusList()
+            }
+            IconButton {
+                width: 26; height: 26
+                label: qsTr("Clear filter")
+                iconPath: "m4.5 4.5 7 7M11.5 4.5l-7 7"
+                onClicked: { view.folderModel.filter = ""; view.focusList() }
+            }
+        }
+    }
 
     // List
     ColumnLayout {
@@ -267,7 +327,7 @@ Item {
                 onRenameAccepted: (name) => view.finishRename(name)
                 onRenameCancelled: { view.renamingRow = -1; view.focusList() }
                 onClicked: (modifiers) => { list.currentIndex = index; view.click(view.folderModel, index, modifiers); list.forceActiveFocus() }
-                onActivated: if (isFolder) view.browser.goRow(index)
+                onActivated: view.activate(index)
             }
             Keys.onUpPressed: (event) => view.moveBy(list, -1, event.modifiers)
             Keys.onDownPressed: (event) => view.moveBy(list, 1, event.modifiers)
@@ -340,7 +400,7 @@ Item {
             onRenameAccepted: (name) => view.finishRename(name)
             onRenameCancelled: { view.renamingRow = -1; view.focusList() }
             onClicked: (modifiers) => { grid.currentIndex = index; view.click(view.folderModel, index, modifiers); grid.forceActiveFocus() }
-            onActivated: if (isFolder) view.browser.goRow(index)
+            onActivated: view.activate(index)
         }
         Keys.onLeftPressed: (event) => view.moveBy(grid, -1, event.modifiers)
         Keys.onRightPressed: (event) => view.moveBy(grid, 1, event.modifiers)

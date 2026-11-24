@@ -22,6 +22,7 @@ ApplicationWindow {
     required property var transfers
     required property var ops
     required property var preview
+    required property var search
     required property var backend
 
     readonly property var browser: tabs.current
@@ -86,7 +87,28 @@ ApplicationWindow {
                 onEdited: window.view.focusList()
             }
             Item { Layout.fillWidth: true }
-            SearchField { Layout.fillWidth: true; Layout.maximumWidth: 352; Layout.minimumWidth: 120; placeholderText: qsTr("Search Home and drives") }
+            SearchField {
+                id: searchField
+                objectName: "searchField"
+                Layout.fillWidth: true
+                Layout.maximumWidth: 352
+                Layout.minimumWidth: 120
+                placeholderText: qsTr("Search Home and drives")
+                // Typing searches, in the Search page of this tab; the folder it began in can
+                // narrow it.
+                onTextEdited: {
+                    if (text.length === 0) return
+                    if (window.page !== 5) {
+                        searchPage.origin = window.page === 0 ? window.browser.location : ""
+                        window.browser.goPage(5)
+                    }
+                    window.search.search(text, window.search.roots.length > 0 && window.search.query.length > 0
+                                               ? window.search.roots : window.places.searchRoots())
+                }
+                Keys.onReturnPressed: window.search.searchNow()
+                Keys.onDownPressed: window.view.focusList()
+                Keys.onEscapePressed: { text = ""; window.view.focusList() }
+            }
             Item { Layout.fillWidth: true }
             Rectangle {
                 color: Theme.field; radius: 9
@@ -292,6 +314,7 @@ ApplicationWindow {
                             ops: window.ops
                             onNotice: (message) => notice.show(message)
                             onContextRequested: (row) => row >= 0 ? itemMenu.show(row) : spaceMenu.popup()
+                            onFileActivated: (path) => window.ops.open(path)
                         }
                         OverviewPage {
                             browser: window.browser
@@ -304,12 +327,14 @@ ApplicationWindow {
                         ItemsView {
                             browser: window.browser
                             items: window.recent
+                            onFileActivated: (path) => window.ops.open(path)
                             whenTitle: qsTr("Used")
                             emptyText: qsTr("Files you open show up here")
                         }
                         ItemsView {
                             browser: window.browser
                             items: window.favorites
+                            onFileActivated: (path) => window.ops.open(path)
                             emptyText: qsTr("Star files and folders to keep them at hand")
                         }
                         ItemsView {
@@ -327,6 +352,13 @@ ApplicationWindow {
                             onEmptyRequested: confirm.ask(qsTr("Empty the Trash?"),
                                                           qsTr("Everything in the Trash, on every drive, is deleted for good. This cannot be undone."),
                                                           qsTr("Empty Trash"), () => window.ops.emptyTrash())
+                        }
+                        SearchPage {
+                            id: searchPage
+                            browser: window.browser
+                            search: window.search
+                            places: window.places
+                            onFileActivated: (path) => window.ops.open(path)
                         }
                     }
                     Rectangle {
@@ -634,6 +666,7 @@ ApplicationWindow {
     Shortcut { sequences: [StandardKey.Redo, "Ctrl+Shift+Z"]; onActivated: window.ops.redo() }
     Shortcut { sequence: "Ctrl+Shift+N"; enabled: window.inFolder; onActivated: window.ops.create(window.folderModel, true) }
     Shortcut { sequence: "Space"; enabled: !previewPopup.visible; onActivated: window.previewOpen = !window.previewOpen }
+    Shortcut { sequence: "Ctrl+K"; onActivated: { searchField.forceActiveFocus(); searchField.selectAll() } }
     Shortcut { sequence: "Ctrl+1"; onActivated: window.browser.setView(0) }
     Shortcut { sequence: "Ctrl+2"; onActivated: window.browser.setView(1) }
     Shortcut { sequence: "Ctrl+3"; onActivated: window.browser.setView(2) }

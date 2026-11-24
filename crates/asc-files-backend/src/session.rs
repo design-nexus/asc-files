@@ -38,6 +38,9 @@ pub struct Session {
     journal: Option<Journal>,
     /// Calls answered off the loop (undo, clashes, renames, …); waited for at shutdown.
     workers: Vec<thread::JoinHandle<()>>,
+    /// Searches by id, each with its cancel; a search ended stays until shutdown.
+    searches: HashMap<u64, Cancel>,
+    next_search: u64,
 }
 
 impl Session {
@@ -55,6 +58,8 @@ impl Session {
                 })
                 .ok(),
             workers: Vec::new(),
+            searches: HashMap::new(),
+            next_search: 0,
         }
     }
 
@@ -120,8 +125,12 @@ impl Session {
                 self.shutting_down = true;
                 now(Value::Null)
             }
-            Call::ListOpen { path, options } => {
-                self.listings.open(id, path, &options);
+            Call::ListOpen {
+                path,
+                options,
+                filter,
+            } => {
+                self.listings.open(id, path, &options, filter);
                 Ok(Answer::Later)
             }
             Call::ListWindow {
@@ -129,9 +138,11 @@ impl Session {
                 start,
                 count,
             } => later(self.listings.window(id, listing, start, count)),
-            Call::ListReorder { listing, options } => {
-                later(self.listings.reorder(id, listing, options))
-            }
+            Call::ListReorder {
+                listing,
+                options,
+                filter,
+            } => later(self.listings.reorder(id, listing, options, filter)),
             Call::ListRefresh { listing } => later(self.listings.refresh(id, listing)),
             Call::ListClose { listing } => {
                 self.listings.close(listing);
@@ -196,6 +207,53 @@ impl Session {
                     Ok(json!({"items": items}))
                 });
                 Ok(Answer::Later)
+            }
+            // A search walks on a thread of its own, sending what it finds as it goes.
+            Call::SearchStart {
+                roots,
+                query,
+                hidden,
+                limit,
+            } => {
+                self.next_search += 1;
+                let search = self.next_search;
+                let cancel = Cancel::new();
+                self.searches.insert(search, cancel.clone());
+                let out = self.out.clone();
+                let limits = asc_files_engine::search::Limits {
+                    results: limit.map_or(100, |limit| {
+                        usize::try_from(limit)
+                            .unwrap_or(usize::MAX)
+                            .clamp(1, 10_000)
+                    }),
+                    ..Default::default()
+                };
+                self.workers.push(thread::spawn(move || {
+                    let summary = asc_files_engine::search::search(&roots, &query, hidden, limits, &cancel, |batch| {
+                        let _ = out.send(wire::notification(
+                            "search.found",
+                            json!({"search": search, "items": batch.iter().map(found_json).collect::<Vec<_>>()}),
+                        ));
+                    });
+                    let _ = out.send(wire::notification(
+                        "search.finished",
+                        json!({
+                            "search": search,
+                            "items": summary.best.iter().map(found_json).collect::<Vec<_>>(),
+                            "matched": summary.matched,
+                            "entries": summary.entries,
+                            "truncated": summary.truncated,
+                            "cancelled": summary.cancelled,
+                        }),
+                    ));
+                }));
+                now(json!({"search": search}))
+            }
+            Call::SearchCancel { search } => {
+                if let Some(cancel) = self.searches.get(&search) {
+                    cancel.cancel();
+                }
+                now(Value::Null)
             }
             // A rename on a share may wait for a file below it to close.
             Call::Rename { path, name, label } => {
@@ -326,6 +384,9 @@ impl Session {
     /// Stops what is still running and waits until every job has sent its last event.
     pub fn finish(&mut self) {
         self.listings.close_all();
+        for cancel in self.searches.values() {
+            cancel.cancel();
+        }
         for handle in self.jobs.values() {
             handle.cancel();
         }
@@ -386,6 +447,16 @@ fn clashes_json(source: &Path, into: &Path) -> Value {
     }
 }
 
+fn found_json(found: &asc_files_engine::search::Found) -> Value {
+    json!({
+        "path": wire::path(&found.path),
+        "isFolder": found.is_folder,
+        "size": found.size,
+        "modified": found.modified,
+        "score": found.score,
+    })
+}
+
 fn capabilities(undo: bool) -> Vec<&'static str> {
     let mut capabilities = vec![
         "list",
@@ -400,6 +471,8 @@ fn capabilities(undo: bool) -> Vec<&'static str> {
         "jobs.durable",
         "ops.rename",
         "ops.create",
+        "search",
+        "list.filter",
         "trash",
         "leftovers",
     ];

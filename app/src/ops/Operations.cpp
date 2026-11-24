@@ -7,6 +7,8 @@
 #include "../models/JobModel.h"
 
 #include <QClipboard>
+#include <QDesktopServices>
+#include <QFileInfo>
 #include <QHash>
 #include <QDir>
 #include <QPointer>
@@ -389,6 +391,12 @@ void Operations::recover(FolderModel *folder, const QString &name) {
                         }
                         emit notice(message);
                     });
+}
+
+void Operations::open(const QString &path) {
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
+        emit notice(tr("No program is set to open “%1”").arg(QFileInfo(path).fileName()));
+    }
 }
 
 void Operations::undo(bool overwrite) {

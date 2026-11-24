@@ -74,8 +74,10 @@ dependencies = [
 name = "asc-files-engine"
 version = "0.1.0"
 dependencies = [
+ "frizbee",
  "futures-channel",
  "futures-lite",
+ "ignore",
  "libc",
  "ring",
  "rust-i18n",
@@ -347,6 +349,15 @@ checksum = "e076045bb43dac435333ed5f04caf35c7463631d0dae2deb2638d94dd0a5b872"
 dependencies = [
  "lazy_static",
  "num",
+]
+
+[[package]]
+name = "frizbee"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19435f276a44d90570cb403d22fbe4b20c80eabc134f718d6ec0ae888eb47edc"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
