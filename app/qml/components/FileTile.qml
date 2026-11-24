@@ -13,6 +13,7 @@ Rectangle {
     required property bool isFolder
     required property bool loaded
     required property bool selected
+    required property string thumbnail
     property int iconSize: 64
 
     property bool editing: false
@@ -41,7 +42,19 @@ Rectangle {
         Item {
             Layout.fillWidth: true
             Layout.preferredHeight: tile.iconSize
+            Image {
+                id: picture
+                anchors.centerIn: parent
+                width: tile.iconSize + 16
+                height: tile.iconSize
+                visible: status === Image.Ready
+                asynchronous: true
+                fillMode: Image.PreserveAspectFit
+                sourceSize: Qt.size(128, 128)
+                source: tile.thumbnail.length > 0 ? "image://thumbnail/" + tile.thumbnail : ""
+            }
             Icon {
+                visible: !picture.visible
                 anchors.centerIn: parent
                 size: tile.iconSize
                 strokeWidth: 0.9

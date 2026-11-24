@@ -48,6 +48,8 @@ public:
         GoneRole,
         LoadedRole,
         SelectedRole,
+        /// The `image://thumbnail/` id of an image Files can make a thumbnail of; empty otherwise.
+        ThumbnailRole,
     };
     Q_ENUM(Role)
     static constexpr int PageSize = 200;

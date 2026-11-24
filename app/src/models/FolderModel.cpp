@@ -3,6 +3,7 @@
 
 #include "../backend/BackendClient.h"
 #include "../backend/Wire.h"
+#include "../thumbnails/Thumbnails.h"
 
 #include <QDateTime>
 #include <QFile>
@@ -341,6 +342,13 @@ QVariant FolderModel::data(const QModelIndex &index, int role) const {
         return true;
     case SelectedRole:
         return isSelected(index.row());
+    case ThumbnailRole: {
+        const QJsonValue name = row.value(QStringLiteral("name"));
+        if (kind != QLatin1String("file") || !Thumbnails::canMake(Wire::display(name))) {
+            return QString();
+        }
+        return QString::fromLatin1(Wire::join(m_folder, Wire::decode(name)).toPercentEncoding());
+    }
     default:
         return {};
     }
@@ -360,7 +368,8 @@ QHash<int, QByteArray> FolderModel::roleNames() const {
             {ModeSymbolicRole, "modeSymbolic"},
             {GoneRole, "gone"},
             {LoadedRole, "loaded"},
-            {SelectedRole, "selected"}};
+            {SelectedRole, "selected"},
+            {ThumbnailRole, "thumbnail"}};
 }
 
 void FolderModel::request(int page) const {

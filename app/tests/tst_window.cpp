@@ -10,6 +10,7 @@
 #include "models/PlacesModel.h"
 #include "models/TabModel.h"
 #include "models/Transfers.h"
+#include "thumbnails/Thumbnails.h"
 
 #include <QFile>
 #include <QQmlApplicationEngine>
@@ -53,6 +54,7 @@ private slots:
         FolderModel &folders = *tabs.current()->folderModel();
         QSignalSpy opened(&folders, &FolderModel::opened);
         QQmlApplicationEngine engine;
+        engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
         engine.setInitialProperties({{"tabs", QVariant::fromValue(&tabs)},
                                      {"places", QVariant::fromValue(&places)},
                                      {"recent", QVariant::fromValue(&recent)},

@@ -10,6 +10,7 @@
 #include "models/RecentModel.h"
 #include "models/TabModel.h"
 #include "models/Transfers.h"
+#include "thumbnails/Thumbnails.h"
 #include "models/TrashModel.h"
 
 #include <QCommandLineParser>
@@ -53,6 +54,7 @@ int main(int argc, char *argv[]) {
     });
 
     QQmlApplicationEngine engine;
+    engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
     engine.setInitialProperties({{QStringLiteral("tabs"), QVariant::fromValue(&tabs)},
                                  {QStringLiteral("places"), QVariant::fromValue(&places)},
                                  {QStringLiteral("recent"), QVariant::fromValue(&recent)},
