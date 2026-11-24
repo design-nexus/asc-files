@@ -9,6 +9,7 @@ pub(crate) mod environment;
 pub(crate) mod fs_ops;
 pub(crate) mod holders;
 pub(crate) mod leftovers;
+pub(crate) mod merge_aside;
 pub(crate) mod mount_profile;
 pub(crate) mod names;
 pub(crate) mod native_fs;

@@ -2074,9 +2074,14 @@ fn merge_local(
             Did::Copied { copy: at, .. } | Did::Moved { to: at, .. } => {
                 written.created.push(Location::local(at));
             }
-            Did::Replaced { target: at, .. } | Did::MovedOver { to: at, .. } => {
-                written.overwritten.push(Location::local(at));
-            }
+            Did::Replaced { target: at, .. } => written.overwritten.push(Location::local(at)),
+            // Overwritten as undo sees it only where it has an original to put back.
+            Did::MovedOver {
+                to: at,
+                original: Some(_),
+                ..
+            } => written.overwritten.push(Location::local(at)),
+            Did::MovedOver { .. } => {}
             Did::RemovedFolder { .. } => {}
         }
     }

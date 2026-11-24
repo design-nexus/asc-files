@@ -19,6 +19,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::adapters::local_operations::{leftovers, merge_aside};
+
 use crate::{
     error::{Error, ErrorKind, translated_io_error},
     ops::{self, Cancel, Conflict, NameMode, Progress, ProgressSnapshot, Renamed, Skipped},
@@ -466,9 +468,9 @@ fn merge_via_tree(
     let target = into.join(name);
     let mut replaced = std::collections::HashMap::new();
     let mut keeping_both = std::collections::HashSet::new();
-    // Where the drive has no Trash, originals wait in a hidden folder, as legacy set them aside,
-    // and are deleted once their replacements are on the drive.
-    let aside = target.join(crate::model::hidden_names::HiddenName::Originals.fresh());
+    // Where the drive has no Trash, originals wait in one hidden folder in the target, pinned by
+    // identity, and are deleted once their replacements are on the drive (legacy `merge_aside`).
+    let mut aside: Option<merge_aside::MergeAside> = None;
     // Opened before anything is written, so reaching it covers the copy.
     let settle = ops::Settle::open(into)?;
     // Against the folder merged into, which under a given name is not the source's own name.
@@ -478,19 +480,19 @@ fn merge_via_tree(
         match plan.choice(&clash.path) {
             Clash::Replace if !clash.existing.is_folder => {
                 let at = target.join(&clash.path);
-                let original = crate::trash::put(&at)
-                    .map(Original::Trashed)
-                    .or_else(|error| {
-                        if error.kind() != ErrorKind::NotSupported {
-                            return Err(error);
-                        }
-                        let kept = aside.join(&clash.path);
-                        if let Some(folder) = kept.parent() {
-                            fs::create_dir_all(folder).map_err(crate::error::os_io_error)?;
-                        }
-                        rename_no_replace(&at, &kept)?;
-                        Ok(Original::Aside(kept))
-                    });
+                let original = match crate::trash::put(&at) {
+                    Ok(trashed) => Ok(Original::Trashed(trashed)),
+                    Err(error) if error.kind() == ErrorKind::NotSupported => {
+                        merge_aside::set_aside(
+                            &mut aside,
+                            &target,
+                            &at,
+                            clash.path.display().to_string(),
+                        )
+                        .map(|()| Original::Aside)
+                    }
+                    Err(error) => Err(error),
+                };
                 match original {
                     Ok(original) => {
                         replaced.insert(clash.path, original);
@@ -503,8 +505,8 @@ fn merge_via_tree(
                                 not_back.push(left.message().to_owned());
                             }
                         }
+                        let (error, _) = merge_aside::abandon_keeping(aside, error);
                         if not_back.is_empty() {
-                            let _ = fs::remove_dir_all(&aside);
                             return Err(error);
                         }
                         return Err(crate::error::io_error(format!(
@@ -542,11 +544,7 @@ fn merge_via_tree(
         (result, changes, None)
     };
     // The copy must be on the drive before an original set aside for it is deleted.
-    let unconfirmed = !moving
-        && replaced
-            .values()
-            .any(|original| matches!(original, Original::Aside(_)))
-        && settle.reach().is_err();
+    let unconfirmed = aside.is_some() && settle.reach().is_err();
     // An original whose incoming item was left out (a link the drive cannot hold, say) comes
     // back, so nothing it held is lost to a replacement that never came.
     // One that cannot come back is a failure that says where it is.
@@ -555,21 +553,36 @@ fn merge_via_tree(
         let at = target.join(path);
         let placed = fs::symlink_metadata(&at).is_ok();
         match original {
-            _ if !placed => {
+            Original::Trashed(_) if !placed => {
                 if let Err(error) = bring_back(path, original, &target) {
                     not_back.push((at.clone(), error));
                 }
             }
-            Original::Aside(kept) if !unconfirmed => {
-                let _ = fs::remove_file(&*kept).or_else(|_| fs::remove_dir_all(&*kept));
-            }
-            Original::Aside(_) | Original::Trashed(_) => {}
+            Original::Trashed(_) | Original::Aside => {}
         }
         placed
     });
-    // Never while it holds an original that could not go back.
-    if !unconfirmed && not_back.is_empty() {
-        let _ = fs::remove_dir_all(&aside);
+    // Originals set aside whose names the merge left free go back; the rest are deleted once
+    // the merge is whole and on the drive, or, if it is not, wait where the error says.
+    let mut still_open = Vec::new();
+    let failure = stopped.as_ref().or(result.as_ref().err());
+    match merge_aside::finish(aside) {
+        Err(error) => not_back.push((target.clone(), error)),
+        Ok(None) => {}
+        Ok(Some(aside)) if failure.is_some() || unconfirmed => {
+            let error = failure.cloned().unwrap_or_else(|| {
+                crate::error::io_error(crate::i18n::tr(
+                    "The device could not finish writing. Earlier writes may still be pending; wait for safe eject before unplugging.",
+                ))
+            });
+            let (error, open) = merge_aside::abandon_keeping(Some(aside), error);
+            still_open.extend(open);
+            not_back.push((target.clone(), error));
+        }
+        Ok(Some(aside)) => match aside.remove(&leftovers::Deadline::default()) {
+            Ok(open) => still_open.extend(open),
+            Err(error) => not_back.push((target.clone(), error)),
+        },
     }
     let after = tree(&target);
     for path in after.difference(&before) {
@@ -591,8 +604,13 @@ fn merge_via_tree(
         let to = target.join(path);
         let original = replaced.remove(path).map(|original| match original {
             Original::Trashed(trashed) => Some(trashed),
-            Original::Aside(_) => None,
+            Original::Aside => None,
         });
+        // A copy over an original deleted for want of a Trash is not undoable: undo would take
+        // the copy away with nothing to put back, as legacy left it out.
+        if !moving && matches!(original, Some(None)) {
+            continue;
+        }
         merged.done.push(match (moving, original) {
             (true, Some(original)) => Did::MovedOver { from, to, original },
             (true, None) => Did::Moved {
@@ -631,14 +649,14 @@ fn merge_via_tree(
         merged.failed.push((source.to_path_buf(), error));
     }
     merged.failed.extend(not_back);
-    if unconfirmed {
-        merged.failed.push((
-            aside.clone(),
-            translated_io_error(
-                "The drive could not confirm the merge, so the originals it replaced were kept",
-            ),
-        ));
-    }
+    merged
+        .kept
+        .extend(still_open.into_iter().filter_map(|kept| {
+            Some(ops::Kept {
+                path: kept.location.native_path()?.to_path_buf(),
+                cause: kept.cause,
+            })
+        }));
     result
         .map_err(|error| {
             merged.failed.push((source.to_path_buf(), error.clone()));
@@ -666,7 +684,8 @@ fn unnumbered(path: &Path) -> Option<PathBuf> {
 /// Where an original a merge replaces went before the merge.
 enum Original {
     Trashed(Trashed),
-    Aside(PathBuf),
+    /// In the merge's aside folder, which puts it back or deletes it.
+    Aside,
 }
 
 /// Every path beneath `root`, relative to it, without following links.
@@ -828,36 +847,7 @@ fn bring_back(path: &Path, original: &Original, target: &Path) -> Result<(), Err
                 ))
             })
         }
-        Original::Aside(kept) => rename_no_replace(kept, &at).map_err(|error| {
-            crate::error::io_error(rust_i18n::t!(
-                "The original of “%{name}” stayed aside, as “%{file}”: %{error}",
-                name = path.display(),
-                file = kept.display(),
-                error = error.message()
-            ))
-        }),
+        // The merge's aside folder puts these back itself.
+        Original::Aside => Ok(()),
     }
-}
-
-/// Renames `from` to `to` through the engine's filesystem, never over what holds `to`.
-fn rename_no_replace(from: &Path, to: &Path) -> Result<(), Error> {
-    use crate::adapters::local_operations::{
-        fs_ops::{Entry, fs},
-        native_fs::open_local_parent_directory,
-    };
-    let (Some(from_dir), Some(from_name), Some(to_dir), Some(to_name)) =
-        (from.parent(), from.file_name(), to.parent(), to.file_name())
-    else {
-        return Err(crate::error::translated_io_error(
-            "Invalid move destination",
-        ));
-    };
-    let from_dir = open_local_parent_directory(from_dir).map_err(crate::error::io_error)?;
-    let to_dir = open_local_parent_directory(to_dir).map_err(crate::error::io_error)?;
-    fs().rename(
-        Entry::new(&from_dir, from_name),
-        Entry::new(&to_dir, to_name),
-        rustix::fs::RenameFlags::NOREPLACE,
-    )
-    .map_err(crate::error::os_io_error)
 }

@@ -779,12 +779,160 @@ fn an_original_that_cannot_go_back_stays_aside_and_is_named() -> Result<(), Box<
         .expect_err("the original could not go back")
         .message()
         .to_owned();
-    let aside = names(&target)?
-        .into_iter()
-        .find(|name| name.starts_with(".asc-files-originals-"))
-        .ok_or("the aside folder stays")?;
+    let aside = aside_folder(&target)?.ok_or("the aside folder stays")?;
     assert_eq!(fs::read(target.join(&aside).join("link"))?, b"earlier");
-    assert!(message.contains("stayed aside"), "{message}");
-    assert!(message.contains(aside.as_str()), "{message}");
+    assert!(
+        message.contains(aside.as_str()),
+        "the error says where: {message}"
+    );
+    Ok(())
+}
+
+/// Legacy's merge through its Trash-less staging: the engine's merge, and what it wrote.
+fn merge_through_trash(
+    source: &Path,
+    target: &Path,
+    move_source: bool,
+) -> (Result<(), EngineError>, Vec<MergeWritten>) {
+    let (plans, on_merged) = recorded_plans();
+    let result = merge_local(source, target, move_source, Cancellable::new(), &on_merged);
+    (result, plans.take())
+}
+
+#[test]
+fn a_failed_aside_puts_every_original_back_before_merging() -> Result<(), Box<dyn Error>> {
+    use super::super::{fs_ops::System, placement::probe};
+    use crate::adapters::volume::learn_mount_capability;
+    let _serial = serial()?;
+    let target_files = [
+        ("a.txt", "old a"),
+        ("b.txt", "old b"),
+        ("mount/c.txt", "old c"),
+    ];
+    for case in [
+        "no safe placement",
+        "second aside fails",
+        "nested mount",
+        "strict open crosses mount",
+    ] {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        write_files(
+            &source,
+            &[
+                ("a.txt", "new a"),
+                ("b.txt", "new b"),
+                ("mount/c.txt", "new c"),
+            ],
+        )?;
+        write_files(&target, &target_files)?;
+        let quirks = match case {
+            "no safe placement" => Quirks::without_placement(),
+            "second aside fails" => Quirks {
+                fail: vec![(Op::Rename, "*", 1, Errno::IO)],
+                ..Quirks::default()
+            },
+            "strict open crosses mount" => Quirks {
+                fail: vec![(Op::OpenAt, ".asc-files-merge-*", 0, Errno::XDEV)],
+                ..Quirks::default()
+            },
+            _ => Quirks::default(),
+        };
+        let quirks = FsQuirks::install(root.path(), without_trash(quirks));
+        if case == "second aside fails" {
+            let folder = fs::File::open(root.path())?;
+            let no_replace = probe(&System, folder.as_fd(), true, false, false)?.no_replace;
+            learn_mount_capability(quirks.key(), |capabilities| {
+                capabilities.no_replace = no_replace;
+            });
+        }
+        let _nested = (case == "nested mount")
+            .then(|| FsQuirks::install(&target.join("mount"), without_trash(Quirks::default())));
+
+        let (result, plans) = merge_through_trash(&source, &target, false);
+
+        let error = result.expect_err(case);
+        assert!(
+            error.message().contains("out of the way"),
+            "{case}: {error}"
+        );
+        assert_eq!(
+            quirks.used_name(".asc-files-merge-*"),
+            case != "no safe placement",
+            "{case}"
+        );
+        // Nothing was copied, and every original is back at its name.
+        for (path, contents) in target_files {
+            assert_eq!(fs::read(target.join(path))?, contents.as_bytes(), "{case}");
+        }
+        assert_eq!(names(&target)?, ["a.txt", "b.txt", "mount"], "{case}");
+        assert!(plans.iter().all(|plan| plan.overwritten.is_empty()));
+    }
+    Ok(())
+}
+
+#[test]
+fn merge_without_trash_sets_originals_aside_and_removes_them_after_success()
+-> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    // Legacy also ran a GIO Trash that reported failure without a reason, which it took for no
+    // Trash; the native Trash's failure is an I/O error, which stops the merge.
+    for (trash, quirks, move_source) in [
+        (Trash::Unsupported, Quirks::default(), false),
+        (Trash::Unsupported, Quirks::without_rename_flags(), true),
+        (Trash::Unsupported, Quirks::sshfs(), false),
+        (Trash::Unsupported, Quirks::vboxsf(), true),
+        (Trash::Unsupported, Quirks::exfat(), false),
+        (Trash::Unsupported, Quirks::exfat(), true),
+    ] {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        write_files(
+            &source,
+            &[
+                ("shared.txt", "new"),
+                ("nested/deep/shared.txt", "new deep"),
+                ("incoming.txt", "incoming"),
+            ],
+        )?;
+        write_files(
+            &target,
+            &[
+                ("shared.txt", "old"),
+                ("nested/deep/shared.txt", "old deep"),
+                ("nested/stays.txt", "keep me"),
+            ],
+        )?;
+        let quirks = FsQuirks::install(root.path(), Quirks { trash, ..quirks });
+
+        let (result, plans) = merge_through_trash(&source, &target, move_source);
+
+        assert!(result.is_ok(), "{trash:?}: {result:?}");
+        // A merging move within one drive replaces item by item, each original set aside by
+        // the replace; legacy set every one aside in the merge's folder.
+        assert!(
+            quirks.used_name(".asc-files-merge-*") || quirks.used_name(".asc-files-originals-*"),
+            "{trash:?}"
+        );
+        assert_eq!(fs::read(target.join("shared.txt"))?, b"new");
+        assert_eq!(
+            fs::read(target.join("nested/deep/shared.txt"))?,
+            b"new deep"
+        );
+        assert_eq!(fs::read(target.join("nested/stays.txt"))?, b"keep me");
+        assert_eq!(names(&target)?, ["incoming.txt", "nested", "shared.txt"]);
+        assert_eq!(source.exists(), !move_source);
+        assert_eq!(
+            plans[0].created,
+            vec![Location::local(target.join("incoming.txt"))],
+            "{trash:?}: only what undo can take away is filed"
+        );
+        assert!(
+            plans[0].overwritten.is_empty(),
+            "originals deleted without Trash cannot be restored by undo"
+        );
+    }
     Ok(())
 }
