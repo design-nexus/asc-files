@@ -1734,6 +1734,20 @@ fn drive_until_rename_settles<T: ?Sized>(_events: &T) {
     pump_all();
 }
 
+impl LocalOperationProvider {
+    /// Legacy's paste: the batch of jobs [`run_paste_events`] runs, its events handed to `emit`.
+    fn paste(
+        &self,
+        request: PasteRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> crate::services::LoadHandle {
+        for event in run_paste_events(request) {
+            emit(event);
+        }
+        crate::services::LoadHandle::new(|| {})
+    }
+}
+
 /// Runs file calls off a test marked as the UI thread, as legacy's provider did on its workers.
 fn off_ui_thread<T: Send>(call: impl FnOnce() -> T + Send) -> T {
     thread::scope(|scope| scope.spawn(call).join().expect("the call returns"))

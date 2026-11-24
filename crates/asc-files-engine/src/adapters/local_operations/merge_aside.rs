@@ -388,16 +388,61 @@ impl MergeAside {
                 attributes: None,
             }),
         };
+        let roots = vec![root];
+        let workers = super::deletion::local_delete_worker_count(&roots);
         let deleted =
-            parallel_delete_local_blocking_with_workers(vec![root], Arc::default(), 1, deadline);
+            parallel_delete_local_blocking_with_workers(roots, Arc::default(), workers, deadline);
         let Err(error) = deleted else {
             return Ok(None);
         };
         let error = io_error(error);
+        // The walk stops at its first refusal (a file still open, say); what else can go goes,
+        // entry by entry, before what is left is judged.
+        self.delete_each(deadline);
         match self.remove_folders(deadline) {
             Left::Nothing => Ok(None),
             Left::StillOpen(kept) => Ok(Some(kept)),
             Left::Something => Err(not_removed(&path, &error)),
+        }
+    }
+
+    /// Deletes each entry of every folder here, deepest folder first, each on its own, passing
+    /// over what is refused and what another program left; the folders themselves stay.
+    fn delete_each(&self, deadline: &Deadline) {
+        let fs = fs();
+        let folders = self
+            .mirrors
+            .iter()
+            .rev()
+            .map(|mirror| mirror.handle.clone())
+            .chain(self.folder.as_ref().map(|folder| folder.handle.clone()));
+        let mirrored: HashSet<&OsStr> = self
+            .mirrors
+            .iter()
+            .map(|mirror| mirror.name.as_os_str())
+            .collect();
+        for folder in folders {
+            let Ok(names) = fs.names(Entry::new(&*folder, OsStr::new("."))) else {
+                continue;
+            };
+            for name in names {
+                if mirrored.contains(name.as_os_str())
+                    || leftovers::is_leftover(fs, folder.as_fd(), &name)
+                {
+                    continue;
+                }
+                let root = PinnedEntry {
+                    parent: folder.clone(),
+                    name,
+                    identity: None,
+                };
+                let _ = parallel_delete_local_blocking_with_workers(
+                    vec![root],
+                    Arc::default(),
+                    1,
+                    deadline,
+                );
+            }
         }
     }
 

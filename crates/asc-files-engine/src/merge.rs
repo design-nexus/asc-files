@@ -543,8 +543,9 @@ fn merge_via_tree(
             ops::merge_by_copying(source, (into, name), names, cancel, progress);
         (result, changes, None)
     };
-    // The copy must be on the drive before an original set aside for it is deleted.
-    let unconfirmed = aside.is_some() && settle.reach().is_err();
+    // The copy must be on the drive before an original set aside for it is deleted. A move has
+    // reached its drive's barrier before deleting any source, so its copies already are.
+    let unconfirmed = !moving && aside.is_some() && settle.reach().is_err();
     // An original whose incoming item was left out (a link the drive cannot hold, say) comes
     // back, so nothing it held is lost to a replacement that never came.
     // One that cannot come back is a failure that says where it is.

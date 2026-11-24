@@ -31,9 +31,9 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `restore_safety.rs` | 28 | 28 | 0 | 0 |
 | `undo.rs` | 23 | 16 | 0 | 7 |
 | `trash_capabilities.rs` | 1 | 0 | 0 | 1 (ignored upstream too) |
-| `merge.rs`, so far | 66 | 19 | 0 | 2 (45 still to port: legacy's merge hooks and seams, and its snapshot undo) |
-| **So far** | **357** | **302** | **2** | **53** |
-| Remaining 3 files (`copy`, `progress`, `sync`), and 45 of `merge.rs` | 135 | – | – | – |
+| `merge.rs`, so far | 66 | 22 | 0 | 2 (42 still to port: legacy's merge hooks and seams, and its snapshot undo) |
+| **So far** | **360** | **305** | **2** | **53** |
+| Remaining 3 files (`copy`, `progress`, `sync`), and 42 of `merge.rs` | 132 | – | – | – |
 
 ## Ignored
 
@@ -66,6 +66,8 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `merge::a_merge_replaces_nothing_with_a_link_the_destination_cannot_hold`, the FAT row | Run without a Trash: a simulated FAT drive's Trash is the home one, across the simulated mount, where a real FAT drive has its own. |
 | `merge::merging_recurses_into_subdirectories_shared_by_both_sides`, the listing | Legacy listed in chunks; the engine's copy lists a folder whole. Either goes through the filesystem seam, which is what is checked. |
 | `merge::merge_without_trash_sets_originals_aside_and_removes_them_after_success`, the GIO row | Legacy also ran a GIO Trash that reported failure without a reason (`FalseWithoutError`), which it took for no Trash. The native Trash's failure is an I/O error, which stops the merge. Its merging moves within one drive set originals aside through the replace, in an originals folder, where legacy used the merge's. |
+| `merge::a_failed_merge_without_trash_puts_back_what_it_can_and_names_the_rest` | Legacy injected a copy that wrote part of one file and failed, and a cancelled one; here one item is copied, one is a socket the copy leaves out, and the drive cannot confirm the writes, which puts the first original aside and the second back. The cancelled row checked legacy's wording for a cancel. |
+| `merge::a_merge_without_trash_reports_its_folder_kept_by_an_original_still_open`, the order of what is kept | The engine reports what it left out as it goes; the items are compared in any order. |
 | `leftovers::stale_probes_go_only_when_empty_and_old`, the mount-lane half | Legacy swept on its mount's background lane and checked that a slow sweep kept the lane answering. The engine has no lanes: the backend runs the sweep on a thread of its own. That the sweep removes a listed stale probe is still checked. |
 | `paste_results::an_item_replaced_without_trash_is_left_out_of_the_paste_undo`, the order of moves | Legacy moved the items without a conflict first; jobs keep the order asked for. The moves are compared as a set. |
 
@@ -228,6 +230,10 @@ ported with a reason. This list must be empty, or every entry justified, before 
 - **Fixed, data loss:** a copy merge on a drive without a Trash filed the copy over a replaced original as a plain
   copy. The original was deleted once the merge was on the drive, so undo would then have taken the copy away
   with nothing to put back. Such a copy is no longer filed, as legacy left it out.
+- **Fixed:** once a merge without a Trash was on the drive, its aside folder was deleted by one walk, which
+  stops at its first refusal. A file there still open on a share then hid the rest, and the folder was reported
+  as not removable rather than held open. What else can go now goes entry by entry first. A merging move no
+  longer needs a second flush, its copies having reached the drive before any source went.
 - **Open:** a bulk path for many small items; `rename` and `create` on the protocol; a paste-planning call.
 
 ## Archives (legacy: 225 tests)

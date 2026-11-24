@@ -936,3 +936,295 @@ fn merge_without_trash_sets_originals_aside_and_removes_them_after_success()
     }
     Ok(())
 }
+
+#[test]
+fn without_trash_an_original_the_merge_left_nothing_in_place_of_stays() -> Result<(), Box<dyn Error>>
+{
+    use super::fs_quirks::Racer;
+    let _serial = serial()?;
+    let rewrite = |path: PathBuf, contents: &'static [u8]| -> Racer {
+        Box::new(move || fs::write(&path, contents).expect("rewrite the source"))
+    };
+    for row in [
+        "left out",
+        "kept at its source",
+        "put back fails",
+        "name taken meanwhile",
+    ] {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        fs::create_dir(&source)?;
+        write_files(&target, &[("x", "original"), ("y", "kept")])?;
+        let moving = row == "kept at its source";
+        let mut source_quirks = Quirks::default();
+        let _socket = if moving {
+            fs::write(source.join("x"), b"incoming")?;
+            source_quirks.before = vec![
+                (Op::Read, "x", 0, rewrite(source.join("x"), b"second")),
+                (Op::Read, "x", 1, rewrite(source.join("x"), b"third")),
+            ];
+            None
+        } else {
+            Some(std::os::unix::net::UnixListener::bind(source.join("x"))?)
+        };
+        let mut target_quirks = without_trash(Quirks::default());
+        if row == "put back fails" {
+            target_quirks.fail = vec![(Op::Rename, "x", 1, Errno::IO)];
+        }
+        if row == "name taken meanwhile" {
+            target_quirks.before = vec![(Op::Rename, "x", 1, rewrite(target.join("x"), b"theirs"))];
+        }
+        let _source = FsQuirks::install(&source, source_quirks);
+        let _target = FsQuirks::install(&target, target_quirks);
+
+        let (result, _) = merge_through_trash(&source, &target, moving);
+
+        if matches!(row, "put back fails" | "name taken meanwhile") {
+            let aside = aside_folder(&target)?.ok_or("the original stays aside")?;
+            assert!(result.is_err(), "{row}");
+            assert_eq!(
+                fs::read(target.join(aside).join("x"))?,
+                b"original",
+                "{row}"
+            );
+            if row == "name taken meanwhile" {
+                assert_eq!(fs::read(target.join("x"))?, b"theirs", "{row}");
+            }
+            continue;
+        }
+        assert!(result.is_ok(), "{row}: {result:?}");
+        assert_eq!(names(&target)?, ["x", "y"], "{row}");
+        assert_eq!(fs::read(target.join("x"))?, b"original", "{row}");
+        if moving {
+            assert_eq!(fs::read(source.join("x"))?, b"third", "{row}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_merge_without_trash_reports_its_folder_kept_by_an_original_still_open()
+-> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    let editor = Some("Text Editor");
+    let without_links = || Quirks {
+        links: Support::Rejected(Errno::PERM),
+        ..Quirks::nfs3()
+    };
+    let renumbered_links = || Quirks {
+        link_inodes: true,
+        ..Quirks::nfs3()
+    };
+    for (row, move_sources, original, preset, holder) in [
+        ("copy fails", false, "x", Quirks::nfs3 as Preset, editor),
+        ("copy fails", false, "sub/x", Quirks::nfs3, editor),
+        ("copy fails, no links", false, "x", without_links, editor),
+        (
+            "copy fails, links numbered apart",
+            false,
+            "x",
+            renumbered_links,
+            editor,
+        ),
+        ("left out", false, "x", Quirks::nfs3, editor),
+        ("left out", true, "sub/x", Quirks::nfs3, editor),
+        ("replaced", true, "x", Quirks::nfs3, editor),
+        ("replaced", true, "x", Quirks::cifs_posix, editor),
+        ("replaced", true, "x", Quirks::cifs_posix, None),
+        ("replaced", true, "sub/x", Quirks::nfs3, None),
+        ("replaced", true, "sub/x", Quirks::cifs_posix, None),
+    ] {
+        let holder = holder.map(|program| crate::services::Holder::Program(program.to_owned()));
+        let root = tempfile::tempdir()?;
+        let linked_back = matches!(preset().links, Support::Supported)
+            && !preset().link_inodes
+            && base_links_keep_their_number(root.path())?;
+        let put_back_by_rename = !row.starts_with("replaced") && !linked_back;
+        let sources = root.path().join("sources");
+        let destination = root.path().join("destination");
+        let (source, target) = (sources.join("run"), destination.join("run"));
+        write_files(&source, &[("y.txt", "new y")])?;
+        write_files(&target, &[(original, "original")])?;
+        if row == "replaced" {
+            write_files(&source, &[("also/z", "incoming")])?;
+            write_files(&target, &[("also/z", "original")])?;
+        }
+        fs::create_dir_all(source.join(original).parent().ok_or("no parent")?)?;
+        let mut source_quirks = Quirks::default();
+        let _socket = if row == "left out" {
+            match std::os::unix::net::UnixListener::bind(source.join(original)) {
+                Ok(socket) => Some(socket),
+                Err(error)
+                    if matches!(Errno::from_io_error(&error), Some(Errno::PERM | Errno::IO)) =>
+                {
+                    eprintln!(
+                        "skipped on a base that refuses Unix sockets: {row} {original}, moving: {move_sources}"
+                    );
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        } else {
+            fs::write(source.join(original), b"incoming")?;
+            None
+        };
+        if row.starts_with("copy fails") {
+            source_quirks.fail = vec![(Op::OpenSource, "x", 0, Errno::IO)];
+        }
+        let _sources = FsQuirks::install(&sources, source_quirks);
+        let _destination = FsQuirks::install(
+            &destination,
+            without_trash(Quirks {
+                holder: holder.clone(),
+                ..preset()
+            }),
+        );
+        let _clock = ClockGuard::set(std::time::SystemTime::now());
+        let _held = hold(&target.join(original));
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let emitted = events.clone();
+        let _operation = LocalOperationProvider.paste(
+            PasteRequest {
+                id: OperationRequestId(1729),
+                destination: Location::local(&destination),
+                items: vec![PasteItem {
+                    source: Location::local(&source),
+                    conflict: TransferConflict::Merge,
+                    target_name: None,
+                }],
+                move_sources,
+            },
+            Rc::new(move |event| emitted.borrow_mut().push(event)),
+        );
+
+        drive_until_transfer_settles(&events);
+
+        let listed = !matches!(
+            preset().silly_rename,
+            Some(super::fs_quirks::Silly {
+                aside: super::fs_quirks::Aside::Unlisted(_),
+                ..
+            })
+        );
+        let row = format!(
+            "{row} {original}, moving: {move_sources}, {:?}",
+            preset().mount_type
+        );
+        let events = events.take();
+        let folder = aside_folder(&target)?;
+        assert_eq!(folder.is_none(), put_back_by_rename, "{row}: {events:?}");
+        let kept = events
+            .iter()
+            .filter_map(|event| match event {
+                OperationEvent::ItemsReported { report, .. } => Some(report.kept.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        let cause = match holder {
+            None if !listed => KeptCause::Undeletable(Errno::ACCESS.raw_os_error()),
+            holder => KeptCause::StillOpen(holder),
+        };
+        let mut expected: Vec<_> = folder
+            .as_ref()
+            .map(|folder| KeptItem {
+                location: Location::local(target.join(folder)),
+                cause,
+            })
+            .into_iter()
+            .collect();
+        if row.starts_with("left out") && move_sources {
+            expected.push(KeptItem {
+                location: Location::local(source.join(original)),
+                cause: KeptCause::Skipped(crate::services::SpecialKind::Socket),
+            });
+        }
+        // In any order: the engine reports what it left out as it goes.
+        let (mut kept, mut expected) = (kept, expected);
+        for list in [&mut kept, &mut expected] {
+            list.sort_by_key(|item| format!("{item:?}"));
+        }
+        assert_eq!(kept, expected, "{row}: {events:?}");
+        let now_there: &[u8] = if row.starts_with("replaced") {
+            b"incoming"
+        } else {
+            b"original"
+        };
+        assert_eq!(fs::read(target.join(original))?, now_there, "{row}");
+        if let Some(folder) = &folder {
+            let aside = target.join(folder).join(original);
+            let leftovers = names(aside.parent().ok_or("no parent")?)?;
+            assert!(
+                leftovers.len() == usize::from(listed)
+                    && leftovers.iter().all(|name| name.starts_with(".nfs")),
+                "{row}: {leftovers:?}"
+            );
+        }
+        match terminal_transfer(&events) {
+            Some(OperationEvent::TransferFailed { message, .. }) if row.starts_with("copy") => {
+                assert!(
+                    folder.iter().all(|folder| !message.contains(folder)),
+                    "{row}: {message}"
+                );
+                assert_eq!(fs::read(source.join(original))?, b"incoming", "{row}");
+            }
+            Some(OperationEvent::Pasted { .. }) if !row.starts_with("copy") => {
+                assert_eq!(fs::read(target.join("y.txt"))?, b"new y", "{row}");
+                for name in ["y.txt", original] {
+                    let gone = move_sources && (name == "y.txt" || row.starts_with("replaced"));
+                    assert_eq!(source.join(name).exists(), !gone, "{row}: {name}");
+                }
+                assert_eq!(
+                    item_moves(&events).len(),
+                    usize::from(move_sources),
+                    "{row}"
+                );
+            }
+            other => panic!("{row}: {other:?}"),
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_failed_merge_without_trash_puts_back_what_it_can_and_names_the_rest()
+-> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    let root = tempfile::tempdir()?;
+    let source = root.path().join("source");
+    let target = root.path().join("target");
+    write_files(&source, &[("a.txt", "new a")])?;
+    let _socket = std::os::unix::net::UnixListener::bind(source.join("b.txt"))?;
+    write_files(
+        &target,
+        &[
+            ("a.txt", "old a"),
+            ("b.txt", "old b"),
+            ("stays.txt", "keep me"),
+        ],
+    )?;
+    // Legacy injected a copy that wrote part of a.txt and failed. Here a.txt is copied, b.txt is
+    // a socket the copy leaves out, and the drive then cannot confirm the writes: b.txt's
+    // original goes back to its free name, a.txt's waits where the error says.
+    let _root = FsQuirks::install(
+        root.path(),
+        Quirks {
+            fail: vec![(Op::SyncFs, "*", 0, Errno::IO)],
+            ..without_trash(Quirks::default())
+        },
+    );
+
+    let (result, plans) = merge_through_trash(&source, &target, false);
+
+    let error = result.expect_err("the copy failed");
+    let folder = aside_folder(&target)?.ok_or("the displaced original was not kept")?;
+    assert!(error.message().contains(&folder), "{error}");
+    assert_eq!(fs::read(target.join(&folder).join("a.txt"))?, b"old a");
+    assert_eq!(names(&target.join(&folder))?, ["a.txt"]);
+    assert_eq!(fs::read(target.join("a.txt"))?, b"new a");
+    assert_eq!(fs::read(target.join("b.txt"))?, b"old b");
+    assert_eq!(fs::read(target.join("stays.txt"))?, b"keep me");
+    assert!(plans.iter().all(|plan| plan.overwritten.is_empty()));
+    Ok(())
+}
