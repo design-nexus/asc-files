@@ -608,3 +608,183 @@ fn write_files(root: &Path, files: &[(&str, &str)]) -> Result<(), io::Error> {
     }
     Ok(())
 }
+
+/// The item in the Trash that came from `original`, the newest of them.
+fn in_trash(original: &Path) -> Option<PathBuf> {
+    crate::trash::list()
+        .into_iter()
+        .filter(|entry| entry.original == original)
+        .max_by_key(|entry| entry.deleted.clone())
+        .map(|entry| entry.file)
+}
+
+#[test]
+fn merging_folders_unites_contents_and_overwrites_shared_names() -> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    let root = tempfile::tempdir()?;
+    let source = root.path().join("source");
+    let target = root.path().join("target");
+    fs::create_dir_all(&source)?;
+    fs::create_dir_all(&target)?;
+    fs::write(source.join("incoming.txt"), b"new")?;
+    fs::write(source.join("shared.txt"), b"incoming wins")?;
+    fs::write(target.join("stays.txt"), b"keep me")?;
+    fs::write(target.join("shared.txt"), b"old")?;
+    let (plans, on_merged) = recorded_plans();
+
+    let result = merge_local(&source, &target, false, Cancellable::new(), &on_merged);
+
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(fs::read(target.join("incoming.txt"))?, b"new");
+    assert_eq!(fs::read(target.join("shared.txt"))?, b"incoming wins");
+    assert_eq!(fs::read(target.join("stays.txt"))?, b"keep me");
+    assert!(source.exists(), "a copy merge keeps the source");
+    // Legacy staged the original through a hook; the engine sends it to the Trash.
+    let original = in_trash(&target.join("shared.txt")).ok_or("the original in the Trash")?;
+    assert_eq!(fs::read(original)?, b"old");
+    // Legacy also reported placed snapshots for its own undo; the engine files journal steps.
+    let plans = plans.borrow();
+    assert_eq!(plans.len(), 1);
+    assert_eq!(
+        plans[0].created,
+        vec![Location::local(target.join("incoming.txt"))]
+    );
+    assert_eq!(
+        plans[0].overwritten,
+        vec![Location::local(target.join("shared.txt"))]
+    );
+    Ok(())
+}
+
+#[test]
+fn merging_recurses_into_subdirectories_shared_by_both_sides() -> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    let root = tempfile::tempdir()?;
+    let source = root.path().join("source");
+    let target = root.path().join("target");
+    fs::create_dir_all(source.join("nested"))?;
+    fs::create_dir_all(target.join("nested"))?;
+    fs::write(source.join("nested/incoming.txt"), b"new")?;
+    fs::write(source.join("nested/shared.txt"), b"incoming wins")?;
+    fs::write(target.join("nested/stays.txt"), b"keep me")?;
+    fs::write(target.join("nested/shared.txt"), b"old")?;
+    let (plans, on_merged) = recorded_plans();
+    let listed_on = Arc::new(std::sync::Mutex::new(Vec::new()));
+    // Legacy listed in chunks; the engine's copy lists a folder whole. Either goes through the seam.
+    let listing = |op: Op, folder: &'static str| -> (Op, &'static str, usize, Racer) {
+        let listed_on = listed_on.clone();
+        let racer: Racer = Box::new(move || {
+            listed_on
+                .lock()
+                .expect("listings")
+                .push((folder, thread::current().id()));
+        });
+        (op, folder, 0, racer)
+    };
+    let _scope = FsQuirks::install(
+        root.path(),
+        Quirks {
+            before: [Op::List, Op::ListChunks]
+                .into_iter()
+                .flat_map(|op| [listing(op, "source"), listing(op, "nested")])
+                .collect(),
+            ..Quirks::default()
+        },
+    );
+
+    let result = merge_local(&source, &target, false, Cancellable::new(), &on_merged);
+
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(fs::read(target.join("nested/incoming.txt"))?, b"new");
+    assert_eq!(
+        fs::read(target.join("nested/shared.txt"))?,
+        b"incoming wins"
+    );
+    assert_eq!(fs::read(target.join("nested/stays.txt"))?, b"keep me");
+    let listed_on = listed_on.lock().expect("listings");
+    let folders: Vec<_> = listed_on.iter().map(|(folder, _)| *folder).collect();
+    assert!(
+        folders.contains(&"source") && folders.contains(&"nested"),
+        "each local source folder is listed through the filesystem seam: {folders:?}"
+    );
+    let plans = plans.borrow();
+    assert_eq!(
+        plans[0].created,
+        vec![Location::local(target.join("nested/incoming.txt"))]
+    );
+    assert_eq!(
+        plans[0].overwritten,
+        vec![Location::local(target.join("nested/shared.txt"))]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_merge_replaces_nothing_with_a_link_the_destination_cannot_hold() -> Result<(), Box<dyn Error>>
+{
+    let _serial = serial()?;
+    // The FAT row runs without a Trash: a simulated drive's Trash would be the home one, which
+    // a real FAT drive's is not, and legacy staged the original through a hook here.
+    for (row, quirks, links) in [
+        ("vfat", (|| without_trash(Quirks::vfat())) as Preset, false),
+        ("ext4", Quirks::ext4, true),
+    ] {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        fs::create_dir_all(&source)?;
+        fs::create_dir_all(&target)?;
+        fs::write(source.join("a.txt"), b"a")?;
+        std::os::unix::fs::symlink("a.txt", source.join("link"))?;
+        fs::write(target.join("link"), b"earlier")?;
+        let _target = FsQuirks::install(&target, quirks());
+
+        merge_local(&source, &target, false, Cancellable::new(), &no_plan)?;
+
+        assert_eq!(fs::read(target.join("a.txt"))?, b"a", "{row}");
+        let trashed = in_trash(&target.join("link"));
+        if links {
+            assert!(trashed.is_some(), "{row}");
+            assert_eq!(fs::read_link(target.join("link"))?, Path::new("a.txt"));
+        } else {
+            assert_eq!(trashed, None, "{row}");
+            assert_eq!(fs::read(target.join("link"))?, b"earlier");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn an_original_that_cannot_go_back_stays_aside_and_is_named() -> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    let root = tempfile::tempdir()?;
+    let source = root.path().join("source");
+    let target = root.path().join("target");
+    fs::create_dir_all(&source)?;
+    fs::create_dir_all(&target)?;
+    std::os::unix::fs::symlink("elsewhere", source.join("link"))?;
+    fs::write(target.join("link"), b"earlier")?;
+    // FAT holds no link, so the original set aside for it must go back, and that fails.
+    let _target = FsQuirks::install(
+        &target,
+        Quirks {
+            fail: vec![(Op::Rename, "link", 1, Errno::IO)],
+            ..without_trash(Quirks::vfat())
+        },
+    );
+
+    let result = merge_local(&source, &target, false, Cancellable::new(), &no_plan);
+
+    let message = result
+        .expect_err("the original could not go back")
+        .message()
+        .to_owned();
+    let aside = names(&target)?
+        .into_iter()
+        .find(|name| name.starts_with(".asc-files-originals-"))
+        .ok_or("the aside folder stays")?;
+    assert_eq!(fs::read(target.join(&aside).join("link"))?, b"earlier");
+    assert!(message.contains("stayed aside"), "{message}");
+    assert!(message.contains(aside.as_str()), "{message}");
+    Ok(())
+}

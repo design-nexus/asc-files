@@ -31,9 +31,9 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `restore_safety.rs` | 28 | 28 | 0 | 0 |
 | `undo.rs` | 23 | 16 | 0 | 7 |
 | `trash_capabilities.rs` | 1 | 0 | 0 | 1 (ignored upstream too) |
-| `merge.rs`, first pass | 66 | 14 | 0 | 2 (50 still to port: legacy's merge hooks and seams, and its snapshot undo) |
-| **So far** | **352** | **297** | **2** | **53** |
-| Remaining 3 files (`copy`, `progress`, `sync`), and 50 of `merge.rs` | 140 | – | – | – |
+| `merge.rs`, so far | 66 | 17 | 0 | 2 (47 still to port: legacy's merge hooks and seams, and its snapshot undo) |
+| **So far** | **355** | **300** | **2** | **53** |
+| Remaining 3 files (`copy`, `progress`, `sync`), and 47 of `merge.rs` | 137 | – | – | – |
 
 ## Ignored
 
@@ -62,6 +62,9 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `restore_safety::trash_items_whose_files_share_names_are_restored_whole`, the order of copies and deletions | Legacy copied both items before deleting either Trash copy, and checked that order. Jobs restore item by item; the proven deletion of one copy leaves the item sharing its file whole, which the rest checks. |
 | `undo::undo_says_nothing_of_fixed_entries_gone_from_the_names_they_were_saved_as`, the row through GIO | Legacy also ran it with the original as a share's location, which GIO renamed: the remote adapter. The local row runs. |
 | `undo::*`, requests with names `Fix` | Legacy's undo of a move took a name mode; one that fixed names was a move back as redo makes it. The stand-in runs those as the journal's redo does (`ops::move_as`, fixing), and the rest through the journal's undo. |
+| `merge::*`, legacy's `MergeHooks` | Legacy injected its copy and its staging of originals; the ported tests run the engine's own merge, and an original staged by a hook is checked in the (isolated) Trash, or aside without one. Legacy's second plan, of placed snapshots for its own undo, is the journal's steps. |
+| `merge::a_merge_replaces_nothing_with_a_link_the_destination_cannot_hold`, the FAT row | Run without a Trash: a simulated FAT drive's Trash is the home one, across the simulated mount, where a real FAT drive has its own. |
+| `merge::merging_recurses_into_subdirectories_shared_by_both_sides`, the listing | Legacy listed in chunks; the engine's copy lists a folder whole. Either goes through the filesystem seam, which is what is checked. |
 | `leftovers::stale_probes_go_only_when_empty_and_old`, the mount-lane half | Legacy swept on its mount's background lane and checked that a slow sweep kept the lane answering. The engine has no lanes: the backend runs the sweep on a thread of its own. That the sweep removes a listed stale probe is still checked. |
 | `paste_results::an_item_replaced_without_trash_is_left_out_of_the_paste_undo`, the order of moves | Legacy moved the items without a conflict first; jobs keep the order asked for. The moves are compared as a set. |
 
@@ -210,6 +213,12 @@ ported with a reason. This list must be empty, or every entry justified, before 
   reported every name it could not give back, and every entry gone since, as a failure. It now renames in place
   through the layer; an entry gone since is passed over, and one keeping its saved name is reported as renamed (name
   taken, or refused) or kept, as legacy did (`undo::Outcome::changes`, `renamed` and `kept` on the protocol).
+- **Fixed, data loss:** a merge that had to put an original back (its incoming item left out, as a link FAT cannot
+  hold) ignored a failure to do so: the original stayed in the Trash with nothing said, or, without a Trash, the
+  folder it waited in was then deleted with it. A failure is now reported with where the original is, and that
+  folder stays. Originals are set aside and put back through the engine's filesystem layer, and if setting one
+  aside fails, every original set aside so far goes back before the merge stops.
+  (`an_original_that_cannot_go_back_stays_aside_and_is_named`, new.)
 - **Open:** a bulk path for many small items; `rename` and `create` on the protocol; a paste-planning call.
 
 ## Archives (legacy: 225 tests)

@@ -478,19 +478,42 @@ fn merge_via_tree(
         match plan.choice(&clash.path) {
             Clash::Replace if !clash.existing.is_folder => {
                 let at = target.join(&clash.path);
-                let original = match crate::trash::put(&at) {
-                    Ok(trashed) => Original::Trashed(trashed),
-                    Err(error) if error.kind() == ErrorKind::NotSupported => {
+                let original = crate::trash::put(&at)
+                    .map(Original::Trashed)
+                    .or_else(|error| {
+                        if error.kind() != ErrorKind::NotSupported {
+                            return Err(error);
+                        }
                         let kept = aside.join(&clash.path);
                         if let Some(folder) = kept.parent() {
                             fs::create_dir_all(folder).map_err(crate::error::os_io_error)?;
                         }
-                        fs::rename(&at, &kept).map_err(crate::error::os_io_error)?;
-                        Original::Aside(kept)
+                        rename_no_replace(&at, &kept)?;
+                        Ok(Original::Aside(kept))
+                    });
+                match original {
+                    Ok(original) => {
+                        replaced.insert(clash.path, original);
                     }
-                    Err(error) => return Err(error),
-                };
-                replaced.insert(clash.path, original);
+                    // Nothing is merged: every original set aside so far goes back first.
+                    Err(error) => {
+                        let mut not_back = Vec::new();
+                        for (path, original) in &replaced {
+                            if let Err(left) = bring_back(path, original, &target) {
+                                not_back.push(left.message().to_owned());
+                            }
+                        }
+                        if not_back.is_empty() {
+                            let _ = fs::remove_dir_all(&aside);
+                            return Err(error);
+                        }
+                        return Err(crate::error::io_error(format!(
+                            "{}\n{}",
+                            error.message(),
+                            not_back.join("\n")
+                        )));
+                    }
+                }
             }
             _ => {
                 keeping_both.insert(clash.path);
@@ -526,20 +549,16 @@ fn merge_via_tree(
         && settle.reach().is_err();
     // An original whose incoming item was left out (a link the drive cannot hold, say) comes
     // back, so nothing it held is lost to a replacement that never came.
+    // One that cannot come back is a failure that says where it is.
+    let mut not_back = Vec::new();
     replaced.retain(|path, original| {
         let at = target.join(path);
         let placed = fs::symlink_metadata(&at).is_ok();
         match original {
-            Original::Trashed(trashed) if !placed => {
-                if let Some(entry) = crate::trash::list()
-                    .into_iter()
-                    .find(|entry| entry.info == trashed.info)
-                {
-                    let _ = crate::trash::restore(&entry);
+            _ if !placed => {
+                if let Err(error) = bring_back(path, original, &target) {
+                    not_back.push((at.clone(), error));
                 }
-            }
-            Original::Aside(kept) if !placed => {
-                let _ = fs::rename(&*kept, &at);
             }
             Original::Aside(kept) if !unconfirmed => {
                 let _ = fs::remove_file(&*kept).or_else(|_| fs::remove_dir_all(&*kept));
@@ -548,7 +567,8 @@ fn merge_via_tree(
         }
         placed
     });
-    if !unconfirmed {
+    // Never while it holds an original that could not go back.
+    if !unconfirmed && not_back.is_empty() {
         let _ = fs::remove_dir_all(&aside);
     }
     let after = tree(&target);
@@ -610,6 +630,7 @@ fn merge_via_tree(
     if let Some(error) = stopped {
         merged.failed.push((source.to_path_buf(), error));
     }
+    merged.failed.extend(not_back);
     if unconfirmed {
         merged.failed.push((
             aside.clone(),
@@ -784,4 +805,59 @@ mod choices {
                 .collect()
         })
     }
+}
+
+/// Puts back at its name an original set aside for a replacement that never came; a failure says
+/// where the original is.
+fn bring_back(path: &Path, original: &Original, target: &Path) -> Result<(), Error> {
+    let at = target.join(path);
+    match original {
+        Original::Trashed(trashed) => {
+            let Some(entry) = crate::trash::list()
+                .into_iter()
+                .find(|entry| entry.info == trashed.info)
+            else {
+                return Ok(());
+            };
+            crate::trash::restore(&entry).map(drop).map_err(|error| {
+                crate::error::io_error(rust_i18n::t!(
+                    "The original of “%{name}” stayed in the Trash, as “%{file}”: %{error}",
+                    name = path.display(),
+                    file = entry.file.display(),
+                    error = error.message()
+                ))
+            })
+        }
+        Original::Aside(kept) => rename_no_replace(kept, &at).map_err(|error| {
+            crate::error::io_error(rust_i18n::t!(
+                "The original of “%{name}” stayed aside, as “%{file}”: %{error}",
+                name = path.display(),
+                file = kept.display(),
+                error = error.message()
+            ))
+        }),
+    }
+}
+
+/// Renames `from` to `to` through the engine's filesystem, never over what holds `to`.
+fn rename_no_replace(from: &Path, to: &Path) -> Result<(), Error> {
+    use crate::adapters::local_operations::{
+        fs_ops::{Entry, fs},
+        native_fs::open_local_parent_directory,
+    };
+    let (Some(from_dir), Some(from_name), Some(to_dir), Some(to_name)) =
+        (from.parent(), from.file_name(), to.parent(), to.file_name())
+    else {
+        return Err(crate::error::translated_io_error(
+            "Invalid move destination",
+        ));
+    };
+    let from_dir = open_local_parent_directory(from_dir).map_err(crate::error::io_error)?;
+    let to_dir = open_local_parent_directory(to_dir).map_err(crate::error::io_error)?;
+    fs().rename(
+        Entry::new(&from_dir, from_name),
+        Entry::new(&to_dir, to_name),
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .map_err(crate::error::os_io_error)
 }
