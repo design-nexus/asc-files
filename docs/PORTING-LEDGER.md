@@ -30,11 +30,12 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `release.rs` | 5 | 0 | 0 | 5 |
 | `replacement.rs` | 28 | 25 | 0 | 3 |
 | `restore_safety.rs` | 28 | 28 | 0 | 0 |
+| `sync.rs` | 23 | 6 | 0 | 17 |
 | `undo.rs` | 23 | 16 | 0 | 7 |
 | `trash_capabilities.rs` | 1 | 0 | 0 | 1 (ignored upstream too) |
 | `merge.rs` | 66 | 37 | 1 | 28 |
-| **So far** | **417** | **328** | **3** | **86** |
-| Remaining 2 files (`copy`, `sync`), set aside to port by hand | 75 | – | – | – |
+| **So far** | **440** | **334** | **3** | **103** |
+| Remaining: `copy.rs`, set aside to port by hand | 52 | – | – | – |
 
 ## Ignored
 
@@ -140,6 +141,10 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `progress::fat32_copy_errors_without_english_size_text_skip_an_uncancellable_flush` | Legacy read GIO's error text to tell FAT32's size refusal from others; the engine refuses an oversized file before copying (`fat32_size_check_rejects_oversized_nested_file_before_copy`). |
 | `progress::bulk_copy_reports_bytes_before_each_file_completes` | Legacy's bulk path for many small items, the gap above. |
 | `progress::cancelling_between_moves_reports_completed_and_unattempted_sources` | Lock step, as `deletion::cancelling_between_deletions_reports_completed_and_unattempted_items`; covered by `tests/jobs.rs`. |
+| `sync::owed_deletions_close_in_batches`, `sync::a_failed_barrier_deletes_nothing_in_its_batch_and_stops_the_move`, `sync::cancelling_a_move_closes_its_pending_batch`, `sync::many_moved_files_share_a_barrier_and_are_copied_in_parallel_unless_a_disk_spins`, `sync::names_of_one_file_moved_as_separate_items_are_all_deleted`, `sync::a_writeback_lost_during_a_move_keeps_every_source_it_may_hold`, `sync::a_batch_closes_once_its_first_entry_is_five_seconds_old`, `sync::a_failed_barrier_stops_a_bulk_move`, `sync::bytes_already_written_are_flushed_before_transfer_failure` | Legacy's `owed` batches: the sources a paste's moves copied were deleted together, a batch at a time, after one shared flush. The engine moves item by item, each source deleted only after its own copy's flush (`the_barrier_before_deleting_a_moved_source_follows_the_destination_family`), so a failed flush keeps that source and stops nothing else. Sharing one flush across many small moves is part of the bulk-path gap. |
+| `sync::removable_copy_roots_are_synced_once`, `sync::sync_filesystem_on_a_local_directory_succeeds`, `sync::failed_flush_after_cancel_reports_that_writes_may_still_be_pending`, `sync::fat32_limit_failure_does_not_start_an_uncancellable_device_flush` | Legacy's paste helpers (`removable_sync_roots`, `sync_filesystem`, `stop_transfer`). A durable job opens one flush of its drive before it writes and reaches it at the end, whatever happened (`failed_final_flush_reports_that_writes_may_still_be_pending`). |
+| `sync::bytes_already_written_are_flushed_before_cancellation_and_cancel_is_not_pasted`, `sync::a_cancel_after_the_flush_starts_does_not_report_success` | Cancels sent from inside the paste's events, in lock step; a durable job reaches its flush after a cancel too, and reports the cancel. |
+| `sync::files_gio_wrote_are_synced_one_by_one_where_the_barrier_misses_them` | GIO's copy: the remote adapter. |
 | `create_entry::a_folder_reported_by_a_file_create_is_a_taken_name` | Legacy's private helper `name_taken`; its rule (a folder at the name refuses an exclusive file create with `EISDIR`, so the name is taken) is in `ops::create` and runs in the ported concurrency tests. |
 | `paste_results::a_cancel_that_cuts_off_an_item_counts_it_as_not_attempted` | Drives the GTK app's `Browser`. Cancelling is the job runner's (`tests/jobs.rs`: items not begun are `NotAttempted`). |
 | `paste_results::only_a_cut_off_between_local_locations_counts_as_not_attempted` | Legacy's rule for remote (`sftp://`) ends of a cut-off paste: the remote adapter. |
@@ -266,6 +271,13 @@ ported with a reason. This list must be empty, or every entry justified, before 
 - **Added:** a batch measures its items before writing (`ops::measure`), and `job.started` says how much it will
   write (`totalBytes`, `totalFiles`). An item holding a file too large for its destination (FAT32's 4 GiB) fails at
   once, naming the file, where before the copy ran until the drive refused it at 4 GiB.
+- **Fixed:** a replace on a drive without a Trash deletes the original once the copy is on the drive, but the copy
+  was not synced file by file where the drive's flush does not cover it (SMB); now it is. A barrier before a
+  moved source is deleted syncs the folder too on a removable drive, as legacy's did.
+- **Added:** `job.flushing` while a durable batch waits for its drive, and `flushes` in `job.progress` for the
+  flushes an item began (before deleting a moved source, say), so a client can say the drive is still being
+  written to; legacy's `FlushingToDevice`. A failed final flush says that writes may still be pending and to wait
+  for safe eject. An item's last progress is reported before it ends.
 - **Open:** undo of created folders without a Trash (see above).
 - **Open:** a bulk path for many small items; `rename` and `create` on the protocol; a paste-planning call.
 

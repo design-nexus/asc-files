@@ -62,6 +62,7 @@ mod placement;
 mod progress;
 mod replacement;
 mod restore_safety;
+mod sync;
 mod undo;
 
 /// Tests that change process-wide state (the clock, the kernel release, mount capabilities)
@@ -647,7 +648,9 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
             items: items.clone(),
             names: NameMode::Fix,
             record: None,
-            durable: Some(false),
+            // A destination a test marked removable makes the batch durable, as a USB stick would.
+            // As a job decides: durable onto a removable drive, which a test may mark.
+            durable: None,
         },
         send,
     )
@@ -663,13 +666,28 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
         if let Event::Started { bytes, files, .. } = &event {
             (total_bytes, total_files) = (*bytes, *files);
         }
+        // A durable batch whose final flush failed: what it wrote may not be on the drive.
+        if let Event::Finished {
+            settled: Some(Err(error)),
+            ..
+        } = &event
+        {
+            failure.get_or_insert_with(|| error.message().to_owned());
+        }
         if let Event::ItemDone { .. } = &event {
             bytes += item.bytes;
             files += item.files;
             item = crate::ops::ProgressSnapshot::default();
         }
         match event {
+            Event::Flushing { .. } => {
+                events.push(OperationEvent::FlushingToDevice { request_id: id })
+            }
             Event::Progress { progress, .. } => {
+                // A flush begun inside an item, before a moved source is deleted, say.
+                if progress.flushes > item.flushes {
+                    events.push(OperationEvent::FlushingToDevice { request_id: id });
+                }
                 item = progress;
                 events.push(OperationEvent::TransferProgress {
                     request_id: id,
@@ -866,6 +884,34 @@ fn numbers_at(path: &Path) -> (u64, u64) {
 /// finished, as legacy's tests turned the GLib loop.
 fn wait_for_operation<T: ?Sized>(_events: &T, _ended: impl Fn(&OperationEvent) -> bool) {
     pump_all();
+}
+
+/// Marks `root` removable, so pastes into it are durable, and fails its final flush with `fail`.
+struct RemovableFlushGuard(Option<FsQuirks>);
+
+impl RemovableFlushGuard {
+    fn install(root: &Path, fail: Option<io::ErrorKind>) -> Self {
+        *crate::drives::REMOVABLE_FOR_TEST
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(root.to_path_buf());
+        Self(fail.map(|_| {
+            FsQuirks::install(
+                root,
+                Quirks {
+                    fail: vec![(fs_quirks::Op::SyncFs, "*", 0, rustix::io::Errno::IO)],
+                    ..Quirks::default()
+                },
+            )
+        }))
+    }
+}
+
+impl Drop for RemovableFlushGuard {
+    fn drop(&mut self) {
+        *crate::drives::REMOVABLE_FOR_TEST
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
 }
 
 /// Legacy's operation provider, as far as deleting and restoring from the Trash go: each is a

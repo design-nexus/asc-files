@@ -692,8 +692,15 @@ fn notification(event: Event) -> Value {
             progress,
         } => (
             "job.progress",
-            json!({"job": id(job), "item": item, "bytes": progress.bytes, "files": progress.files}),
+            json!({
+                "job": id(job),
+                "item": item,
+                "bytes": progress.bytes,
+                "files": progress.files,
+                "flushes": progress.flushes,
+            }),
         ),
+        Event::Flushing { job } => ("job.flushing", json!({"job": id(job)})),
         Event::ItemDone {
             job,
             index,

@@ -2619,8 +2619,9 @@ impl FsOps for Scoped {
         match scope_for_path(path) {
             Some(scope) => scope
                 .run(Op::CanTrash, &[], |scope| {
+                    // A mount whose Trash refuses every item has none to use.
                     Ok(match scope.quirk(|quirks| quirks.trash) {
-                        Trash::Unsupported => false,
+                        Trash::Unsupported | Trash::Refused => false,
                         _ => System.can_trash(path),
                     })
                 })

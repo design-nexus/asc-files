@@ -13,7 +13,21 @@ pub fn device(path: &Path) -> Option<u64> {
 
 /// Whether `path` is on a removable drive: USB, an SD card, or a disk the kernel marks
 /// removable. A network share or a drive the kernel cannot place is not.
+/// A folder tests treat as on a removable drive, as legacy's tests marked one.
+#[cfg(test)]
+pub(crate) static REMOVABLE_FOR_TEST: std::sync::Mutex<Option<std::path::PathBuf>> =
+    std::sync::Mutex::new(None);
+
 pub fn is_removable(path: &Path) -> bool {
+    #[cfg(test)]
+    if REMOVABLE_FOR_TEST
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .is_some_and(|root| path.starts_with(root))
+    {
+        return true;
+    }
     let Ok(stat) = rustix::fs::statx(
         rustix::fs::CWD,
         path,

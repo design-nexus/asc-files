@@ -85,9 +85,19 @@ pub(super) struct SharedProgress {
     bytes: AtomicU64,
     files: AtomicUsize,
     current: Mutex<Option<String>>,
+    /// Flushes to the drive begun: a client says the drive is still being written to.
+    flushes: AtomicUsize,
 }
 
 impl SharedProgress {
+    pub(super) fn begin_flush(&self) {
+        self.flushes.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(super) fn flushes(&self) -> usize {
+        self.flushes.load(Ordering::Relaxed)
+    }
+
     pub(super) fn reported(&self) -> Reported {
         Reported {
             bytes: self.bytes.load(Ordering::Relaxed),

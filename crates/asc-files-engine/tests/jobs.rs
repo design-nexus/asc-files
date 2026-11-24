@@ -180,6 +180,7 @@ fn events_start_once_report_each_item_once_and_finish_last() {
             Event::Queued { job, .. }
             | Event::Started { job, .. }
             | Event::Progress { job, .. }
+            | Event::Flushing { job }
             | Event::ItemDone { job, .. }
             | Event::Finished { job, .. } => *job,
         })

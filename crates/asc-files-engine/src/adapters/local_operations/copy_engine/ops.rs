@@ -52,6 +52,8 @@ pub struct Progress(Arc<SharedProgress>);
 pub struct ProgressSnapshot {
     pub bytes: u64,
     pub files: usize,
+    /// Flushes to the drive begun, each a wait while the drive writes what it was given.
+    pub flushes: usize,
 }
 
 impl Progress {
@@ -64,6 +66,7 @@ impl Progress {
         ProgressSnapshot {
             bytes: reported.bytes,
             files: reported.files,
+            flushes: self.0.flushes(),
         }
     }
 }
@@ -728,7 +731,12 @@ fn moving(
         None,
     )
     .map_err(|failure| failure.into_error(&source.name))?;
-    barrier.reach(fs(), false).map_err(|error| {
+    {
+        if barrier.flushes() {
+            progress.0.begin_flush();
+        }
+        barrier.reach(fs(), crate::drives::is_removable(&barrier.path))
+    }.map_err(|error| {
         crate::error::io_error(rust_i18n::t!(
             "The device could not finish writing: %{error}. Earlier writes may still be pending; wait for safe eject before unplugging.",
             error = crate::adapters::local_operations::native_fs::os_error_text(error)
@@ -904,7 +912,12 @@ pub(crate) fn put_back(
             _ => failed(error.message()),
         }
     })?;
-    barrier.reach(fs(), false).map_err(|error| {
+    {
+        if barrier.flushes() {
+            progress.0.begin_flush();
+        }
+        barrier.reach(fs(), crate::drives::is_removable(&barrier.path))
+    }.map_err(|error| {
         crate::error::io_error(rust_i18n::t!(
             "The device could not finish writing: %{error}. Earlier writes may still be pending; wait for safe eject before unplugging.",
             error = crate::adapters::local_operations::native_fs::os_error_text(error)
@@ -1072,7 +1085,12 @@ pub(crate) fn merge_by_moving(
     let (nested, published) = merge(&copy, &source, &into.join(name), None, None)
         .map_err(|failure| failure.into_error(&source.name))?;
     for barrier in std::iter::once(&barrier).chain(&nested) {
-        barrier.reach(fs(), false).map_err(|error| {
+        {
+        if barrier.flushes() {
+            progress.0.begin_flush();
+        }
+        barrier.reach(fs(), crate::drives::is_removable(&barrier.path))
+    }.map_err(|error| {
             crate::error::io_error(rust_i18n::t!(
                 "The device could not finish writing: %{error}. Earlier writes may still be pending; wait for safe eject before unplugging.",
                 error = crate::adapters::local_operations::native_fs::os_error_text(error)
@@ -1125,7 +1143,12 @@ impl Settle {
     }
 
     pub fn reach(&self) -> Result<(), Error> {
-        self.0.reach(fs(), true).map_err(crate::error::os_io_error)
+        self.0.reach(fs(), true).map_err(|error| {
+            crate::error::io_error(rust_i18n::t!(
+                "The device could not finish writing: %{error}. Earlier writes may still be pending; wait for safe eject before unplugging.",
+                error = crate::adapters::local_operations::native_fs::os_error_text(error)
+            ))
+        })
     }
 }
 
@@ -1377,7 +1400,12 @@ fn copy_then_replace(
             return Err(error);
         }
     };
-    barrier.reach(fs(), false).map_err(|error| {
+    {
+        if barrier.flushes() {
+            progress.0.begin_flush();
+        }
+        barrier.reach(fs(), crate::drives::is_removable(&barrier.path))
+    }.map_err(|error| {
         crate::error::io_error(rust_i18n::t!(
             "The device could not finish writing: %{error}. Earlier writes may still be pending; wait for safe eject before unplugging.",
             error = crate::adapters::local_operations::native_fs::os_error_text(error)
@@ -1488,7 +1516,7 @@ fn replace_by_moving(
             (source_dir, folder),
             (source_name, original),
             &target_path,
-            &barrier,
+            (&barrier, progress),
         ) {
             Ok(gone) => gone,
             Err(error) => return Err(swap_back(error)),
@@ -1500,7 +1528,7 @@ fn replace_by_moving(
             (source_dir, source_name, moving),
             (target, original, found.file_attributes()),
             (is_folder, true),
-            (&|| {}, &barrier),
+            (&|| {}, &barrier, progress),
         )?
     };
     let mut changes = Changes::default();
@@ -1643,13 +1671,19 @@ pub fn replace_as(
         name: source_name,
         recorded_in: None,
     };
+    // Without a Trash the original is deleted once the copy is on the drive, so the copy must
+    // be provably there: on a mount the drive's flush does not cover (SMB), each file is synced.
+    let deletes_original = !fs().can_trash(&into.join(&target));
     let copy = Copy::new(
         fs(),
         source.name.clone(),
         cancel.0.clone(),
         progress.0.clone(),
         true,
-        with_names(names),
+        Options {
+            durable: deletes_original,
+            ..with_names(names)
+        },
         Deadline::default(),
     );
     copy_new(
@@ -1699,7 +1733,7 @@ pub fn replace_as(
                     (&originals.handle(), &waiting),
                     (&target, original),
                     &target_path,
-                    &barrier,
+                    (&barrier, progress),
                 )
                 .map_err(|error| kept_at(&waiting.join(&target), &error))?;
                 Some(clear_originals(
@@ -1741,7 +1775,12 @@ pub fn replace_as(
             .stat(Entry::new(&*parent, &stage), false)
             .is_ok_and(|stat| mount.is_still(parent.as_fd(), &found, &stat));
         let trashed = if swapped_is_original {
-            dispose((&parent, into), (&stage, original), &target_path, &barrier)
+            dispose(
+                (&parent, into),
+                (&stage, original),
+                &target_path,
+                (&barrier, progress),
+            )
         } else {
             Err(placement::place_error(PlaceError::Changed))
         };
@@ -1780,7 +1819,7 @@ pub fn replace_as(
             (&parent, &stage, staged),
             (&target, original, found.file_attributes()),
             (is_folder, false),
-            (&discard_stage, &barrier),
+            (&discard_stage, &barrier, progress),
         )?
     };
     let mut kept = Vec::new();
@@ -1822,7 +1861,7 @@ fn replace_by_setting_aside(
         Option<crate::services::Attributes>,
     ),
     (is_folder, moving): (bool, bool),
-    (discard_stage, barrier): (&dyn Fn(), &super::Barrier),
+    (discard_stage, barrier, progress): (&dyn Fn(), &super::Barrier, &Progress),
 ) -> Result<Gone, Error> {
     use crate::adapters::local_operations::{
         fs_ops::Entry,
@@ -1903,7 +1942,7 @@ fn replace_by_setting_aside(
             (&originals, &into.join(&aside.originals.name)),
             (&aside.name, original),
             &into.join(target),
-            barrier,
+            (barrier, progress),
         )
     });
     match gone {
@@ -2025,12 +2064,17 @@ fn dispose(
         crate::adapters::local_operations::native_fs::LocalFileIdentity,
     ),
     recorded: &Path,
-    barrier: &super::Barrier,
+    (barrier, progress): (&super::Barrier, &Progress),
 ) -> Result<Gone, Error> {
     match crate::trash::put_recording(&into.join(name), Some(recorded)) {
         Ok(trashed) => Ok(Gone::Trashed(trashed)),
         Err(error) if error.kind() == crate::error::ErrorKind::NotSupported => {
-            if let Err(error) = barrier.reach(fs(), false) {
+            if let Err(error) = {
+                if barrier.flushes() {
+                    progress.0.begin_flush();
+                }
+                barrier.reach(fs(), crate::drives::is_removable(&barrier.path))
+            } {
                 let error = crate::error::io_error(rust_i18n::t!(
                     "The device could not finish writing: %{error}. Earlier writes may still be pending; wait for safe eject before unplugging.",
                     error = crate::adapters::local_operations::native_fs::os_error_text(error)

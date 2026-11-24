@@ -133,6 +133,8 @@ pub enum Event {
         item: usize,
         progress: ProgressSnapshot,
     },
+    /// The batch waits while its drive writes everything it was given (a durable batch).
+    Flushing { job: JobId },
     ItemDone {
         job: JobId,
         index: usize,
@@ -309,6 +311,9 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
             outcome,
         });
     }
+    if settle.is_some() {
+        send(Event::Flushing { job });
+    }
     let settled = settle.map(|settle| settle.and_then(|settle| settle.reach()));
     // Filed even when cancelled or partly failed: what was done can be undone.
     let undo = match &request.record {
@@ -426,6 +431,15 @@ fn run_item(
                     });
                     last = now;
                 }
+            }
+            // What changed since the last reading, a flush included, is reported before the item ends.
+            let now = progress_ref.snapshot();
+            if now != last {
+                send(Event::Progress {
+                    job,
+                    item: index,
+                    progress: now,
+                });
             }
         });
         let source = item.source.as_path();
