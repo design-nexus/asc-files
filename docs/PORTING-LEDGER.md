@@ -31,14 +31,15 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `restore_safety.rs` | 28 | 28 | 0 | 0 |
 | `undo.rs` | 23 | 16 | 0 | 7 |
 | `trash_capabilities.rs` | 1 | 0 | 0 | 1 (ignored upstream too) |
-| `merge.rs`, so far | 66 | 25 | 0 | 2 (39 still to port: legacy's merge hooks and seams, and its snapshot undo) |
-| **So far** | **363** | **308** | **2** | **53** |
-| Remaining 3 files (`copy`, `progress`, `sync`), and 39 of `merge.rs` | 129 | – | – | – |
+| `merge.rs`, so far | 66 | 28 | 1 | 3 (34 still to port: legacy's merge hooks and seams, and its snapshot undo) |
+| **So far** | **368** | **311** | **3** | **54** |
+| Remaining 3 files (`copy`, `progress`, `sync`), and 34 of `merge.rs` | 124 | – | – | – |
 
 ## Ignored
 
 | Test | Why |
 |---|---|
+| `merge::fat_merge_overwrites_the_names_it_plans_and_keeps_the_names_that_need_no_fix` | **Gap.** A merge finds clashes by source name, not by the name the destination stores: on FAT, `nested?` never meets `nested_`, so every entry is kept as both, even one whose exact name the user chose to replace. Nothing is lost. Legacy planned by stored names (`plan_names`), names needing no fix first; it returns with the paste-planning call. |
 | `file_copy::selected_names_of_a_linked_file_on_an_smb_share_are_opened_one_at_a_time` | Needs many small top-level items copied in parallel. Legacy's paste had a bulk path for this; `jobs` copies top-level items one at a time (the engine's parallel walk applies inside folders). **Gap:** a bulk path in `jobs`. |
 
 ## Rows skipped inside ported tests
@@ -70,6 +71,7 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `merge::a_merge_without_trash_reports_its_folder_kept_by_an_original_still_open`, the order of what is kept | The engine reports what it left out as it goes; the items are compared in any order. |
 | `merge::merge_originals_are_deleted_only_once_the_merge_is_flushed`, the source on a failed flush | Legacy copied a merging move within one drive, so a failed flush kept the source as well as the original. The engine renames there: the moved item is at the name, and the original stays aside, named in the error. |
 | `merge::a_failed_merge_preserves_the_destinations_existing_contents`, `merge::a_staging_failure_aborts_the_merge_and_reports_only_what_was_staged` | Legacy's copy and staging hooks became a cancel and a refused Trash through the filesystem seam. Legacy left an original staged before the failure; the engine puts it back, which is checked. |
+| `merge::*`, the GIO copy rows | Legacy ran several merge tests with GIO's copy as well as its own: the remote adapter. |
 | `leftovers::stale_probes_go_only_when_empty_and_old`, the mount-lane half | Legacy swept on its mount's background lane and checked that a slow sweep kept the lane answering. The engine has no lanes: the backend runs the sweep on a thread of its own. That the sweep removes a listed stale probe is still checked. |
 | `paste_results::an_item_replaced_without_trash_is_left_out_of_the_paste_undo`, the order of moves | Legacy moved the items without a conflict first; jobs keep the order asked for. The moves are compared as a set. |
 
@@ -120,6 +122,7 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `undo::a_rename_gio_has_no_backend_for_fails_instead_of_ending_the_process` | GIO: the remote adapter. |
 | `undo::undoing_a_move_back_to_another_kind_of_location_gives_fixed_names_back` | Its premise is an original addressed through GIO, which renamed with its own rules: the remote adapter. The local give-back of such names is `undoing_a_move_gives_fixed_names_back_and_reports_those_it_cannot`. |
 | `undo::undoing_a_cross_volume_move_deletes_the_moved_items_once_they_are_flushed` | Legacy flushed once for a whole undo and deleted every moved item after. The journal undoes item by item, each item's source deleted only after its own copy is flushed, so a failed flush keeps that item whole and leaves the ones before it done. |
+| `merge::a_merge_onto_fat_takes_the_rules_of_a_folder_inside_it_only_from_another_device_mounted_there` | Its FAT row replaces an original by the name FAT stores, the planning gap above; it returns with it. |
 | `create_entry::a_folder_reported_by_a_file_create_is_a_taken_name` | Legacy's private helper `name_taken`; its rule (a folder at the name refuses an exclusive file create with `EISDIR`, so the name is taken) is in `ops::create` and runs in the ported concurrency tests. |
 | `paste_results::a_cancel_that_cuts_off_an_item_counts_it_as_not_attempted` | Drives the GTK app's `Browser`. Cancelling is the job runner's (`tests/jobs.rs`: items not begun are `NotAttempted`). |
 | `paste_results::only_a_cut_off_between_local_locations_counts_as_not_attempted` | Legacy's rule for remote (`sftp://`) ends of a cut-off paste: the remote adapter. |
@@ -236,6 +239,9 @@ ported with a reason. This list must be empty, or every entry justified, before 
   stops at its first refusal. A file there still open on a share then hid the rest, and the folder was reported
   as not removable rather than held open. What else can go now goes entry by entry first. A merging move no
   longer needs a second flush, its copies having reached the drive before any source went.
+- **Fixed:** an item a merge copied under a name the copy changed (cut to fit, fixed, or numbered as it met
+  another) was not filed, so undo would have left it behind. It is now filed from the copy's own record of the
+  names it changed.
 - **Open:** a bulk path for many small items; `rename` and `create` on the protocol; a paste-planning call.
 
 ## Archives (legacy: 225 tests)

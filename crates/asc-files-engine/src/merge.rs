@@ -601,13 +601,29 @@ fn merge_via_tree(
             continue;
         }
         // A name the engine numbered to keep both came from the incoming item of that name.
+        // A name the copy changed (cut, fixed, or numbered as it met another) came from the source
+        // entry it was asked for.
+        let renamed_from = || {
+            changes.renamed.iter().find_map(|renamed| {
+                (renamed.saved_as.strip_prefix(name).ok()? == path)
+                    .then(|| {
+                        renamed
+                            .requested
+                            .strip_prefix(name)
+                            .ok()
+                            .map(Path::to_path_buf)
+                    })
+                    .flatten()
+            })
+        };
         let (from, conflict) = if sources.contains(path) {
             (source.join(path), Conflict::Fail)
+        } else if let Some(asked) = unnumbered(path).filter(|asked| keeping_both.contains(asked)) {
+            (source.join(asked), Conflict::KeepBoth)
+        } else if let Some(asked) = renamed_from() {
+            (source.join(asked), Conflict::Fail)
         } else {
-            match unnumbered(path).filter(|asked| keeping_both.contains(asked)) {
-                Some(asked) => (source.join(asked), Conflict::KeepBoth),
-                None => continue,
-            }
+            continue;
         };
         let to = target.join(path);
         let original = replaced.remove(path).map(|original| match original {

@@ -1379,3 +1379,193 @@ fn a_staging_failure_aborts_the_merge_and_reports_only_what_was_staged()
     }
     Ok(())
 }
+
+#[test]
+#[ignore = "gap: merge clashes are found by source name, not by the name the destination stores; \
+            planning by stored names (legacy plan_names) returns with the paste-planning call"]
+fn fat_merge_overwrites_the_names_it_plans_and_keeps_the_names_that_need_no_fix()
+-> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    // Legacy also ran a GIO copy here: the remote adapter's.
+    let root = tempfile::tempdir()?;
+    let source = root.path().join("source");
+    let target = root.path().join("target");
+    fs::create_dir_all(source.join("nested?"))?;
+    fs::create_dir_all(target.join("nested_"))?;
+    for (name, contents) in [
+        ("a?.txt", "question"),
+        ("a:.txt", "colon"),
+        ("b:.txt", "b colon"),
+        ("b_.txt", "b kept"),
+        ("C.txt", "upper c"),
+        ("c.txt", "lower c"),
+    ] {
+        fs::write(source.join("nested?").join(name), contents)?;
+    }
+    // `b_ (1).txt` is what an earlier merge of `b:.txt` saved.
+    for (name, contents) in [
+        ("a_.txt", "original a"),
+        ("b_.txt", "original b"),
+        ("b_ (1).txt", "earlier b colon"),
+    ] {
+        fs::write(target.join("nested_").join(name), contents)?;
+    }
+    let _sources = FsQuirks::install(&source, Quirks::default());
+    let _target = FsQuirks::install(&target, Quirks::vfat());
+    let (plans, on_merged) = recorded_plans();
+
+    merge_local(&source, &target, false, Cancellable::new(), &on_merged)?;
+
+    let nested = target.join("nested_");
+    let mut found = Vec::new();
+    for name in names(&nested)? {
+        found.push((name.clone(), fs::read_to_string(nested.join(&name))?));
+    }
+    assert_eq!(
+        found,
+        [
+            ("C.txt", "upper c"),
+            ("a_ (1).txt", "question"),
+            ("a_.txt", "colon"),
+            ("b_ (1).txt", "b colon"),
+            ("b_.txt", "b kept"),
+            ("c (1).txt", "lower c"),
+        ]
+        .map(|(name, contents)| (name.to_owned(), contents.to_owned()))
+    );
+    let mut trashed = ["a_.txt", "b_.txt", "b_ (1).txt"]
+        .iter()
+        .filter_map(|name| in_trash(&nested.join(name)))
+        .map(fs::read_to_string)
+        .collect::<io::Result<Vec<_>>>()?;
+    trashed.sort();
+    assert_eq!(trashed, ["earlier b colon", "original a", "original b"]);
+    let plans = plans.borrow();
+    assert_eq!(
+        plans[0].created.iter().collect::<HashSet<_>>(),
+        ["a_ (1).txt", "C.txt", "c (1).txt"]
+            .map(|name| Location::local(nested.join(name)))
+            .iter()
+            .collect()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_merge_off_fat_keeps_the_names_fat_would_fix() -> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    // Legacy also ran a GIO copy here: the remote adapter's.
+    let root = tempfile::tempdir()?;
+    let source = root.path().join("source");
+    let target = root.path().join("target");
+    fs::create_dir_all(source.join("nested"))?;
+    fs::create_dir_all(target.join("nested"))?;
+    for (name, contents) in [("a:b", "colon"), ("C.txt", "upper"), ("c.txt", "lower")] {
+        fs::write(source.join("nested").join(name), contents)?;
+    }
+    fs::write(target.join("nested/a_b"), "original")?;
+    let _target = FsQuirks::install(&target, Quirks::ext4());
+    let (plans, on_merged) = recorded_plans();
+
+    merge_local(&source, &target, false, Cancellable::new(), &on_merged)?;
+
+    let nested = target.join("nested");
+    for (name, contents) in [
+        ("a:b", "colon"),
+        ("a_b", "original"),
+        ("C.txt", "upper"),
+        ("c.txt", "lower"),
+    ] {
+        assert_eq!(fs::read(nested.join(name))?, contents.as_bytes(), "{name}");
+    }
+    assert_eq!(in_trash(&nested.join("a_b")), None);
+    assert_eq!(
+        plans.borrow()[0].created.iter().collect::<HashSet<_>>(),
+        ["a:b", "C.txt", "c.txt"]
+            .map(|name| Location::local(nested.join(name)))
+            .iter()
+            .collect()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_merge_records_the_names_its_copy_gives_a_cut_name() -> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    // Legacy also ran a GIO copy here: the remote adapter's.
+    let root = tempfile::tempdir()?;
+    let source = root.path().join("source");
+    let disk = root.path().join("disk");
+    fs::create_dir_all(&source)?;
+    fs::create_dir(&disk)?;
+    // Cut to 64 bytes, the long name differs from the short one in case only.
+    fs::write(source.join(format!("A{}", "b".repeat(70))), "long")?;
+    fs::write(source.join(format!("a{}", "b".repeat(63))), "short")?;
+    let _disk = FsQuirks::install(
+        &disk,
+        Quirks {
+            name_max: Some(64),
+            ..Quirks::ext4()
+        },
+    );
+    let (plans, on_merged) = recorded_plans();
+
+    merge_local(&source, &disk, false, Cancellable::new(), &on_merged)?;
+
+    let made = names(&disk)?
+        .into_iter()
+        .map(|name| Location::local(disk.join(name)))
+        .collect::<HashSet<_>>();
+    assert_eq!(made.len(), 2);
+    assert_eq!(
+        plans.borrow()[0]
+            .created
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>(),
+        made
+    );
+    Ok(())
+}
+
+#[test]
+fn a_merge_within_one_disk_fixes_the_names_another_filesystem_mounted_in_its_source_brings()
+-> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    // Legacy also ran a GIO copy here: the remote adapter's.
+    for (own_device, landed) in [(true, "a_b"), (false, "a:b")] {
+        let row = format!("own device {own_device}");
+        let root = tempfile::tempdir()?;
+        let stick = root.path().join("stick");
+        let source = stick.join("a");
+        let target = stick.join("b");
+        fs::create_dir_all(source.join("inner"))?;
+        fs::create_dir_all(target.join("inner"))?;
+        fs::write(source.join("inner/a:b"), "colon")?;
+        let _stick = FsQuirks::install(
+            &stick,
+            Quirks {
+                own_device: true,
+                ..Quirks::ntfs3()
+            },
+        );
+        let _inner = FsQuirks::install(
+            &source.join("inner"),
+            Quirks {
+                own_device,
+                ..Quirks::ext4()
+            },
+        );
+        let (plans, on_merged) = recorded_plans();
+
+        merge_local(&source, &target, false, Cancellable::new(), &on_merged)?;
+
+        assert_eq!(names(&target.join("inner"))?, [landed], "{row}");
+        assert_eq!(
+            plans.borrow()[0].created,
+            [Location::local(target.join("inner").join(landed))],
+            "{row}"
+        );
+    }
+    Ok(())
+}
