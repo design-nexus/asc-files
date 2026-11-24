@@ -550,3 +550,44 @@ fn originals_an_interrupted_replace_left_are_reviewed_and_put_back() {
     );
     assert!(refused.get("error").is_some(), "{refused}");
 }
+
+#[test]
+fn a_delete_removes_a_tree_for_good_and_files_nothing_for_undo() {
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    let init = backend.call("initialize", json!({}), &mut notes);
+    assert!(
+        init["result"]["capabilities"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("jobs.delete")),
+        "{init}"
+    );
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    let tree = root.path().join("tree");
+    fs::create_dir_all(tree.join("sub")).unwrap();
+    fs::write(tree.join("sub/a.txt"), "a").unwrap();
+    let outside = root.path().join("outside.txt");
+    fs::write(&outside, "kept").unwrap();
+    std::os::unix::fs::symlink(&outside, tree.join("link")).unwrap();
+
+    let start = backend.call(
+        "jobs.start",
+        json!({"into": root.path(), "items": [{"source": tree, "action": "delete"}]}),
+        &mut notes,
+    );
+    let job = start["result"]["job"].clone();
+    backend.until(&mut notes, |n| {
+        n["method"] == "job.finished" && n["params"]["job"] == job
+    });
+    let done = notes
+        .iter()
+        .find(|n| n["method"] == "job.itemDone" && n["params"]["job"] == job)
+        .unwrap();
+    assert_eq!(done["params"]["outcome"]["status"], "done", "{done}");
+    assert!(!tree.exists());
+    // The link went, not what it pointed to.
+    assert_eq!(fs::read_to_string(&outside).unwrap(), "kept");
+    let history = backend.call("undo.history", json!({}), &mut notes);
+    assert_eq!(history["result"]["undo"], Value::Null, "{history}");
+}

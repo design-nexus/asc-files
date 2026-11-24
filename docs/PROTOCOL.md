@@ -45,7 +45,7 @@ Notifications:
 
 | Method | Params | Result |
 |---|---|---|
-| `jobs.start` | `into`, `names?: "fix"\|"keep"` (fix), `label?` (what undo calls it; default from the actions, e.g. "Move 2 items"), `durable?` (sync the drive before finishing; default: when it is removable), `items: [{source, action: "copy"\|"merge"\|"move"\|"replace"\|"trash", conflict?: "fail"\|"keepBoth"\|"merge", choices?, otherwise?}]` | `{job}` |
+| `jobs.start` | `into`, `names?: "fix"\|"keep"` (fix), `label?` (what undo calls it; default from the actions, e.g. "Move 2 items"), `durable?` (sync the drive before finishing; default: when it is removable), `items: [{source, action: "copy"\|"merge"\|"move"\|"replace"\|"trash"\|"delete", conflict?: "fail"\|"keepBoth"\|"merge", choices?, otherwise?}]` | `{job}` |
 | `jobs.cancel` | `job` | `null` |
 | `jobs.clashes` | `into`, `sources` | `{items: [{source, clashes: [{path, incoming, existing}]}]}`, each side `{isFolder, size, modified}`; or `{source, error}` |
 
@@ -72,6 +72,10 @@ entries a move left in place (changed after the copy read them, undeletable, sti
 original a replace could not delete on a drive with no Trash, left in an originals folder beside the target.
 `originalDeleted` is true when a replace deleted the original, its drive having no Trash: undo cannot bring it
 back. A failed item still lists what it did before it stopped.
+
+A `delete` item is removed for good, without the Trash, and is never filed for undo; a folder goes with
+everything in it, links inside are removed rather than followed, and a folder renamed or swapped meanwhile is
+never followed out of the tree. Like `trash`, it ignores `into`.
 
 Items may also take `name` (the name a conflict prompt offered; one plain name), and moves take `conflict`
 `"fail"`, `"keepBoth"` or `"replace"`; a `merge` item with `move: true` merges by moving.

@@ -50,6 +50,15 @@ pub enum Action {
     /// Copy, replacing what holds the name; the original goes to the Trash.
     Replace,
     Trash,
+    /// Delete for good, without the Trash; see [`ops::delete`]. Not filed for undo.
+    Delete,
+}
+
+impl Action {
+    /// Whether the item only goes away, writing nothing into the batch's folder.
+    fn removes(&self) -> bool {
+        matches!(self, Self::Trash | Self::Delete)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -71,7 +80,7 @@ impl Item {
     }
 }
 
-/// A batch: every item lands in `into` (ignored by [`Action::Trash`]).
+/// A batch: every item lands in `into` (ignored by [`Action::Trash`] and [`Action::Delete`]).
 #[derive(Clone, Debug)]
 pub struct Request {
     pub into: PathBuf,
@@ -193,10 +202,7 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
         job,
         total: request.items.len(),
     });
-    let writes = request
-        .items
-        .iter()
-        .any(|item| item.action != Action::Trash);
+    let writes = request.items.iter().any(|item| !item.action.removes());
     let durable = writes
         && request
             .durable
@@ -267,14 +273,12 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
     });
 }
 
-/// The drive a batch writes to, or for a batch that only trashes, the drive of what it trashes.
+/// The drive a batch writes to, or for a batch that only trashes or deletes, the drive of what it
+/// removes.
 fn lane_of(request: &Request) -> u64 {
-    let only_trash = request
-        .items
-        .iter()
-        .all(|item| item.action == Action::Trash);
+    let only_removes = request.items.iter().all(|item| item.action.removes());
     let path = match request.items.first() {
-        Some(item) if only_trash => item.source.as_path(),
+        Some(item) if only_removes => item.source.as_path(),
         _ => request.into.as_path(),
     };
     drives::device(path).unwrap_or(0)
@@ -485,6 +489,9 @@ fn run_item(
                     let step = Step::trashed(source, &trashed);
                     (trashed.file, Changes::default(), Vec::from_iter(step))
                 })
+                .map_err(plain),
+            Action::Delete => ops::delete(source, cancel)
+                .map(|()| (source.to_path_buf(), Changes::default(), Vec::new()))
                 .map_err(plain),
         };
         running.store(false, Ordering::Release);

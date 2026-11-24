@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! Spike: engine items extracted from the legacy adapters/local_operations/deletion.rs.
+//! Permanent deletion: a pinned, parallel walk that never follows a renamed folder or a link out of
+//! the tree; see [`crate::ops::delete`].
 
 use super::fs_ops::{Entry, EntryStat, fs};
 use crate::{
@@ -173,10 +174,10 @@ pub(super) fn open_local_delete_target<Fd: AsFd>(
 }
 
 #[derive(Clone)]
-pub(super) struct PinnedEntry {
-    pub(super) parent: Arc<OwnedFd>,
-    pub(super) name: OsString,
-    pub(super) identity: Option<Recorded>,
+pub(crate) struct PinnedEntry {
+    pub(crate) parent: Arc<OwnedFd>,
+    pub(crate) name: OsString,
+    pub(crate) identity: Option<Recorded>,
 }
 
 pub(super) struct LocalDeleteGuard {
@@ -410,7 +411,7 @@ pub(super) fn bounded_local_worker_count(available: usize, rotational: bool) -> 
     }
 }
 
-pub(super) fn local_delete_worker_count(roots: &[PinnedEntry]) -> usize {
+pub(crate) fn local_delete_worker_count(roots: &[PinnedEntry]) -> usize {
     let available = thread::available_parallelism()
         .map(usize::from)
         .unwrap_or(1);
@@ -420,7 +421,7 @@ pub(super) fn local_delete_worker_count(roots: &[PinnedEntry]) -> usize {
     bounded_local_worker_count(available, rotational)
 }
 
-pub(super) fn parallel_delete_local_blocking_with_workers(
+pub(crate) fn parallel_delete_local_blocking_with_workers(
     roots: Vec<PinnedEntry>,
     cancelled: Arc<AtomicBool>,
     worker_count: usize,

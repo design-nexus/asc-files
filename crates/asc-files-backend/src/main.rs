@@ -401,6 +401,7 @@ fn job_request(params: &Value) -> Result<Request, (i64, String)> {
                 },
                 Some("replace") => Action::Replace,
                 Some("trash") => Action::Trash,
+                Some("delete") => Action::Delete,
                 other => return Err((INVALID_PARAMS, format!("unknown action {other:?}"))),
             };
             let name = match item.get("name") {
@@ -489,9 +490,11 @@ fn capabilities(undo: bool) -> Vec<&'static str> {
         "jobs.move",
         "jobs.replace",
         "jobs.trash",
+        "jobs.delete",
         "jobs.merge",
         "jobs.durable",
         "trash",
+        "leftovers",
     ];
     if undo {
         capabilities.push("undo");
@@ -515,6 +518,7 @@ fn default_label(items: &[Item]) -> String {
         }
         Action::Replace => "Replace",
         Action::Trash => "Move to Trash",
+        Action::Delete => "Delete",
     };
     let first = items.first().map_or("Operation", |item| verb(&item.action));
     let same = items.iter().all(|item| verb(&item.action) == first);

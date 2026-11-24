@@ -896,6 +896,48 @@ impl Settle {
 
 pub use crate::trash::Trashed;
 
+/// Deletes `item` for good, a folder with everything in it, without the Trash. The walk holds
+/// each folder open by identity, so a folder renamed or swapped for a link meanwhile is never
+/// followed out of the tree; links are removed, not followed; another program's leftover (a file
+/// still open on NFS or SMB) is waited for, within the mount's wait, and never removed. Folders are
+/// emptied by parallel workers, one on a spinning disk. A cancel stops at the next entry, keeping
+/// what is left whole.
+pub fn delete(item: &Path, cancel: &Cancel) -> Result<(), Error> {
+    use crate::adapters::local_operations::{
+        deletion::{self, PinnedEntry},
+        leftovers::Deadline,
+    };
+    let (Some(parent), Some(name)) = (
+        item.parent()
+            .filter(|parent| !parent.as_os_str().is_empty()),
+        item.file_name(),
+    ) else {
+        return Err(crate::error::translated_io_error(
+            "Cannot permanently delete the filesystem root",
+        ));
+    };
+    let parent = crate::adapters::local_operations::native_fs::open_local_parent_directory(parent)
+        .map_err(crate::error::io_error)?;
+    let roots = vec![PinnedEntry {
+        parent: Arc::new(parent),
+        name: name.to_os_string(),
+        identity: None,
+    }];
+    let workers = deletion::local_delete_worker_count(&roots);
+    match deletion::parallel_delete_local_blocking_with_workers(
+        roots,
+        cancel.0.clone(),
+        workers,
+        &Deadline::default(),
+    ) {
+        Ok(()) => Ok(()),
+        Err(error) if cancel.is_cancelled() || error == "Delete cancelled" => {
+            Err(crate::error::cancelled())
+        }
+        Err(error) => Err(Error::new(crate::error::ErrorKind::Failed, &error)),
+    }
+}
+
 /// Moves `item` to the Trash on its own drive; see [`crate::trash::put`].
 pub fn trash(item: &Path) -> Result<Trashed, Error> {
     crate::trash::put(item)
