@@ -19,6 +19,7 @@ ApplicationWindow {
     required property var downloads
     required property var jobModel
     required property var transfers
+    required property var ops
     required property var backend
 
     readonly property var browser: tabs.current
@@ -84,7 +85,7 @@ ApplicationWindow {
                     IconButton { width: 30; height: 30; label: qsTr("Columns (Ctrl+3)"); checked: window.browser !== null && window.page === 0 && window.browser.view === 2; onClicked: window.browser.setView(2); iconPath: "M3.5 3h9A1.5 1.5 0 0 1 14 4.5v7a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7A1.5 1.5 0 0 1 3.5 3zM8 3v10" }
                 }
             }
-            Button { Layout.leftMargin: 12; text: qsTr("New"); menu: true; iconPath: "M2 4.2c0-.6.5-1.2 1.2-1.2h3.3l1.5 1.5h4.8c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3.2c-.7 0-1.2-.5-1.2-1.2zM8 7v4M6 9h4" }
+            Button { id: newButton; Layout.leftMargin: 12; text: qsTr("New"); menu: true; onClicked: newMenu.popup(newButton, 0, newButton.height + 4); iconPath: "M2 4.2c0-.6.5-1.2 1.2-1.2h3.3l1.5 1.5h4.8c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3.2c-.7 0-1.2-.5-1.2-1.2zM8 7v4M6 9h4" }
             Rectangle {
                 Layout.leftMargin: 12
                 color: Theme.field; radius: Theme.radius
@@ -265,7 +266,14 @@ ApplicationWindow {
                         Layout.fillHeight: true
                         currentIndex: window.page
 
-                        FolderView { browser: window.browser; transfers: window.transfers; onNotice: (message) => notice.show(message) }
+                        FolderView {
+                            id: folderView
+                            browser: window.browser
+                            transfers: window.transfers
+                            ops: window.ops
+                            onNotice: (message) => notice.show(message)
+                            onContextRequested: (row) => row >= 0 ? itemMenu.show(row) : spaceMenu.popup()
+                        }
                         OverviewPage {
                             browser: window.browser
                             places: window.places
@@ -292,7 +300,21 @@ ApplicationWindow {
                             folderTitle: qsTr("Deleted from")
                             emptyText: qsTr("The Trash is empty")
                             opensFolders: false
+                            trashActions: true
+                            onRestoreRequested: (row) => window.ops.restore(window.trash.pathAt(row))
+                            onDeleteRequested: (row) => confirm.ask(qsTr("Delete “%1” for good?").arg(window.trash.nameAt(row)),
+                                                                    qsTr("This cannot be undone."), qsTr("Delete"),
+                                                                    () => window.ops.deleteFromTrash(window.trash.extraAt(row)))
+                            onEmptyRequested: confirm.ask(qsTr("Empty the Trash?"),
+                                                          qsTr("Everything in the Trash, on every drive, is deleted for good. This cannot be undone."),
+                                                          qsTr("Empty Trash"), () => window.ops.emptyTrash())
                         }
+                    }
+                    JobsIndicator {
+                        Layout.leftMargin: 18
+                        Layout.topMargin: 6
+                        Layout.bottomMargin: -26
+                        jobs: window.jobModel
                     }
                     Text {
                         Layout.alignment: Qt.AlignRight
@@ -319,6 +341,95 @@ ApplicationWindow {
             if (summary.failed > 0)
                 notice.show(window.jobModel.errorOf(job))
         }
+    }
+
+    readonly property bool inFolder: browser !== null && page === 0
+    readonly property int selectionCount: inFolder && folderModel ? folderModel.selectionCount : 0
+
+    function deleteSelection() {
+        if (selectionCount === 0) return
+        confirm.ask(qsTr("Delete %n items for good?", "", selectionCount),
+                    qsTr("They will not go to the Trash, and this cannot be undone."),
+                    qsTr("Delete"), () => window.ops.deleteForever(window.folderModel))
+    }
+    function openRow(row) {
+        if (window.folderModel.isFolder(row)) window.browser.goRow(row)
+    }
+
+    Connections {
+        target: window.ops
+        function onNotice(message) { notice.show(message) }
+        function onTrashChanged() { window.trash.reload() }
+    }
+    ConflictDialog { ops: window.ops }
+    ConfirmDialog { id: confirm }
+
+    // A right click on items.
+    ContextMenu {
+        id: itemMenu
+        property int row: -1
+        readonly property bool single: window.selectionCount === 1
+        readonly property bool folder: row >= 0 && window.folderModel !== null && window.folderModel.isFolder(row)
+        readonly property string path: row >= 0 && window.folderModel !== null ? window.folderModel.pathAt(row) : ""
+        function show(at) { row = at; popup() }
+        MenuItem { text: qsTr("Open"); visible: itemMenu.single && itemMenu.folder; height: visible ? implicitHeight : 0; onTriggered: window.openRow(itemMenu.row) }
+        MenuItem {
+            text: qsTr("Open in New Tab")
+            visible: itemMenu.single && itemMenu.folder
+            height: visible ? implicitHeight : 0
+            onTriggered: window.tabs.openTab(itemMenu.path)
+        }
+        MenuSeparator {}
+        MenuItem { text: qsTr("Cut"); onTriggered: window.ops.copy(window.folderModel, true) }
+        MenuItem { text: qsTr("Copy"); onTriggered: window.ops.copy(window.folderModel, false) }
+        MenuItem {
+            text: qsTr("Paste Into Folder")
+            visible: itemMenu.single && itemMenu.folder
+            height: visible ? implicitHeight : 0
+            enabled: window.ops.canPaste
+            onTriggered: window.ops.paste(window.folderModel, itemMenu.row)
+        }
+        MenuItem { text: qsTr("Rename…"); visible: itemMenu.single; height: visible ? implicitHeight : 0; onTriggered: folderView.startRename() }
+        MenuSeparator {}
+        MenuItem {
+            text: window.favorites.contains(itemMenu.path) ? qsTr("Remove from Favorites") : qsTr("Add to Favorites")
+            visible: itemMenu.single
+            height: visible ? implicitHeight : 0
+            onTriggered: window.favorites.contains(itemMenu.path) ? window.favorites.remove(itemMenu.path) : window.favorites.add(itemMenu.path)
+        }
+        MenuItem {
+            text: qsTr("Pin to Sidebar")
+            visible: itemMenu.single && itemMenu.folder && !window.places.isPinned(itemMenu.path)
+            height: visible ? implicitHeight : 0
+            onTriggered: window.places.pin(itemMenu.path)
+        }
+        MenuSeparator {}
+        MenuItem { text: qsTr("Move to Trash"); onTriggered: window.ops.trash(window.folderModel) }
+        MenuItem { text: qsTr("Delete for Good…"); onTriggered: window.deleteSelection() }
+    }
+
+    // A right click on empty space in a folder.
+    ContextMenu {
+        id: spaceMenu
+        MenuItem { text: qsTr("New Folder"); onTriggered: window.ops.create(window.folderModel, true) }
+        MenuItem { text: qsTr("New File"); onTriggered: window.ops.create(window.folderModel, false) }
+        MenuSeparator {}
+        MenuItem { text: qsTr("Paste"); enabled: window.ops.canPaste; onTriggered: window.ops.paste(window.folderModel) }
+        MenuItem { text: qsTr("Select All"); onTriggered: window.folderModel.selectAll() }
+        MenuSeparator {}
+        MenuItem { text: window.ops.undoLabel.length > 0 ? qsTr("Undo %1").arg(window.ops.undoLabel) : qsTr("Undo"); enabled: window.ops.undoLabel.length > 0; onTriggered: window.ops.undo() }
+        MenuItem { text: window.ops.redoLabel.length > 0 ? qsTr("Redo %1").arg(window.ops.redoLabel) : qsTr("Redo"); enabled: window.ops.redoLabel.length > 0; onTriggered: window.ops.redo() }
+        MenuSeparator {}
+        MenuItem { text: qsTr("Show Hidden Files"); checkable: true; checked: window.folderModel !== null && window.folderModel.showHidden; onTriggered: window.folderModel.showHidden = !window.folderModel.showHidden }
+    }
+
+    // The header's New menu.
+    ContextMenu {
+        id: newMenu
+        MenuItem { text: qsTr("New Folder"); enabled: window.inFolder; onTriggered: window.ops.create(window.folderModel, true) }
+        MenuItem { text: qsTr("New File"); enabled: window.inFolder; onTriggered: window.ops.create(window.folderModel, false) }
+        MenuSeparator {}
+        MenuItem { text: qsTr("New Tab"); onTriggered: window.tabs.openTab() }
     }
 
     Notice {
@@ -439,6 +550,14 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Shift+Tab"; onActivated: window.tabs.previous() }
     Shortcut { sequence: "Ctrl+B"; onActivated: window.places.stepMode() }
     Shortcut { sequence: "Ctrl+H"; onActivated: window.folderModel.showHidden = !window.folderModel.showHidden }
+    Shortcut { sequences: [StandardKey.Copy]; enabled: window.selectionCount > 0; onActivated: window.ops.copy(window.folderModel, false) }
+    Shortcut { sequences: [StandardKey.Cut]; enabled: window.selectionCount > 0; onActivated: window.ops.copy(window.folderModel, true) }
+    Shortcut { sequences: [StandardKey.Paste]; enabled: window.inFolder; onActivated: window.ops.paste(window.folderModel) }
+    Shortcut { sequence: "Delete"; enabled: window.selectionCount > 0; onActivated: window.ops.trash(window.folderModel) }
+    Shortcut { sequence: "Shift+Delete"; enabled: window.selectionCount > 0; onActivated: window.deleteSelection() }
+    Shortcut { sequences: [StandardKey.Undo]; onActivated: window.ops.undo() }
+    Shortcut { sequences: [StandardKey.Redo, "Ctrl+Shift+Z"]; onActivated: window.ops.redo() }
+    Shortcut { sequence: "Ctrl+Shift+N"; enabled: window.inFolder; onActivated: window.ops.create(window.folderModel, true) }
     Shortcut { sequence: "Ctrl+1"; onActivated: window.browser.setView(0) }
     Shortcut { sequence: "Ctrl+2"; onActivated: window.browser.setView(1) }
     Shortcut { sequence: "Ctrl+3"; onActivated: window.browser.setView(2) }

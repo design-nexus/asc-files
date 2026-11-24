@@ -70,6 +70,13 @@ Notifications:
 | `jobs.start` | `into`, `names?: "fix"\|"keep"` (fix), `label?` (what undo calls it; default from the actions, e.g. "Move 2 items"), `durable?` (sync the drive before finishing; default: when it is removable), `items: [{source, action: "copy"\|"merge"\|"move"\|"replace"\|"trash"\|"delete"\|"restore", conflict?: "fail"\|"keepBoth"\|"merge", choices?, otherwise?}]` | `{job}` |
 | `jobs.cancel` | `job` | `null` |
 | `jobs.clashes` | `into`, `sources` | `{items: [{source, clashes: [{path, incoming, existing}]}]}`, each side `{isFolder, size, modified}`; or `{source, error}` |
+| `jobs.plan` | `into`, `sources` | `{items: [{source, name, renamed, incoming, existing, same, aliasOf}]}`, or `{source, error}` |
+
+`jobs.plan` says what pasting each source into `into` would meet, changing nothing: `name` is the name the
+destination's drive would store it under (`renamed` when that is not its own: a FAT stick stores `a:b.txt` as
+`a_b.txt`), `existing` what holds that name now (`null` if nothing), `same` when that is the source itself (a paste
+into the folder it is in), and `aliasOf` the index of an earlier source landing on the same name. A conflict
+prompt passes `name` on as the item's `name`, so Replace replaces the item that holds it.
 
 A `merge` item merges a folder into the folder of its name in `into` (a plain copy where there is none). Folders
 on both sides merge in turn; for any other clash, `choices` maps its path inside the merged folder (as

@@ -69,6 +69,10 @@ public:
     Q_INVOKABLE void openParent();
     Q_INVOKABLE void refresh();
 
+    /// The path of the entry at `row`, as text, or empty while its page is not here.
+    Q_INVOKABLE QString pathAt(int row) const;
+    /// The row of the entry shown as `name` among the rows that are here, or -1.
+    Q_INVOKABLE int rowOfName(const QString &name) const;
     /// Whether `row` is a folder, or a link to one; false while its page is not here.
     Q_INVOKABLE bool isFolder(int row) const;
     QByteArray rawFolder() const { return m_folder; }

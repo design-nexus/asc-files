@@ -107,6 +107,10 @@ int ItemListModel::rowCount(const QModelIndex &parent) const { return parent.isV
 
 QString ItemListModel::pathAt(int row) const { return row >= 0 && row < m_rows.size() ? m_rows.at(row).item.path : QString(); }
 
+QString ItemListModel::nameAt(int row) const { return data(index(row), NameRole).toString(); }
+
+QString ItemListModel::extraAt(int row) const { return row >= 0 && row < m_rows.size() ? m_rows.at(row).item.extra : QString(); }
+
 bool ItemListModel::isFolderAt(int row) const { return row >= 0 && row < m_rows.size() && m_rows.at(row).isFolder; }
 
 QVariant ItemListModel::data(const QModelIndex &index, int role) const {

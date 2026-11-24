@@ -3,7 +3,11 @@
 //! Names the user types for an item, refused before anything changes where
 //! the location would store another name.
 
-use std::{os::fd::AsFd, path::Path};
+use std::{
+    ffi::{OsStr, OsString},
+    os::fd::AsFd,
+    path::Path,
+};
 
 use super::{
     fs_ops::fs,
@@ -39,6 +43,15 @@ pub(super) fn refused(name: &str, rules: &NameProfile, new_folder: bool) -> Opti
 pub(crate) fn refused_in(folder: &Path, name: &str, new_folder: bool) -> Option<String> {
     let dir = open_local_parent_directory(folder).ok()?;
     refused(name, &name_rules(fs(), dir.as_fd()), new_folder)
+}
+
+/// The name `folder`'s drive would store `name` under, where it is not `name` itself (a
+/// character FAT cannot hold, a name too long for a share): the name a paste lands on.
+pub(crate) fn stored_in(folder: &Path, name: &OsStr, is_directory: bool) -> Option<OsString> {
+    let dir = open_local_parent_directory(folder).ok()?;
+    let rules = name_rules(fs(), dir.as_fd());
+    let fixed = super::names::fix::fix_name(name, &rules, is_directory);
+    fixed.cause.map(|_| fixed.name.into_owned())
 }
 
 /// Its code point where it shows nothing of its own: control and format characters, spaces,

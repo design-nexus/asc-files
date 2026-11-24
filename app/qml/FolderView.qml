@@ -13,6 +13,9 @@ Item {
 
     required property var browser
     required property var transfers
+    required property var ops
+    /// A right click: on `row` (selected now if it was not), or on empty space (-1).
+    signal contextRequested(int row)
     readonly property var folderModel: browser ? browser.folderModel : null
     readonly property int mode: browser ? browser.view : 0
     readonly property int selectionCount: folderModel ? folderModel.selectionCount : 0
@@ -43,7 +46,44 @@ Item {
     Connections {
         target: view.folderModel
         function onFailed(message) { view.notice(message) }
-        function onFolderChanged() { view.renamingRow = -1 }
+        function onFolderChanged() { view.renamingRow = -1; view.pendingRename = "" }
+    }
+    // A new folder or file is renamed as soon as it shows up.
+    property string pendingRename
+    Connections {
+        target: view.ops
+        function onCreated(folder, name) {
+            if (folder === view.folderModel) {
+                view.pendingRename = name
+                renameWait.restart()
+            }
+        }
+    }
+    Timer {
+        id: renameWait
+        interval: 50
+        repeat: true
+        property int tries: 0
+        onTriggered: {
+            const row = view.folderModel.rowOfName(view.pendingRename)
+            if (row >= 0) {
+                stop()
+                tries = 0
+                view.pendingRename = ""
+                view.folderModel.select(row)
+                const target = view.mode === 1 ? grid : list
+                target.currentIndex = row
+                target.positionViewAtIndex(row, view.mode === 1 ? GridView.Contain : ListView.Contain)
+                view.renamingRow = row
+            } else if (++tries > 60) {
+                stop()
+                tries = 0
+            }
+        }
+    }
+    function requestContext(row) {
+        if (row >= 0 && !folderModel.isSelected(row)) folderModel.select(row)
+        contextRequested(row)
     }
 
     // List columns that give way as the view narrows.
@@ -77,6 +117,12 @@ Item {
         if (event.matches(StandardKey.SelectAll)) { folderModel.selectAll(); event.accepted = true }
         else if (event.key === Qt.Key_Escape) { folderModel.clearSelection(); event.accepted = true }
         else if (event.key === Qt.Key_F2 && mode !== 2) { startRename(); event.accepted = true }
+    }
+
+    // A right click on empty space.
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        onTapped: view.requestContext(-1)
     }
 
     // A drop anywhere else goes into the folder shown.
@@ -174,6 +220,10 @@ Item {
                     onDropped: (drop) => { if (view.transfers.dropInto(drop.urls, view.folderModel, rowItem.index)) drop.accept() }
                     Rectangle { anchors.fill: parent; radius: Theme.radius; color: "transparent"; border.width: parent.containsDrag ? 1 : 0; border.color: Theme.accent }
                 }
+                TapHandler {
+                    acceptedButtons: Qt.RightButton
+                    onTapped: { list.currentIndex = rowItem.index; view.requestContext(rowItem.index) }
+                }
                 onRenameAccepted: (name) => view.finishRename(name)
                 onRenameCancelled: { view.renamingRow = -1; view.focusList() }
                 onClicked: (modifiers) => { list.currentIndex = index; view.click(view.folderModel, index, modifiers); list.forceActiveFocus() }
@@ -242,6 +292,10 @@ Item {
                 enabled: tileItem.isFolder
                 onDropped: (drop) => { if (view.transfers.dropInto(drop.urls, view.folderModel, tileItem.index)) drop.accept() }
                 Rectangle { anchors.fill: parent; radius: 11; color: "transparent"; border.width: parent.containsDrag ? 1 : 0; border.color: Theme.accent }
+            }
+            TapHandler {
+                acceptedButtons: Qt.RightButton
+                onTapped: { grid.currentIndex = tileItem.index; view.requestContext(tileItem.index) }
             }
             onRenameAccepted: (name) => view.finishRename(name)
             onRenameCancelled: { view.renamingRow = -1; view.focusList() }

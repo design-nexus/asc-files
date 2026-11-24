@@ -875,3 +875,56 @@ fn bring_back(path: &Path, original: &Original, target: &Path) -> Result<(), Err
         Original::Aside => Ok(()),
     }
 }
+
+/// What pasting one item into a folder would meet, for the conflict prompt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Planned {
+    pub source: PathBuf,
+    /// The name the item would be stored under there: its own, or the one the drive stores it
+    /// as (a FAT stick turns `a:b.txt` into `a_b.txt`). The prompt passes it on as the item's
+    /// `name`, so Replace replaces what holds that name rather than numbering a copy beside it.
+    pub name: OsString,
+    /// The drive would store the item under another name than its own.
+    pub renamed: bool,
+    pub incoming: Side,
+    /// What holds that name now, if anything.
+    pub existing: Option<Side>,
+    /// What holds the name is the item itself (a paste into the folder it is in).
+    pub same: bool,
+    /// An earlier item in the same paste lands on the same name.
+    pub alias_of: Option<usize>,
+}
+
+/// What pasting `sources` into `into` would meet, item by item, by the names the destination
+/// would store them under. Nothing is changed.
+pub fn plan(sources: &[PathBuf], into: &Path) -> Vec<Result<Planned, Error>> {
+    use std::os::unix::fs::MetadataExt;
+    let mut landed: Vec<OsString> = Vec::new();
+    sources
+        .iter()
+        .map(|source| {
+            let meta = fs::symlink_metadata(source).map_err(crate::error::os_io_error)?;
+            let own = source
+                .file_name()
+                .ok_or_else(|| translated_io_error("The item has no name"))?;
+            let stored =
+                crate::adapters::local_operations::typed_names::stored_in(into, own, meta.is_dir());
+            let name = stored.clone().unwrap_or_else(|| own.to_os_string());
+            let existing = fs::symlink_metadata(into.join(&name)).ok();
+            let same = existing.as_ref().is_some_and(|existing| {
+                existing.dev() == meta.dev() && existing.ino() == meta.ino()
+            });
+            let alias_of = landed.iter().position(|earlier| *earlier == name);
+            landed.push(name.clone());
+            Ok(Planned {
+                source: source.clone(),
+                renamed: stored.is_some(),
+                name,
+                incoming: Side::of(&meta),
+                existing: existing.as_ref().map(Side::of),
+                same,
+                alias_of,
+            })
+        })
+        .collect()
+}

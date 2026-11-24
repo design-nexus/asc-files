@@ -10,6 +10,7 @@
 #include "models/RecentModel.h"
 #include "models/TabModel.h"
 #include "models/Transfers.h"
+#include "ops/Operations.h"
 #include "thumbnails/Thumbnails.h"
 #include "models/TrashModel.h"
 
@@ -49,6 +50,7 @@ int main(int argc, char *argv[]) {
     downloads.openPath(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
     JobModel jobs(&backend);
     Transfers transfers(&jobs);
+    Operations ops(&backend, &jobs);
     QObject::connect(&backend, &BackendClient::failed, &app, [](const QString &why) {
         qCritical().noquote() << why;
     });
@@ -63,6 +65,7 @@ int main(int argc, char *argv[]) {
                                  {QStringLiteral("downloads"), QVariant::fromValue(&downloads)},
                                  {QStringLiteral("jobModel"), QVariant::fromValue(&jobs)},
                                  {QStringLiteral("transfers"), QVariant::fromValue(&transfers)},
+                                 {QStringLiteral("ops"), QVariant::fromValue(&ops)},
                                  {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
                      Qt::QueuedConnection);

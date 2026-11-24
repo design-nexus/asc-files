@@ -352,3 +352,37 @@ fn a_merge_under_another_name_replaces_only_in_the_folder_merged_into() {
     assert_eq!(fixture.read("dest/photos/extra.jpg"), "new extra");
     assert_eq!(fixture.read("elsewhere/photos/a.jpg"), "bystander a");
 }
+
+#[test]
+fn a_paste_is_planned_by_the_names_it_would_land_on() {
+    let root = tempfile::tempdir().unwrap();
+    let (from, into) = (root.path().join("from"), root.path().join("into"));
+    std::fs::create_dir_all(&from).unwrap();
+    std::fs::create_dir_all(&into).unwrap();
+    std::fs::write(from.join("new.txt"), b"n").unwrap();
+    std::fs::write(from.join("taken.txt"), b"incoming").unwrap();
+    std::fs::write(into.join("taken.txt"), b"existing!").unwrap();
+    std::fs::write(into.join("here.txt"), b"h").unwrap();
+    let sources = vec![
+        from.join("new.txt"),
+        from.join("taken.txt"),
+        into.join("here.txt"),
+        from.join("taken.txt"),
+    ];
+    let planned: Vec<_> = asc_files_engine::merge::plan(&sources, &into)
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(planned[0].existing, None);
+    assert_eq!(planned[0].name, "new.txt");
+    assert!(!planned[0].renamed);
+    let taken = planned[1].existing.as_ref().expect("held");
+    assert_eq!((taken.size, planned[1].incoming.size), (9, 8));
+    assert!(!planned[1].same);
+    assert!(planned[2].same, "pasted into the folder it is in");
+    assert_eq!(planned[3].alias_of, Some(1));
+    // Nothing was changed.
+    assert_eq!(std::fs::read(into.join("taken.txt")).unwrap(), b"existing!");
+    // A source that is gone says so.
+    assert!(asc_files_engine::merge::plan(&[from.join("missing")], &into)[0].is_err());
+}

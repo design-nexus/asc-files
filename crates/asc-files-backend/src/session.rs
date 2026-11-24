@@ -173,6 +173,30 @@ impl Session {
                 });
                 Ok(Answer::Later)
             }
+            // Looks at the destination, which on a slow drive takes a while.
+            Call::JobsPlan { into, sources } => {
+                self.answer_later(id, move || {
+                    let side = |side: &merge::Side| json!({"isFolder": side.is_folder, "size": side.size, "modified": side.modified});
+                    let items: Vec<Value> = merge::plan(&sources, &into)
+                        .iter()
+                        .zip(&sources)
+                        .map(|(planned, source)| match planned {
+                            Ok(planned) => json!({
+                                "source": wire::path(&planned.source),
+                                "name": wire::name(&planned.name),
+                                "renamed": planned.renamed,
+                                "incoming": side(&planned.incoming),
+                                "existing": planned.existing.as_ref().map(side),
+                                "same": planned.same,
+                                "aliasOf": planned.alias_of,
+                            }),
+                            Err(error) => json!({"source": wire::path(source), "error": wire::error(error)}),
+                        })
+                        .collect();
+                    Ok(json!({"items": items}))
+                });
+                Ok(Answer::Later)
+            }
             // A rename on a share may wait for a file below it to close.
             Call::Rename { path, name, label } => {
                 let journal = self.journal.clone();

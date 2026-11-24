@@ -1121,6 +1121,146 @@
           "additionalProperties": false
         }
       },
+      "jobs.plan": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "into": {
+              "$ref": "#/$defs/path"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/path"
+              }
+            }
+          },
+          "required": [
+            "into",
+            "sources"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "$ref": "#/$defs/path"
+                      },
+                      "name": {
+                        "$ref": "#/$defs/name"
+                      },
+                      "renamed": {
+                        "type": "boolean"
+                      },
+                      "incoming": {
+                        "type": "object",
+                        "properties": {
+                          "isFolder": {
+                            "type": "boolean"
+                          },
+                          "size": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "modified": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "isFolder",
+                          "modified",
+                          "size"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "existing": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "isFolder": {
+                                "type": "boolean"
+                              },
+                              "size": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "modified": {
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "isFolder",
+                              "modified",
+                              "size"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "same": {
+                        "type": "boolean"
+                      },
+                      "aliasOf": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "aliasOf",
+                      "existing",
+                      "incoming",
+                      "name",
+                      "renamed",
+                      "same",
+                      "source"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "$ref": "#/$defs/path"
+                      },
+                      "error": {
+                        "$ref": "#/$defs/error"
+                      }
+                    },
+                    "required": [
+                      "error",
+                      "source"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          },
+          "required": [
+            "items"
+          ],
+          "additionalProperties": false
+        }
+      },
       "ops.rename": {
         "params": {
           "type": "object",

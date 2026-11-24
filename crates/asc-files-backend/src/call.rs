@@ -88,6 +88,10 @@ pub enum Call {
         into: PathBuf,
         sources: Vec<PathBuf>,
     },
+    JobsPlan {
+        into: PathBuf,
+        sources: Vec<PathBuf>,
+    },
     Rename {
         path: PathBuf,
         name: String,
@@ -208,6 +212,12 @@ fn call(method: &str, params: &Params) -> Result<Call, Fault> {
             job: params.u64("job")?,
         },
         "jobs.clashes" => Call::JobsClashes {
+            into: params.path("into")?,
+            sources: params.array("sources", |at, value| {
+                wire::absolute_path(value).ok_or_else(|| not_a_path(at))
+            })?,
+        },
+        "jobs.plan" => Call::JobsPlan {
             into: params.path("into")?,
             sources: params.array("sources", |at, value| {
                 wire::absolute_path(value).ok_or_else(|| not_a_path(at))

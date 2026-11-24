@@ -46,6 +46,8 @@ public:
     QHash<int, QByteArray> roleNames() const override;
     Q_INVOKABLE QString pathAt(int row) const;
     Q_INVOKABLE bool isFolderAt(int row) const;
+    Q_INVOKABLE QString nameAt(int row) const;
+    Q_INVOKABLE QString extraAt(int row) const;
 
 signals:
     void countChanged();

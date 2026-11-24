@@ -21,6 +21,8 @@ TrashModel::TrashModel(BackendClient *backend, QObject *parent) : ItemListModel(
         }
     });
     connect(m_backend, &BackendClient::ready, this, &TrashModel::reload);
+    // Asked now too: a backend already running is not ready again. Calls wait for one starting.
+    reload();
 }
 
 void TrashModel::reload() {

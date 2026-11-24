@@ -275,6 +275,22 @@ QByteArray FolderModel::rawName(int row) const {
     return Wire::decode(page->at(row % PageSize).toObject().value(QStringLiteral("name")));
 }
 
+QString FolderModel::pathAt(int row) const {
+    const QByteArray name = rawName(row);
+    return name.isEmpty() ? QString() : QFile::decodeName(Wire::join(m_folder, name));
+}
+
+int FolderModel::rowOfName(const QString &name) const {
+    for (auto page = m_pages.cbegin(); page != m_pages.cend(); ++page) {
+        for (int i = 0; i < page->size(); ++i) {
+            if (Wire::display(page->at(i).toObject().value(QStringLiteral("name"))) == name) {
+                return page.key() * PageSize + i;
+            }
+        }
+    }
+    return -1;
+}
+
 bool FolderModel::isFolder(int row) const {
     return row >= 0 && row < m_count && isLoaded(row) && data(index(row), IsFolderRole).toBool();
 }

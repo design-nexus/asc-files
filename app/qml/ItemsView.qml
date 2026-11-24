@@ -20,8 +20,13 @@ ColumnLayout {
                                                       : qsTr("%n items", "", list.count)
     readonly property bool showFolder: list.width >= 640
     readonly property bool showKind: list.width >= 860
-    // Opens a folder in this tab; a file waits for B-ops' Open.
+    // Opens a folder in this tab.
     property bool opensFolders: true
+    // The Trash: a bar to restore or delete what is selected, or empty it all.
+    property bool trashActions: false
+    signal restoreRequested(int row)
+    signal deleteRequested(int row)
+    signal emptyRequested()
 
     function focusList() { list.forceActiveFocus() }
     function open(row) {
@@ -33,6 +38,18 @@ ColumnLayout {
     spacing: 0
     onItemsChanged: selectedRow = -1
 
+    RowLayout {
+        visible: view.trashActions
+        Layout.fillWidth: true
+        Layout.leftMargin: 16
+        Layout.rightMargin: 16
+        Layout.topMargin: 4
+        spacing: 8
+        Button { text: qsTr("Restore"); enabled: view.selectedRow >= 0; onClicked: view.restoreRequested(view.selectedRow) }
+        Button { text: qsTr("Delete for Good…"); enabled: view.selectedRow >= 0; onClicked: view.deleteRequested(view.selectedRow) }
+        Item { Layout.fillWidth: true }
+        Button { text: qsTr("Empty Trash…"); enabled: list.count > 0; onClicked: view.emptyRequested() }
+    }
     RowLayout {
         Layout.preferredHeight: 36
         Layout.leftMargin: 24
