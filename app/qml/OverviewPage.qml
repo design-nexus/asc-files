@@ -17,6 +17,8 @@ Flickable {
     required property var trash
     required property var downloads
     readonly property string status: ""
+    readonly property string currentPath: ""
+    function step(delta) {}
 
     function focusList() { forceActiveFocus() }
 

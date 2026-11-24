@@ -11,6 +11,7 @@
 #include "models/TabModel.h"
 #include "models/Transfers.h"
 #include "ops/Operations.h"
+#include "render/Preview.h"
 #include "thumbnails/Thumbnails.h"
 
 #include <QFile>
@@ -52,11 +53,13 @@ private slots:
         JobModel jobs(&backend);
         Transfers transfers(&jobs);
         Operations ops(&backend, &jobs);
+        Preview preview;
         tabs.openTab(dir.path());
         FolderModel &folders = *tabs.current()->folderModel();
         QSignalSpy opened(&folders, &FolderModel::opened);
         QQmlApplicationEngine engine;
         engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
+        engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider(&preview));
         engine.setInitialProperties({{"tabs", QVariant::fromValue(&tabs)},
                                      {"places", QVariant::fromValue(&places)},
                                      {"recent", QVariant::fromValue(&recent)},
@@ -66,6 +69,7 @@ private slots:
                                      {"jobModel", QVariant::fromValue(&jobs)},
                                      {"transfers", QVariant::fromValue(&transfers)},
                                      {"ops", QVariant::fromValue(&ops)},
+                                     {"preview", QVariant::fromValue(&preview)},
                                      {"backend", QVariant::fromValue(&backend)}});
         engine.loadFromModule("AscFiles", "Main");
         QCOMPARE(engine.rootObjects().size(), 1);
@@ -87,6 +91,19 @@ private slots:
         QTRY_COMPARE(list->property("count").toInt(), 3);
         QTRY_VERIFY(folders.isLoaded(0));
         QVERIFY(QTest::qWaitForWindowExposed(window));
+
+        // The preview opens on the current item in its Popup, then as a Panel.
+        folders.select(0);
+        QMetaObject::invokeMethod(window, [&] { window->setProperty("previewOpen", true); });
+        QTRY_VERIFY(window->property("previewOpen").toBool());
+        list->setProperty("currentIndex", 1);
+        QTRY_COMPARE(preview.name(), folders.data(folders.index(1), FolderModel::NameRole).toString());
+        auto *popup = window->findChild<QObject *>(QStringLiteral("previewPopup"));
+        QVERIFY(popup);
+        QTRY_VERIFY(popup->property("visible").toBool());
+        window->setProperty("previewOpen", false);
+        QTRY_VERIFY(!popup->property("visible").toBool());
+        QCOMPARE(preview.path(), QString());
 
         // Each view shows without a warning, and selection reaches the rows.
         tabs.current()->setView(1);

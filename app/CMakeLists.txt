@@ -27,6 +27,8 @@ qt_add_library(asc_files_core STATIC
     src/models/TabModel.cpp src/models/TabModel.h
     src/models/Transfers.cpp src/models/Transfers.h
     src/ops/Operations.cpp src/ops/Operations.h
+    src/render/Preview.cpp src/render/Preview.h
+    src/render/Sandbox.cpp src/render/Sandbox.h
     src/thumbnails/Thumbnails.cpp src/thumbnails/Thumbnails.h)
 target_include_directories(asc_files_core PUBLIC src)
 target_link_libraries(asc_files_core PUBLIC Qt6::Core Qt6::Gui Qt6::Quick)
@@ -62,6 +64,7 @@ qt_add_qml_module(asc_files_qml
         qml/components/NameEditor.qml
         qml/components/Notice.qml
         qml/components/PlaceItem.qml
+        qml/components/PreviewContent.qml
         qml/components/RubberBand.qml
         qml/components/SearchField.qml
         qml/components/SectionHeading.qml
@@ -69,20 +72,26 @@ qt_add_qml_module(asc_files_qml
         qml/components/ToolTipText.qml)
 target_link_libraries(asc_files_qml PRIVATE Qt6::Quick)
 
+# The helper that decodes images in the sandbox; installed beside the app.
+qt_add_executable(asc-files-render src/render/main.cpp)
+target_link_libraries(asc-files-render PRIVATE Qt6::Core Qt6::Gui)
+
 qt_add_executable(asc-files src/main.cpp)
+add_dependencies(asc-files asc-files-render)
 target_link_libraries(asc-files PRIVATE asc_files_core asc_files_qmlplugin Qt6::Qml Qt6::Quick Qt6::QuickControls2)
 
 # Tests run against the real backend: ASC_FILES_BACKEND names it (scripts/app.sh builds it).
 enable_testing()
 set(ASC_FILES_BACKEND "" CACHE FILEPATH "The asc-files-backend binary the tests run")
-foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations)
+foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview)
     qt_add_executable(tst_${test} tests/tst_${test}.cpp)
     target_link_libraries(tst_${test} PRIVATE asc_files_core Qt6::Test)
     add_test(NAME ${test} COMMAND tst_${test})
-    set_tests_properties(${test} PROPERTIES ENVIRONMENT "ASC_FILES_BACKEND=${ASC_FILES_BACKEND};QT_QPA_PLATFORM=offscreen")
+    set_tests_properties(${test} PROPERTIES ENVIRONMENT "ASC_FILES_BACKEND=${ASC_FILES_BACKEND};ASC_FILES_RENDER=$<TARGET_FILE:asc-files-render>;QT_QPA_PLATFORM=offscreen")
+    add_dependencies(tst_${test} asc-files-render)
 endforeach()
 # The window loads with the models and logs no QML warning.
 qt_add_executable(tst_window tests/tst_window.cpp)
 target_link_libraries(tst_window PRIVATE asc_files_core Qt6::Test Qt6::Qml Qt6::Quick Qt6::QuickControls2 asc_files_qmlplugin)
 add_test(NAME window COMMAND tst_window)
-set_tests_properties(window PROPERTIES ENVIRONMENT "ASC_FILES_BACKEND=${ASC_FILES_BACKEND};QT_QPA_PLATFORM=offscreen")
+set_tests_properties(window PROPERTIES ENVIRONMENT "ASC_FILES_BACKEND=${ASC_FILES_BACKEND};ASC_FILES_RENDER=$<TARGET_FILE:asc-files-render>;QT_QPA_PLATFORM=offscreen")

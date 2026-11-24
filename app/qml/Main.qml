@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import QtCore
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -20,6 +21,7 @@ ApplicationWindow {
     required property var jobModel
     required property var transfers
     required property var ops
+    required property var preview
     required property var backend
 
     readonly property var browser: tabs.current
@@ -35,6 +37,19 @@ ApplicationWindow {
     // Trash, in that order).
     readonly property int page: browser ? browser.page : 0
     readonly property var view: pages.children[page]
+    // The preview drawer: shown as a Popup over the window (as legacy's default) or a Panel beside
+    // the folder, and following the item the keyboard is on.
+    property bool previewOpen: false
+    readonly property bool previewAsPanel: previewSettings.style === "panel"
+    readonly property string previewPath: previewOpen && view ? view.currentPath : ""
+    onPreviewPathChanged: preview.show(previewPath)
+    Settings {
+        id: previewSettings
+        location: StandardPaths.writableLocation(StandardPaths.ConfigLocation) + "/asc-files/asc-files.ini"
+        category: "preview"
+        property string style: "popup"
+    }
+
     // The sidebar as chosen, railed when the window is too narrow for it in full.
     readonly property int sidebarMode: places.mode === 2 ? 2 : places.mode === 0 && width < 900 ? 1 : places.mode
 
@@ -92,7 +107,7 @@ ApplicationWindow {
                 implicitWidth: tools.implicitWidth; implicitHeight: Theme.controlSize
                 Row {
                     id: tools
-                    IconButton { label: qsTr("Appearance"); iconPath: "M8 2.5a5.5 5.5 0 0 0 0 11c.9 0 1.2-.6 1-1.3-.3-.9.2-1.7 1.2-1.7h1.3a2 2 0 0 0 2-2A5.8 5.8 0 0 0 8 2.5zM5.5 7h.01M8 5h.01" }
+                    IconButton { id: appearanceButton; label: qsTr("Appearance"); onClicked: appearanceMenu.popup(appearanceButton, 0, appearanceButton.height + 4); iconPath: "M8 2.5a5.5 5.5 0 0 0 0 11c.9 0 1.2-.6 1-1.3-.3-.9.2-1.7 1.2-1.7h1.3a2 2 0 0 0 2-2A5.8 5.8 0 0 0 8 2.5zM5.5 7h.01M8 5h.01" }
                     IconButton { label: qsTr("Settings"); iconPath: "M2.5 5h7M12.5 5h1M2.5 11h1M6.5 11h7M11 3.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM5 9.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" }
                 }
             }
@@ -260,6 +275,10 @@ ApplicationWindow {
                         }
                         Item { Layout.fillWidth: true }
                     }
+                    RowLayout {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    spacing: 0
                     StackLayout {
                         id: pages
                         Layout.fillWidth: true
@@ -309,6 +328,21 @@ ApplicationWindow {
                                                           qsTr("Everything in the Trash, on every drive, is deleted for good. This cannot be undone."),
                                                           qsTr("Empty Trash"), () => window.ops.emptyTrash())
                         }
+                    }
+                    Rectangle {
+                        objectName: "previewPanel"
+                        visible: window.previewOpen && window.previewAsPanel
+                        Layout.preferredWidth: 380
+                        Layout.fillHeight: true
+                        color: "transparent"
+                        Rectangle { width: 1; height: parent.height; color: Theme.rule }
+                        PreviewContent {
+                            anchors.fill: parent
+                            anchors.leftMargin: 1
+                            preview: window.preview
+                            onCloseRequested: window.previewOpen = false
+                        }
+                    }
                     }
                     JobsIndicator {
                         Layout.leftMargin: 18
@@ -437,6 +471,42 @@ ApplicationWindow {
         MenuItem { text: qsTr("New Tab"); onTriggered: window.tabs.openTab() }
     }
 
+    Popup {
+        id: previewPopup
+        objectName: "previewPopup"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(window.width - 120, 1100)
+        height: window.height - 120
+        visible: window.previewOpen && !window.previewAsPanel
+        modal: false
+        focus: visible
+        padding: 0
+        closePolicy: Popup.CloseOnEscape
+        onClosed: window.previewOpen = false
+        background: Rectangle { radius: 16; color: Theme.raised; border.width: 1; border.color: Theme.panelEdge }
+        contentItem: PreviewContent {
+            preview: window.preview
+            onCloseRequested: window.previewOpen = false
+            focus: true
+            // Keys go to the drawer while it is open: Space closes it, the arrows move along.
+            Keys.onSpacePressed: window.previewOpen = false
+            Keys.onLeftPressed: window.view.step(-1)
+            Keys.onUpPressed: window.view.step(-1)
+            Keys.onRightPressed: window.view.step(1)
+            Keys.onDownPressed: window.view.step(1)
+        }
+    }
+
+    // The header's Appearance menu.
+    ContextMenu {
+        id: appearanceMenu
+        MenuItem { text: qsTr("Preview as Popup"); checkable: true; checked: !window.previewAsPanel; onTriggered: previewSettings.style = "popup" }
+        MenuItem { text: qsTr("Preview as Panel"); checkable: true; checked: window.previewAsPanel; onTriggered: previewSettings.style = "panel" }
+        MenuSeparator {}
+        MenuItem { text: qsTr("Show Hidden Files"); checkable: true; enabled: window.inFolder; checked: window.folderModel !== null && window.folderModel.showHidden; onTriggered: window.folderModel.showHidden = !window.folderModel.showHidden }
+    }
+
     Notice {
         id: notice
         objectName: "notice"
@@ -563,6 +633,7 @@ ApplicationWindow {
     Shortcut { sequences: [StandardKey.Undo]; onActivated: window.ops.undo() }
     Shortcut { sequences: [StandardKey.Redo, "Ctrl+Shift+Z"]; onActivated: window.ops.redo() }
     Shortcut { sequence: "Ctrl+Shift+N"; enabled: window.inFolder; onActivated: window.ops.create(window.folderModel, true) }
+    Shortcut { sequence: "Space"; enabled: !previewPopup.visible; onActivated: window.previewOpen = !window.previewOpen }
     Shortcut { sequence: "Ctrl+1"; onActivated: window.browser.setView(0) }
     Shortcut { sequence: "Ctrl+2"; onActivated: window.browser.setView(1) }
     Shortcut { sequence: "Ctrl+3"; onActivated: window.browser.setView(2) }

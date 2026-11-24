@@ -23,6 +23,15 @@ Item {
         const items = qsTr("%n items", "", list.count)
         return selectionCount > 0 ? items + " · " + qsTr("%n selected", "", selectionCount) : items
     }
+    // The item the keyboard is on, for the preview; read again as the folder or selection changes.
+    readonly property string currentPath: folderModel ? (folderModel.generation, folderModel.selectionCount,
+        folderModel.pathAt(mode === 1 ? grid.currentIndex : list.currentIndex)) : ""
+    // Moves to the next or previous item (`delta` rows), as the preview's arrows do.
+    function step(delta) {
+        const target = mode === 1 ? grid : list
+        if (target.count > 0) moveBy(target, delta, 0)
+    }
+
     // The row whose name is being edited, or -1.
     property int renamingRow: -1
     signal notice(string message)

@@ -11,6 +11,7 @@
 #include "models/TabModel.h"
 #include "models/Transfers.h"
 #include "ops/Operations.h"
+#include "render/Preview.h"
 #include "thumbnails/Thumbnails.h"
 #include "models/TrashModel.h"
 
@@ -51,12 +52,14 @@ int main(int argc, char *argv[]) {
     JobModel jobs(&backend);
     Transfers transfers(&jobs);
     Operations ops(&backend, &jobs);
+    Preview preview;
     QObject::connect(&backend, &BackendClient::failed, &app, [](const QString &why) {
         qCritical().noquote() << why;
     });
 
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
+    engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider(&preview));
     engine.setInitialProperties({{QStringLiteral("tabs"), QVariant::fromValue(&tabs)},
                                  {QStringLiteral("places"), QVariant::fromValue(&places)},
                                  {QStringLiteral("recent"), QVariant::fromValue(&recent)},
@@ -66,6 +69,7 @@ int main(int argc, char *argv[]) {
                                  {QStringLiteral("jobModel"), QVariant::fromValue(&jobs)},
                                  {QStringLiteral("transfers"), QVariant::fromValue(&transfers)},
                                  {QStringLiteral("ops"), QVariant::fromValue(&ops)},
+                                 {QStringLiteral("preview"), QVariant::fromValue(&preview)},
                                  {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
                      Qt::QueuedConnection);

@@ -13,8 +13,7 @@
 /// again until it changes.
 ///
 /// Files makes thumbnails of images Qt can read, from local files up to 64 MB, off the window's
-/// thread. The images are decoded in this process for now; decoding in a sandbox comes with the
-/// preview's renderers (B3).
+/// thread, decoding them in the sandbox (asc-files-render under bubblewrap).
 namespace Thumbnails {
 
 /// The largest file Files reads to make a thumbnail.

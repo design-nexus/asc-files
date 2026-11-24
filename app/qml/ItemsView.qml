@@ -29,6 +29,12 @@ ColumnLayout {
     signal emptyRequested()
 
     function focusList() { list.forceActiveFocus() }
+    readonly property string currentPath: selectedRow >= 0 && items ? (items.count, items.pathAt(selectedRow)) : ""
+    function step(delta) {
+        if (list.count === 0) return
+        selectedRow = Math.max(0, Math.min(list.count - 1, selectedRow + delta))
+        list.positionViewAtIndex(selectedRow, ListView.Contain)
+    }
     function open(row) {
         if (opensFolders && items.isFolderAt(row)) {
             browser.goPath(items.pathAt(row))

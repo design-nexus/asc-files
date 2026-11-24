@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "Thumbnails.h"
 
+#include "../render/Sandbox.h"
+
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QPointer>
@@ -94,17 +96,8 @@ QImage thumbnail(const QByteArray &path, int size) {
     if (!cached(failPath(path), mtime).isNull()) {
         return {};
     }
-    QImageReader reader(QFile::decodeName(path));
-    reader.setAutoTransform(true);
-    // A picture that says it is enormous is not decoded at all.
-    const QSize full = reader.size();
-    if (full.isValid() && qint64(full.width()) * full.height() > 100'000'000) {
-        return {};
-    }
-    if (full.isValid() && (full.width() > wanted || full.height() > wanted)) {
-        reader.setScaledSize(full.scaled(wanted, wanted, Qt::KeepAspectRatio));
-    }
-    QImage image = reader.read();
+    // Decoded in the sandbox, as every untrusted image is.
+    QImage image = Sandbox::decodeImageNow(path, wanted);
     if (image.isNull()) {
         QImage marker(1, 1, QImage::Format_ARGB32);
         marker.fill(Qt::transparent);
