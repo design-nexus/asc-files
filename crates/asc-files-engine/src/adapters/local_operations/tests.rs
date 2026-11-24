@@ -678,7 +678,10 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
                         current_file: None,
                         transferred_bytes: bytes,
                         total_bytes: None,
-                        created_location: (!request.move_sources && undoable)
+                        // Nor is a folder merged into, which was there before.
+                        created_location: (!request.move_sources
+                            && undoable
+                            && request.items[index].conflict != TransferConflict::Merge)
                             .then(|| Location::local(&name)),
                     });
                     // Legacy did not report an item moved to where it already was.

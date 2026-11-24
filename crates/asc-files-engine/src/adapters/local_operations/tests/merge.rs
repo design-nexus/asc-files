@@ -1755,3 +1755,194 @@ fn merge_undo_tolerates_created_paths_that_no_longer_exist() -> Result<(), Box<d
     assert_eq!(outcome.done, 2);
     Ok(())
 }
+
+#[test]
+fn a_merge_undo_deletes_only_what_the_merge_left_unchanged() -> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    for trash in [true, false] {
+        let root = tempfile::tempdir()?;
+        let (source, target) = (root.path().join("source"), root.path().join("target"));
+        write_files(
+            &source,
+            &[("same.txt", "as copied"), ("edited.txt", "as copied")],
+        )?;
+        fs::create_dir_all(&target)?;
+        let _quirks =
+            (!trash).then(|| FsQuirks::install(root.path(), without_trash(Quirks::default())));
+        let filed = merge_and_file(&source, &target, false)?;
+        fs::write(target.join("edited.txt"), "changed since")?;
+
+        let outcome = filed.undo()?;
+
+        assert!(!target.join("same.txt").exists(), "trash: {trash}");
+        assert_eq!(
+            fs::read(target.join("edited.txt"))?,
+            b"changed since",
+            "trash: {trash}"
+        );
+        assert_eq!(
+            outcome
+                .left
+                .iter()
+                .map(|(path, _)| path.clone())
+                .collect::<Vec<_>>(),
+            [target.join("edited.txt")],
+            "trash: {trash}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_undo_never_brings_back_another_item_trashed_later_from_the_same_path()
+-> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    let root = tempfile::tempdir()?;
+    let (source, target) = (root.path().join("source"), root.path().join("target"));
+    write_files(&source, &[("notes.txt", "incoming")])?;
+    write_files(&target, &[("notes.txt", "the merge's original")])?;
+    let filed = merge_and_file(&source, &target, false)?;
+    // Another item at that name goes to the Trash after the merge, and the merge's copy is
+    // back at the name, as it was.
+    let copy = fs::read(target.join("notes.txt"))?;
+    fs::write(target.join("notes.txt"), "trashed later")?;
+    crate::trash::put(&target.join("notes.txt"))?;
+    fs::write(target.join("notes.txt"), &copy)?;
+
+    let _ = filed.undo()?;
+
+    // The merge's own original, never the one trashed later, whatever its date.
+    assert_ne!(fs::read(target.join("notes.txt"))?, b"trashed later");
+    let later = crate::trash::list()
+        .into_iter()
+        .filter(|entry| entry.original == target.join("notes.txt"))
+        .map(|entry| fs::read(entry.file))
+        .collect::<io::Result<Vec<_>>>()?;
+    assert!(
+        later.iter().any(|contents| contents == b"trashed later"),
+        "the later item stays in the Trash"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_cancelled_merge_undo_reports_everything_not_attempted() -> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    let root = tempfile::tempdir()?;
+    let (source, target) = (root.path().join("source"), root.path().join("target"));
+    write_files(&source, &[("a.txt", "a"), ("b.txt", "b")])?;
+    fs::create_dir_all(&target)?;
+    let filed = merge_and_file(&source, &target, false)?;
+    let cancel = crate::ops::Cancel::new();
+    cancel.cancel();
+
+    let outcome = filed.journal.undo(&cancel, &crate::ops::Progress::new())?;
+
+    assert_eq!(outcome.done, 0);
+    assert_eq!(outcome.left.len(), 2);
+    assert!(
+        outcome
+            .left
+            .iter()
+            .all(|(_, error)| error.kind() == ErrorKind::Cancelled)
+    );
+    assert_eq!(names(&target)?, ["a.txt", "b.txt"]);
+    Ok(())
+}
+
+#[test]
+fn a_merged_paste_reports_no_created_location() -> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    let root = tempfile::tempdir()?;
+    let (sources, destination) = (root.path().join("sources"), root.path().join("destination"));
+    write_files(&sources.join("folder"), &[("new.txt", "new")])?;
+    write_files(&destination.join("folder"), &[("old.txt", "old")])?;
+
+    let events = run_paste_events(PasteRequest {
+        id: OperationRequestId(1734),
+        destination: Location::local(&destination),
+        items: vec![PasteItem {
+            source: Location::local(sources.join("folder")),
+            conflict: TransferConflict::Merge,
+            target_name: None,
+        }],
+        move_sources: false,
+    });
+
+    // The folder merged into was there before: the paste made no new location of it.
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            OperationEvent::TransferProgress {
+                created_location: Some(_),
+                ..
+            }
+        )),
+        "{events:?}"
+    );
+    assert_eq!(fs::read(destination.join("folder/new.txt"))?, b"new");
+    Ok(())
+}
+
+#[test]
+fn a_merge_without_trash_cancelled_after_it_placed_a_copy_puts_the_original_back()
+-> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    let root = tempfile::tempdir()?;
+    let (source, target) = (root.path().join("source"), root.path().join("target"));
+    write_files(&source, &[("a.txt", "new a"), ("b.txt", "new b")])?;
+    write_files(&target, &[("a.txt", "old a"), ("b.txt", "old b")])?;
+    // A cancel lands once one copy is in place, as the other is opened.
+    let cancellable = Cancellable::new();
+    let (cancel, opened) = (
+        cancellable.clone(),
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    );
+    let _quirks = FsQuirks::install(
+        root.path(),
+        without_trash(Quirks {
+            before: vec![(
+                Op::OpenSource,
+                "*",
+                1,
+                Box::new(move || {
+                    opened.fetch_add(1, Ordering::SeqCst);
+                    cancel.cancel();
+                }),
+            )],
+            ..Quirks::default()
+        }),
+    );
+
+    let result = merge_local(&source, &target, false, cancellable, &no_plan);
+
+    assert!(result.is_err());
+    // Legacy discarded the copy it had placed and put that original back. The engine keeps what
+    // it placed, which undo takes away; that original waits aside, named in the error, and the
+    // other original, whose name the merge left free, is back.
+    let message = result
+        .err()
+        .map(|error| error.message().to_owned())
+        .unwrap_or_default();
+    let mut originals = Vec::new();
+    for name in ["a.txt", "b.txt"] {
+        let at = fs::read(target.join(name))?;
+        match at.as_slice() {
+            b"old a" | b"old b" => originals.push(name),
+            copy => {
+                assert!(copy.starts_with(b"new"), "{name}");
+                let aside = aside_folder(&target)?.ok_or("the original waits aside")?;
+                assert!(message.contains(&aside), "{message}");
+                assert_eq!(
+                    fs::read(target.join(&aside).join(name))?,
+                    format!("old {}", &name[..1]).into_bytes()
+                );
+            }
+        }
+    }
+    assert!(
+        !originals.is_empty(),
+        "the original whose name was left free is back"
+    );
+    Ok(())
+}

@@ -31,9 +31,9 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `restore_safety.rs` | 28 | 28 | 0 | 0 |
 | `undo.rs` | 23 | 16 | 0 | 7 |
 | `trash_capabilities.rs` | 1 | 0 | 0 | 1 (ignored upstream too) |
-| `merge.rs`, so far | 66 | 32 | 1 | 3 (30 still to port: legacy's merge undo by placed snapshots, and its cancels) |
-| **So far** | **372** | **315** | **3** | **54** |
-| Remaining 3 files (`copy`, `progress`, `sync`), and 30 of `merge.rs` | 120 | – | – | – |
+| `merge.rs` | 66 | 37 | 1 | 28 |
+| **So far** | **402** | **320** | **3** | **79** |
+| Remaining 3 files (`copy`, `progress`, `sync`), set aside to port by hand | 90 | – | – | – |
 
 ## Ignored
 
@@ -73,6 +73,7 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `merge::a_failed_merge_preserves_the_destinations_existing_contents`, `merge::a_staging_failure_aborts_the_merge_and_reports_only_what_was_staged` | Legacy's copy and staging hooks became a cancel and a refused Trash through the filesystem seam. Legacy left an original staged before the failure; the engine puts it back, which is checked. |
 | `merge::*`, the GIO copy rows | Legacy ran several merge tests with GIO's copy as well as its own: the remote adapter. |
 | `merge::*` undo tests | Legacy undid a merge from lists of what it created and overwrote, finding originals through a lookup hook; the ported tests run a real merge, file its steps in a journal of their own as a job does, and undo through the journal. The bookmark half of `merge_undo_restores_staged_originals_and_removes_created` is the app's. |
+| `merge::a_merge_without_trash_cancelled_after_it_placed_a_copy_puts_the_original_back` | Legacy discarded the copy it had placed and put that original back; the engine keeps what it placed, which undo takes away, and that original waits aside, named in the error. The other original, whose name was left free, is back. |
 | `leftovers::stale_probes_go_only_when_empty_and_old`, the mount-lane half | Legacy swept on its mount's background lane and checked that a slow sweep kept the lane answering. The engine has no lanes: the backend runs the sweep on a thread of its own. That the sweep removes a listed stale probe is still checked. |
 | `paste_results::an_item_replaced_without_trash_is_left_out_of_the_paste_undo`, the order of moves | Legacy moved the items without a conflict first; jobs keep the order asked for. The moves are compared as a set. |
 
@@ -124,6 +125,15 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `undo::undoing_a_move_back_to_another_kind_of_location_gives_fixed_names_back` | Its premise is an original addressed through GIO, which renamed with its own rules: the remote adapter. The local give-back of such names is `undoing_a_move_gives_fixed_names_back_and_reports_those_it_cannot`. |
 | `undo::undoing_a_cross_volume_move_deletes_the_moved_items_once_they_are_flushed` | Legacy flushed once for a whole undo and deleted every moved item after. The journal undoes item by item, each item's source deleted only after its own copy is flushed, so a failed flush keeps that item whole and leaves the ones before it done. |
 | `merge::a_merge_onto_fat_takes_the_rules_of_a_folder_inside_it_only_from_another_device_mounted_there` | Its FAT row replaces an original by the name FAT stores, the planning gap above; it returns with it. |
+| `merge::undoing_a_merge_without_trash_opens_only_its_own_read_only_folders_to_remove_them` | **Gap.** On a drive without a Trash, undo deletes only copies of files that are unchanged; a folder an operation created is left, so undoing a folder copy to a FAT stick leaves the folder. Legacy removed a created tree whose every entry was as placed, opening its own read-only folders to do so. |
+| `merge::a_created_folder_changed_while_undo_deletes_it_fails_as_not_empty` | Same gap: the engine does not delete created folders without a Trash at all. |
+| `merge::what_an_operation_placed_is_read_back_only_until_its_tick_passes`, `merge::an_item_put_at_a_placed_name_right_after_placing_stays_there`, `merge::a_merge_undo_compares_what_it_placed_as_a_move_compares_its_sources`, `merge::a_merge_undo_restores_an_original_only_over_a_path_it_checked`, `merge::an_undo_keeps_what_a_cancel_stopped_the_operation_from_recording`, `merge::a_merge_records_what_it_creates_only_where_undo_cannot_trash_it`, `merge::undoing_a_replace_deletes_what_it_placed_only_if_all_of_it_is_unchanged` | Legacy's placed snapshots: what an operation placed, read back within a clock tick and compared at undo. The journal records each step's identity and undoes it only if the item is the same one and unchanged (`a_merge_undo_deletes_only_what_the_merge_left_unchanged`). |
+| `merge::an_undo_keeps_what_was_too_big_to_record`, `merge::a_created_tree_too_big_to_record_leaves_its_entries_to_the_rest` | Legacy's budget of snapshots; the journal caps steps (`undo::MAX_STEPS`) and files a larger entry as too large to undo. |
+| `merge::a_merge_undo_without_trash_deletes_only_what_the_merge_created_unchanged`, `merge::a_merge_undo_without_trash_deletes_what_its_paste_copied_only_if_unchanged` | Covered by the Trash-less row of `a_merge_undo_deletes_only_what_the_merge_left_unchanged`. |
+| `merge::merge_undo_uses_recorded_identity_when_trash_dates_collide`, `merge::a_trashed_original_is_passed_over_only_where_its_mount_proves_another`, `merge::undo_finds_an_original_in_the_trash_of_its_own_mount` | Legacy found an original in the Trash by path, date and mount; the journal records its Trash record and identity (`an_undo_never_brings_back_another_item_trashed_later_from_the_same_path`). |
+| `merge::a_merge_undo_cut_off_counts_an_item_as_not_attempted_only_when_it_left_it_whole`, `merge::a_kept_item_counts_as_failed_when_a_later_item_is_cut_off`, `merge::a_merge_undo_never_counts_an_item_it_could_not_check_as_undone`, `merge::a_merge_undo_cancelled_while_it_restores_an_original_ends_as_a_cancel`, `merge::a_merge_undo_cancelled_while_it_compares_an_item_leaves_it_whole`, `merge::a_merge_a_cancel_cuts_off_counts_as_failed_as_it_keeps_what_it_placed` | How legacy's undo and paste events counted items a cancel cut off. The journal counts a step done only once it is, and lists every other with why, a cancel included (`a_cancelled_merge_undo_reports_everything_not_attempted`). |
+| `merge::a_merge_from_a_location_without_paths_does_not_claim_provenance_for_undo`, `merge::a_merge_from_a_location_without_paths_keeps_unproven_copies_during_no_trash_undo` | GIO locations without paths: the remote adapter. |
+| `merge::a_merge_undo_drops_from_view_only_what_it_removed` | The app's view (Phase B). |
 | `create_entry::a_folder_reported_by_a_file_create_is_a_taken_name` | Legacy's private helper `name_taken`; its rule (a folder at the name refuses an exclusive file create with `EISDIR`, so the name is taken) is in `ops::create` and runs in the ported concurrency tests. |
 | `paste_results::a_cancel_that_cuts_off_an_item_counts_it_as_not_attempted` | Drives the GTK app's `Browser`. Cancelling is the job runner's (`tests/jobs.rs`: items not begun are `NotAttempted`). |
 | `paste_results::only_a_cut_off_between_local_locations_counts_as_not_attempted` | Legacy's rule for remote (`sftp://`) ends of a cut-off paste: the remote adapter. |
@@ -245,6 +255,9 @@ ported with a reason. This list must be empty, or every entry justified, before 
   names it changed.
 - **Changed, to legacy's behaviour:** undoing a copy that is gone already counts as done instead of being reported
   as left.
+- **Fixed:** undoing a copy with a Trash checked only that it was still the same item, so a copy the user had
+  edited since went to the Trash. A copy changed since now stays in place and is reported, as legacy did.
+- **Open:** undo of created folders without a Trash (see above).
 - **Open:** a bulk path for many small items; `rename` and `create` on the protocol; a paste-planning call.
 
 ## Archives (legacy: 225 tests)

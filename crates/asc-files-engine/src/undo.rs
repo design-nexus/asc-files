@@ -672,6 +672,11 @@ fn discard(path: &Path, identity: &Identity) -> Result<(), Error> {
         return Ok(());
     }
     still(path, identity)?;
+    // One changed since (edited, or a folder something was added to) keeps what was done to it:
+    // it stays in place, reported, as legacy left it.
+    if !Identity::of(path).is_some_and(|now| now.unchanged(identity)) {
+        return Err(changed());
+    }
     match trash::put(path) {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == ErrorKind::NotSupported => {
