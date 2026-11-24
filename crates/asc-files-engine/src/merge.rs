@@ -491,7 +491,14 @@ fn merge_via_tree(
                         )
                         .map(|()| Original::Aside)
                     }
-                    Err(error) => Err(error),
+                    Err(error) => Err(Error::new(
+                        error.kind(),
+                        &rust_i18n::t!(
+                            "Could not move %{name} to Trash before merging: %{error}",
+                            name = clash.path.display(),
+                            error = error.message()
+                        ),
+                    )),
                 };
                 match original {
                     Ok(original) => {

@@ -1228,3 +1228,154 @@ fn a_failed_merge_without_trash_puts_back_what_it_can_and_names_the_rest()
     assert!(plans.iter().all(|plan| plan.overwritten.is_empty()));
     Ok(())
 }
+
+#[test]
+fn merge_originals_are_deleted_only_once_the_merge_is_flushed() -> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    for flushed in [true, false] {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        write_files(&source, &[("shared.txt", "new")])?;
+        write_files(&target, &[("shared.txt", "old")])?;
+        let aside_during_flush = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (record, watched) = (aside_during_flush.clone(), target.clone());
+        // The merge's aside folder, or within one drive the replace's originals folder.
+        let set_aside = |target: &Path| -> io::Result<Option<String>> {
+            Ok(names(target)?.into_iter().find(|name| {
+                name.starts_with(".asc-files-merge-") || name.starts_with(".asc-files-originals-")
+            }))
+        };
+        let racer: super::fs_quirks::Racer = Box::new(move || {
+            let kept = set_aside(&watched).is_ok_and(|folder| folder.is_some());
+            record
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push(kept);
+        });
+        let _quirks = FsQuirks::install(
+            root.path(),
+            without_trash(Quirks {
+                before: vec![(Op::SyncFs, "*", 0, racer)],
+                fail: if flushed {
+                    Vec::new()
+                } else {
+                    vec![(Op::SyncFs, "*", 0, Errno::IO)]
+                },
+                ..Quirks::default()
+            }),
+        );
+
+        let (result, _) = merge_through_trash(&source, &target, true);
+
+        assert_eq!(
+            *aside_during_flush
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()),
+            [true],
+            "one flush before the originals are deleted"
+        );
+        assert_eq!(fs::read(target.join("shared.txt"))?, b"new");
+        // Legacy copied a merging move within one drive, so a failed flush kept the source too;
+        // the engine renames there, and the moved item is the one at the name.
+        assert!(!source.join("shared.txt").exists(), "flushed: {flushed}");
+        if flushed {
+            assert!(result.is_ok(), "{result:?}");
+            assert_eq!(names(&target)?, ["shared.txt"]);
+            continue;
+        }
+        let aside = set_aside(&target)?.ok_or("the originals stay aside")?;
+        let kept = names(&target.join(&aside))?;
+        let [original] = kept.as_slice() else {
+            return Err(format!("one original aside: {kept:?}").into());
+        };
+        assert_eq!(fs::read(target.join(&aside).join(original))?, b"old");
+        let error = result.expect_err("the originals are kept");
+        assert!(error.message().contains(&aside), "{error}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_failed_merge_preserves_the_destinations_existing_contents() -> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    let root = tempfile::tempdir()?;
+    let source = root.path().join("source");
+    let target = root.path().join("target");
+    fs::create_dir_all(&source)?;
+    fs::create_dir_all(&target)?;
+    fs::write(source.join("incoming.txt"), b"new")?;
+    fs::write(target.join("stays.txt"), b"keep me")?;
+    // Legacy injected a cancel from its copy hook; here a cancel lands as the copy opens the file.
+    let cancellable = Cancellable::new();
+    let cancel = cancellable.clone();
+    let _quirks = FsQuirks::install(
+        root.path(),
+        Quirks {
+            before: vec![(
+                Op::OpenSource,
+                "incoming.txt",
+                0,
+                Box::new(move || cancel.cancel()),
+            )],
+            ..Quirks::default()
+        },
+    );
+
+    let result = merge_local(&source, &target, false, cancellable, &no_plan);
+
+    assert!(result.is_err());
+    assert_eq!(fs::read(target.join("stays.txt"))?, b"keep me");
+    assert!(source.join("incoming.txt").exists());
+    Ok(())
+}
+
+#[test]
+fn a_staging_failure_aborts_the_merge_and_reports_only_what_was_staged()
+-> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    for errno in [Errno::IO, Errno::ROFS] {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        fs::create_dir_all(&source)?;
+        fs::create_dir_all(&target)?;
+        fs::write(source.join("a.txt"), b"new a")?;
+        fs::write(source.join("b.txt"), b"new b")?;
+        fs::write(target.join("a.txt"), b"old a")?;
+        fs::write(target.join("b.txt"), b"old b")?;
+        // Legacy failed its staging hook for b.txt; here the Trash refuses it. The scope takes in
+        // the (isolated) Trash too, so the drive and its Trash are one simulated mount and the
+        // original of a.txt can go back.
+        let data = PathBuf::from(std::env::var("XDG_DATA_HOME")?);
+        let common = root
+            .path()
+            .ancestors()
+            .find(|folder| data.starts_with(folder))
+            .ok_or("a folder holding the test and its Trash")?;
+        let _quirks = FsQuirks::install(
+            common,
+            Quirks {
+                fail: vec![(Op::Trash, "b.txt", 0, errno)],
+                ..Quirks::default()
+            },
+        );
+
+        let result = merge_local(&source, &target, false, Cancellable::new(), &no_plan);
+
+        let error = result.expect_err("staging failure aborts the merge");
+        assert!(
+            error
+                .message()
+                .starts_with("Could not move b.txt to Trash before merging: "),
+            "{errno:?}: {error}"
+        );
+        assert_eq!(fs::read(source.join("a.txt"))?, b"new a");
+        assert_eq!(fs::read(source.join("b.txt"))?, b"new b");
+        assert_eq!(fs::read(target.join("b.txt"))?, b"old b", "{errno:?}");
+        // Legacy left a.txt staged if it came first; the engine puts it back.
+        assert_eq!(fs::read(target.join("a.txt"))?, b"old a", "{errno:?}");
+        assert_eq!(in_trash(&target.join("a.txt")), None, "{errno:?}");
+    }
+    Ok(())
+}

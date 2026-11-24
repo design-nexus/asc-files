@@ -31,9 +31,9 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `restore_safety.rs` | 28 | 28 | 0 | 0 |
 | `undo.rs` | 23 | 16 | 0 | 7 |
 | `trash_capabilities.rs` | 1 | 0 | 0 | 1 (ignored upstream too) |
-| `merge.rs`, so far | 66 | 22 | 0 | 2 (42 still to port: legacy's merge hooks and seams, and its snapshot undo) |
-| **So far** | **360** | **305** | **2** | **53** |
-| Remaining 3 files (`copy`, `progress`, `sync`), and 42 of `merge.rs` | 132 | – | – | – |
+| `merge.rs`, so far | 66 | 25 | 0 | 2 (39 still to port: legacy's merge hooks and seams, and its snapshot undo) |
+| **So far** | **363** | **308** | **2** | **53** |
+| Remaining 3 files (`copy`, `progress`, `sync`), and 39 of `merge.rs` | 129 | – | – | – |
 
 ## Ignored
 
@@ -68,6 +68,8 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `merge::merge_without_trash_sets_originals_aside_and_removes_them_after_success`, the GIO row | Legacy also ran a GIO Trash that reported failure without a reason (`FalseWithoutError`), which it took for no Trash. The native Trash's failure is an I/O error, which stops the merge. Its merging moves within one drive set originals aside through the replace, in an originals folder, where legacy used the merge's. |
 | `merge::a_failed_merge_without_trash_puts_back_what_it_can_and_names_the_rest` | Legacy injected a copy that wrote part of one file and failed, and a cancelled one; here one item is copied, one is a socket the copy leaves out, and the drive cannot confirm the writes, which puts the first original aside and the second back. The cancelled row checked legacy's wording for a cancel. |
 | `merge::a_merge_without_trash_reports_its_folder_kept_by_an_original_still_open`, the order of what is kept | The engine reports what it left out as it goes; the items are compared in any order. |
+| `merge::merge_originals_are_deleted_only_once_the_merge_is_flushed`, the source on a failed flush | Legacy copied a merging move within one drive, so a failed flush kept the source as well as the original. The engine renames there: the moved item is at the name, and the original stays aside, named in the error. |
+| `merge::a_failed_merge_preserves_the_destinations_existing_contents`, `merge::a_staging_failure_aborts_the_merge_and_reports_only_what_was_staged` | Legacy's copy and staging hooks became a cancel and a refused Trash through the filesystem seam. Legacy left an original staged before the failure; the engine puts it back, which is checked. |
 | `leftovers::stale_probes_go_only_when_empty_and_old`, the mount-lane half | Legacy swept on its mount's background lane and checked that a slow sweep kept the lane answering. The engine has no lanes: the backend runs the sweep on a thread of its own. That the sweep removes a listed stale probe is still checked. |
 | `paste_results::an_item_replaced_without_trash_is_left_out_of_the_paste_undo`, the order of moves | Legacy moved the items without a conflict first; jobs keep the order asked for. The moves are compared as a set. |
 
