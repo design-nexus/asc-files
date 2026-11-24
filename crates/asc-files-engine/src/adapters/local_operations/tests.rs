@@ -47,6 +47,7 @@ use crate::{
 
 mod aliases;
 mod conflicts;
+mod copy;
 mod create_entry;
 mod deletion;
 mod file_copy;
@@ -702,8 +703,10 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
             }
             Event::ItemDone { index, outcome, .. } => match outcome {
                 Outcome::Done { name, changes } => {
-                    // Legacy left out of the paste's undo an item whose original was deleted.
-                    let undoable = !changes.original_deleted;
+                    // Legacy left out of the paste's undo an item whose original was deleted, and
+                    // did not count as pasted a link the destination could not hold.
+                    let left_out = changes.left_out;
+                    let undoable = !changes.original_deleted && !left_out;
                     let report = changes_report(&into, changes);
                     if !report.is_empty() {
                         events.push(OperationEvent::ItemsReported {
@@ -727,7 +730,7 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
                             .then(|| Location::local(&name)),
                     });
                     // Legacy did not report an item moved to where it already was.
-                    if request.move_sources && items[index].source != name {
+                    if request.move_sources && !left_out && items[index].source != name {
                         events.push(OperationEvent::ItemMoved {
                             request_id: id,
                             from: Location::local(&items[index].source),

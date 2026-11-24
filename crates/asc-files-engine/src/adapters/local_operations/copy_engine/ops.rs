@@ -117,6 +117,9 @@ pub struct Changes {
     pub kept: Vec<Kept>,
     /// A replace deleted the original, its drive having no Trash; see [`Replaced`].
     pub original_deleted: bool,
+    /// The item itself was left out, being a link the destination cannot hold: nothing was made
+    /// or changed for it, and it is reported in `skipped` (or, for a move, in `kept`).
+    pub left_out: bool,
 }
 
 impl Changes {
@@ -125,6 +128,7 @@ impl Changes {
             && self.skipped.is_empty()
             && self.kept.is_empty()
             && !self.original_deleted
+            && !self.left_out
     }
 
     /// What `copy` noted, for the item published as `published` in the destination folder.
@@ -159,6 +163,7 @@ impl Changes {
                 .collect(),
             kept: Vec::new(),
             original_deleted: false,
+            left_out: false,
         }
     }
 }
@@ -399,13 +404,40 @@ pub fn copy_as(
             let name = folder.file_name().unwrap_or_default().to_os_string();
             merge(&copy, &source, &folder, None, placing).map(|_| name)
         }
-    }
-    .map_err(|failure| failure.into_error(&source.name))?;
+    };
+    let published = match published {
+        Err(failure) if left_out_link(&failure) => {
+            return Ok(Copied {
+                changes: left_out_changes(name),
+                name: name.to_os_string(),
+                progress: progress.snapshot(),
+            });
+        }
+        published => published.map_err(|failure| failure.into_error(&source.name))?,
+    };
     Ok(Copied {
         changes: Changes::of(&copy, &published),
         name: published,
         progress: progress.snapshot(),
     })
+}
+
+/// Whether a copy stopped only because the item itself is a link the destination cannot hold,
+/// which is left out, not a failure, as a link inside a folder is (and as legacy did).
+fn left_out_link(failure: &super::Failure) -> bool {
+    matches!(failure, super::Failure::LinkRefused(_))
+}
+
+/// What is reported for an item left out under `name`.
+fn left_out_changes(name: &OsStr) -> Changes {
+    Changes {
+        skipped: vec![Skipped {
+            path: PathBuf::from(name),
+            kind: crate::services::SpecialKind::Symlink,
+        }],
+        left_out: true,
+        ..Changes::default()
+    }
 }
 
 /// Whether `into` is `source` or beneath it, by device and inode, so bind mounts, symlinked
@@ -723,14 +755,35 @@ fn moving(
         options,
         Deadline::default(),
     );
-    let (published_name, ownership) = copy_new(
+    let (published_name, ownership) = match copy_new(
         &copy,
         &source,
         (&target_parent, &target_name),
         super::NewItem::Published(Taken::Fail),
         None,
-    )
-    .map_err(|failure| failure.into_error(&source.name))?;
+    ) {
+        // A link the destination cannot hold stays where it is, reported as kept there.
+        Err(failure) if left_out_link(&failure) => {
+            return Ok(Moved {
+                changes: Changes {
+                    kept: vec![Kept {
+                        path: source_path.clone(),
+                        cause: crate::services::KeptCause::Skipped(
+                            crate::services::SpecialKind::Symlink,
+                        ),
+                    }],
+                    left_out: true,
+                    ..Changes::default()
+                },
+                name: target_name,
+                copied: false,
+                kept: Vec::new(),
+                progress: progress.snapshot(),
+                stopped: None,
+            });
+        }
+        published => published.map_err(|failure| failure.into_error(&source.name))?,
+    };
     {
         if barrier.flushes() {
             progress.0.begin_flush();
@@ -1686,14 +1739,25 @@ pub fn replace_as(
         },
         Deadline::default(),
     );
-    copy_new(
+    match copy_new(
         &copy,
         &source,
         (&parent, &stage),
         super::NewItem::Published(Taken::Fail),
         None,
-    )
-    .map_err(|failure| failure.into_error(&source.name))?;
+    ) {
+        // A link the destination cannot hold is left out, and the original is not touched.
+        Err(failure) if left_out_link(&failure) => {
+            return Ok(Replaced {
+                changes: left_out_changes(&target),
+                name: target,
+                original: None,
+                original_deleted: false,
+                progress: progress.snapshot(),
+            });
+        }
+        copied => copied.map_err(|failure| failure.into_error(&source.name))?,
+    };
     let staged = fs()
         .stat(Entry::new(&*parent, &stage), false)
         .map_err(os_io_error)?

@@ -633,6 +633,7 @@ fn changes_json(changes: &asc_files_engine::ops::Changes) -> Value {
             "cause": kept_cause(&kept.cause),
         })).collect::<Vec<_>>(),
         "originalDeleted": changes.original_deleted,
+        "leftOut": changes.left_out,
     })
 }
 

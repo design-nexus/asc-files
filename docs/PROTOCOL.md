@@ -70,7 +70,8 @@ exactly one `job.itemDone`; its outcome is `{status: "done", path, renamed, skip
 `[{requested, savedAs, cause}]`, `skipped` `[{path, kind}]`, and `kept` `[{path, cause: {reason, …}}]`: source
 entries a move left in place (changed after the copy read them, undeletable, still open elsewhere, …), and an
 original a replace could not delete on a drive with no Trash, left in an originals folder beside the target.
-`originalDeleted` is true when a replace deleted the original, its drive having no Trash: undo cannot bring it
+`leftOut` is true when the item itself was left out, being a link the destination cannot hold: it is in `skipped`
+(or, for a move, `kept`), and nothing was made for it. `originalDeleted` is true when a replace deleted the original, its drive having no Trash: undo cannot bring it
 back. A failed item still lists what it did before it stopped.
 
 A `delete` item is removed for good, without the Trash, and is never filed for undo; a folder goes with

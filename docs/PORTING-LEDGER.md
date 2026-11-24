@@ -7,7 +7,7 @@ legacy helpers' names: GLib futures became the engine's synchronous core, and le
 provider runs as a batch of `jobs` (`run_paste`), so these tests check the job runner itself.
 
 Every legacy test is either ported and passing, ported and `#[ignore]`d with a reason, or listed below as not
-ported with a reason. This list must be empty, or every entry justified, before Phase A ends.
+ported with a reason. This list must be empty, or every entry justified, before Phase A ends. As of A8's end every legacy test is accounted for.
 
 ## Progress
 
@@ -16,6 +16,7 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `aliases.rs` | 11 | 8 | 0 | 3 |
 | `closes.rs` | 1 | 0 | 0 | 1 |
 | `conflicts.rs` | 20 | 15 | 0 | 5 |
+| `copy.rs` | 52 | 36 | 1 | 15 |
 | `create_entry.rs` | 6 | 5 | 0 | 1 |
 | `deletion.rs` | 30 | 21 | 0 | 9 |
 | `file_copy.rs` | 29 | 28 | 1 | 0 |
@@ -34,14 +35,14 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `undo.rs` | 23 | 16 | 0 | 7 |
 | `trash_capabilities.rs` | 1 | 0 | 0 | 1 (ignored upstream too) |
 | `merge.rs` | 66 | 37 | 1 | 28 |
-| **So far** | **440** | **334** | **3** | **103** |
-| Remaining: `copy.rs`, set aside to port by hand | 52 | – | – | – |
+| **All** | **492** | **370** | **4** | **118** |
 
 ## Ignored
 
 | Test | Why |
 |---|---|
 | `merge::fat_merge_overwrites_the_names_it_plans_and_keeps_the_names_that_need_no_fix` | **Gap.** A merge finds clashes by source name, not by the name the destination stores: on FAT, `nested?` never meets `nested_`, so every entry is kept as both, even one whose exact name the user chose to replace. Nothing is lost. Legacy planned by stored names (`plan_names`), names needing no fix first; it returns with the paste-planning call. |
+| `copy::a_paste_fixes_the_names_it_brings_onto_fat_and_keeps_those_already_there` | **Gap**, the planning one: a paste's names are not planned together, so an item needing no fix (`a_b`) does not keep its name over an earlier one fixed to it (`a:b`), and fails as taken. Returns with the paste-planning call. |
 | `file_copy::selected_names_of_a_linked_file_on_an_smb_share_are_opened_one_at_a_time` | Needs many small top-level items copied in parallel. Legacy's paste had a bulk path for this; `jobs` copies top-level items one at a time (the engine's parallel walk applies inside folders). **Gap:** a bulk path in `jobs`. |
 
 ## Rows skipped inside ported tests
@@ -76,6 +77,8 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `merge::*`, the GIO copy rows | Legacy ran several merge tests with GIO's copy as well as its own: the remote adapter. |
 | `merge::*` undo tests | Legacy undid a merge from lists of what it created and overwrote, finding originals through a lookup hook; the ported tests run a real merge, file its steps in a journal of their own as a job does, and undo through the journal. The bookmark half of `merge_undo_restores_staged_originals_and_removes_created` is the app's. |
 | `merge::a_merge_without_trash_cancelled_after_it_placed_a_copy_puts_the_original_back` | Legacy discarded the copy it had placed and put that original back; the engine keeps what it placed, which undo takes away, and that original waits aside, named in the error. The other original, whose name was left free, is back. |
+| `copy::*`, the GIO rows of the naming tables | Legacy ran its naming tests with GIO's copy as well: the remote adapter. |
+| `copy::a_refused_name_takes_the_first_stricter_rules_it_passes_and_teaches_only_a_mount_that_learns`, the refusal counts of mounts that learn | Legacy planned a paste whole, so names planned before a mount learned were each refused once; the engine learns as it goes and refuses fewer. The names saved are checked for every mount, the counts for the one that never learns. |
 | `leftovers::stale_probes_go_only_when_empty_and_old`, the mount-lane half | Legacy swept on its mount's background lane and checked that a slow sweep kept the lane answering. The engine has no lanes: the backend runs the sweep on a thread of its own. That the sweep removes a listed stale probe is still checked. |
 | `paste_results::an_item_replaced_without_trash_is_left_out_of_the_paste_undo`, the order of moves | Legacy moved the items without a conflict first; jobs keep the order asked for. The moves are compared as a set. |
 
@@ -145,6 +148,9 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `sync::removable_copy_roots_are_synced_once`, `sync::sync_filesystem_on_a_local_directory_succeeds`, `sync::failed_flush_after_cancel_reports_that_writes_may_still_be_pending`, `sync::fat32_limit_failure_does_not_start_an_uncancellable_device_flush` | Legacy's paste helpers (`removable_sync_roots`, `sync_filesystem`, `stop_transfer`). A durable job opens one flush of its drive before it writes and reaches it at the end, whatever happened (`failed_final_flush_reports_that_writes_may_still_be_pending`). |
 | `sync::bytes_already_written_are_flushed_before_cancellation_and_cancel_is_not_pasted`, `sync::a_cancel_after_the_flush_starts_does_not_report_success` | Cancels sent from inside the paste's events, in lock step; a durable job reaches its flush after a cancel too, and reports the cancel. |
 | `sync::files_gio_wrote_are_synced_one_by_one_where_the_barrier_misses_them` | GIO's copy: the remote adapter. |
+| `copy::cancelling_staged_remote_file_copy_removes_only_the_incomplete_stage`, `copy::staged_remote_file_copy_preserves_a_racing_destination`, `copy::a_remote_keep_both_copy_takes_the_next_name_when_one_is_taken_meanwhile`, `copy::a_remote_keep_both_copy_numbers_a_long_name_within_the_limit`, `copy::a_gio_copy_lists_a_whole_folder_first_only_where_the_mount_takes_two_names_for_one`, `copy::a_gio_copy_that_fails_reports_the_fixed_name_of_a_folder_it_made` | Copies from remote locations through GIO: the remote adapter. |
+| `copy::staged_publication_without_rename_flags_places_the_stage_itself`, `copy::staged_publication_refuses_to_overwrite_an_existing_target`, `copy::staged_publication_preserves_racing_destinations`, `copy::staged_symlinks_are_recreated_where_links_are_missing`, `copy::staged_fallback_removes_reserved_directory_on_copy_error`, `copy::a_stage_left_after_the_exclusive_copy_is_reported`, `copy::a_stage_swapped_before_publication_is_neither_published_nor_deleted`, `copy::cancelling_staged_fallback_removes_its_reserved_directory` | Legacy's `publish_staged_without_replace`, the glue that published a sibling stage its GIO copies made. The engine publishes inside its own copy; that publication's races, refusals and clean-up are the ported `placement` and `file_copy` tests. |
+| `copy::failed_incomplete_copy_cleanup_is_reported_as_a_failure` | Legacy's wording helper `copy_failure_after_cleanup`; the engine says the incomplete copy could not be removed (seen in `restore_safety::a_restore_cancelled_while_it_copies_an_item_ends_as_a_cancel`). |
 | `create_entry::a_folder_reported_by_a_file_create_is_a_taken_name` | Legacy's private helper `name_taken`; its rule (a folder at the name refuses an exclusive file create with `EISDIR`, so the name is taken) is in `ops::create` and runs in the ported concurrency tests. |
 | `paste_results::a_cancel_that_cuts_off_an_item_counts_it_as_not_attempted` | Drives the GTK app's `Browser`. Cancelling is the job runner's (`tests/jobs.rs`: items not begun are `NotAttempted`). |
 | `paste_results::only_a_cut_off_between_local_locations_counts_as_not_attempted` | Legacy's rule for remote (`sftp://`) ends of a cut-off paste: the remote adapter. |
@@ -278,6 +284,13 @@ ported with a reason. This list must be empty, or every entry justified, before 
   flushes an item began (before deleting a moved source, say), so a client can say the drive is still being
   written to; legacy's `FlushingToDevice`. A failed final flush says that writes may still be pending and to wait
   for safe eject. An item's last progress is reported before it ends.
+- **Fixed:** an item's own name did not take its destination folder's rules: on a GVfs bridge backend (a phone over
+  MTP) or a mount that had learned from refusals, a name inside a copied folder was fixed but the item's own was
+  tried as it was. It is now fixed first, as legacy did, and a fixed name that is taken is numbered, as no one
+  chose what should happen to it.
+- **Fixed:** a link the destination cannot hold, selected itself rather than found inside a folder, failed with an
+  unexplained system error; it is now left out and reported (kept at its source by a move), and the paste goes
+  on, as inside a folder (`Changes::left_out`, `leftOut` on `job.itemDone`). Nothing is filed for undo for it.
 - **Open:** undo of created folders without a Trash (see above).
 - **Open:** a bulk path for many small items; `rename` and `create` on the protocol; a paste-planning call.
 

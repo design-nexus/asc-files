@@ -472,7 +472,8 @@ fn run_item(
                 None => ops::move_replacing(source, into, names, cancel, &progress),
             }
             .map(|replaced| {
-                let step = Step::moved_over(source, (into, &replaced));
+                let step = Step::moved_over(source, (into, &replaced))
+                    .filter(|_| !replaced.changes.left_out);
                 (
                     into.join(replaced.name),
                     Changes {
@@ -497,7 +498,8 @@ fn run_item(
                 };
                 copied
                     .map(|copied| {
-                        let step = Step::copied(source, (into, &copied.name), conflict, false);
+                        let step = Step::copied(source, (into, &copied.name), conflict, false)
+                            .filter(|_| !copied.changes.left_out);
                         (into.join(copied.name), copied.changes, Vec::from_iter(step))
                     })
                     .map_err(plain)
@@ -532,7 +534,8 @@ fn run_item(
                     }) => Err((error, changes, Vec::new())),
                     moved => moved
                         .map(|moved| {
-                            let step = Step::moved(source, (into, &moved));
+                            let step = Step::moved(source, (into, &moved))
+                                .filter(|_| !moved.changes.left_out);
                             (into.join(moved.name), moved.changes, Vec::from_iter(step))
                         })
                         .map_err(plain),
@@ -543,7 +546,8 @@ fn run_item(
                 None => ops::replace(source, into, names, cancel, &progress),
             }
             .map(|replaced| {
-                let step = Step::replaced(source, (into, &replaced));
+                let step = Step::replaced(source, (into, &replaced))
+                    .filter(|_| !replaced.changes.left_out);
                 (
                     into.join(replaced.name),
                     Changes {
@@ -607,6 +611,7 @@ fn merged(
         renamed: merged.renamed,
         skipped: merged.skipped,
         kept: merged.kept,
+        left_out: false,
         original_deleted: false,
     };
     if let Some((_, first)) = merged.failed.first() {

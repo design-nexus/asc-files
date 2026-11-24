@@ -528,6 +528,41 @@ fn split(path: &Path) -> Result<(Arc<OwnedFd>, OsString), crate::error::Error> {
 fn first_free<T>(
     copy: &Copy,
     dir: BorrowedFd<'_>,
+    (asked, taken, is_directory): (&OsStr, Taken, bool),
+    mut attempt: impl FnMut(&OsStr) -> Result<T, Failure>,
+) -> Result<(OsString, T), Failure> {
+    // An item's own name takes the destination folder's rules first, as the names inside it do:
+    // a backend of a GVfs bridge, or what a mount learned from earlier refusals.
+    let fixed = (copy.names.mode == NameMode::Fix).then(|| {
+        let rules = copy.folder_rules(dir);
+        let fixed = super::names::fix::fix_name(asked, &rules.fixed, is_directory);
+        fixed.cause.map(|cause| (fixed.name.into_owned(), cause))
+    });
+    let (name, cause) = match fixed.flatten() {
+        Some((name, cause)) => (name, Some(cause)),
+        None => (asked.to_os_string(), None),
+    };
+    let name = name.as_os_str();
+    // No one chose what happens where a fixed name is taken: it is numbered, as a refused one is.
+    let made = match first_free_as(copy, dir, (name, taken, is_directory), &mut attempt) {
+        Err(Failure::Place(PlaceError::Exists)) if cause.is_some() => {
+            first_free_as(copy, dir, (name, Taken::Number, is_directory), &mut attempt)?
+        }
+        made => made?,
+    };
+    if let Some(cause) = cause
+        && (taken == Taken::Fail || *asked == *copy.item)
+    {
+        lock(&copy.left)
+            .item
+            .get_or_insert((asked.to_os_string(), cause));
+    }
+    Ok(made)
+}
+
+fn first_free_as<T>(
+    copy: &Copy,
+    dir: BorrowedFd<'_>,
     (name, taken, is_directory): (&OsStr, Taken, bool),
     mut attempt: impl FnMut(&OsStr) -> Result<T, Failure>,
 ) -> Result<(OsString, T), Failure> {
