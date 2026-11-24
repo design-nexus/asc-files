@@ -46,7 +46,7 @@ fn blocking_join_message(error: Box<dyn std::any::Any + Send>) -> String {
         .unwrap_or_else(|| "filesystem sync panicked".to_owned())
 }
 
-pub(super) fn placement_reason(error: PlaceError) -> String {
+pub(crate) fn placement_reason(error: PlaceError) -> String {
     match error {
         PlaceError::Exists => crate::i18n::tr("An item with that name already exists"),
         PlaceError::InvalidName => crate::i18n::tr(INVALID_NAME_REASON),

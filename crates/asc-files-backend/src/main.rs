@@ -552,6 +552,7 @@ fn default_label(items: &[Item]) -> String {
 }
 
 fn undo_json(outcome: &undo::Outcome) -> Value {
+    let changes = changes_json(&outcome.changes);
     json!({
         "id": outcome.id,
         "label": outcome.label,
@@ -561,6 +562,8 @@ fn undo_json(outcome: &undo::Outcome) -> Value {
             .iter()
             .map(|(path, error)| json!({"path": lossy(path), "error": error_json(error)}))
             .collect::<Vec<_>>(),
+        "renamed": changes["renamed"],
+        "kept": changes["kept"],
     })
 }
 

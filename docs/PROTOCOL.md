@@ -96,13 +96,16 @@ what it copied in and what it replaced; the folder merged into is never undone.
 | Method | Params | Result |
 |---|---|---|
 | `undo.history` | – | `{undo: {id, label} \| null, redo: {id, label} \| null}` |
-| `undo.undo` | – | `{id, label, done, left: [{path, error}]}` |
+| `undo.undo` | – | `{id, label, done, left: [{path, error}], renamed, kept}` |
 | `undo.redo` | – | the same |
 
 Undo reverses the newest entry, newest step first: a copy goes to the Trash (or, on a drive without one, an
 unchanged file is deleted), a move goes back under its old name, a trashed item is restored, and a replace puts
 the original back and the copy in the Trash. A step whose item changed since is left as it is and listed in
-`left`; the rest still run. Redo does the entry again and never replaces what holds a name. Nothing to undo or
+`left`; the rest still run. A move gives back the names it saved entries under where the destination refused
+them; one whose name is taken now, or which this drive refuses, keeps its saved name and is listed in `renamed`
+(`cause` `taken`, `invalid` or `tooLong`), one that could not be renamed otherwise in `kept` (`nameNotRestored`),
+and one gone since is left out. Redo does the entry again and never replaces what holds a name. Nothing to undo or
 redo is a code-1 error of kind `NotFound`; without a session folder, kind `NotSupported`, and `initialize` does
 not list the `undo` capability.
 

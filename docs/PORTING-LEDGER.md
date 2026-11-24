@@ -29,10 +29,11 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `release.rs` | 5 | 0 | 0 | 5 |
 | `replacement.rs` | 28 | 25 | 0 | 3 |
 | `restore_safety.rs` | 28 | 28 | 0 | 0 |
+| `undo.rs` | 23 | 16 | 0 | 7 |
 | `trash_capabilities.rs` | 1 | 0 | 0 | 1 (ignored upstream too) |
 | `merge.rs`, first pass | 66 | 14 | 0 | 2 (50 still to port: legacy's merge hooks and seams, and its snapshot undo) |
-| **So far** | **329** | **281** | **2** | **46** |
-| Remaining 4 files (`copy`, `progress`, `sync`, `undo`), and 50 of `merge.rs` | 163 | – | – | – |
+| **So far** | **352** | **297** | **2** | **53** |
+| Remaining 3 files (`copy`, `progress`, `sync`), and 50 of `merge.rs` | 140 | – | – | – |
 
 ## Ignored
 
@@ -59,6 +60,8 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `restore_safety::restore_leaves_in_the_trash_what_it_cannot_copy_or_finds_changed`, the merge-undo row | It also ran through legacy's merge undo, which restored a staged original; the engine's merge undo is its journal's, ported with `undo`. |
 | `restore_safety::home_trash_fallback_finds_broken_symlinks_the_virtual_backend_has_not_refreshed`, the cancelled half | Legacy read records itself where GVfs's `trash://` listing lagged, and stopped at a cancel; the engine always reads them (`trash::entry_of`), and a lookup takes no cancel. That a broken link in the Trash is found with its record still runs. |
 | `restore_safety::trash_items_whose_files_share_names_are_restored_whole`, the order of copies and deletions | Legacy copied both items before deleting either Trash copy, and checked that order. Jobs restore item by item; the proven deletion of one copy leaves the item sharing its file whole, which the rest checks. |
+| `undo::undo_says_nothing_of_fixed_entries_gone_from_the_names_they_were_saved_as`, the row through GIO | Legacy also ran it with the original as a share's location, which GIO renamed: the remote adapter. The local row runs. |
+| `undo::*`, requests with names `Fix` | Legacy's undo of a move took a name mode; one that fixed names was a move back as redo makes it. The stand-in runs those as the journal's redo does (`ops::move_as`, fixing), and the rest through the journal's undo. |
 | `leftovers::stale_probes_go_only_when_empty_and_old`, the mount-lane half | Legacy swept on its mount's background lane and checked that a slow sweep kept the lane answering. The engine has no lanes: the backend runs the sweep on a thread of its own. That the sweep removes a listed stale probe is still checked. |
 | `paste_results::an_item_replaced_without_trash_is_left_out_of_the_paste_undo`, the order of moves | Legacy moved the items without a conflict first; jobs keep the order asked for. The moves are compared as a set. |
 
@@ -102,6 +105,13 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `deletion::a_refused_trash_is_retryable_and_remembered_only_on_fuse` | GIO's `trash_support` remembering FUSE mounts that refused `g_file_trash`; the native Trash decides by the drive's Trash folder. |
 | `deletion::verified_trash_learns_fuse_refusals_and_cleans_leftovers_on_both_worker_routes` | Same, and GIO's half-written `.trashinfo` leftovers. |
 | `deletion::a_trash_that_moves_nothing_is_retryable_and_records_no_undo` | `g_file_trash` reporting success without moving (GLib #4060); the native Trash moves by rename. |
+| `undo::a_confirmed_undo_conflict_replaces_the_newer_item` | **Gap.** The journal's undo never replaces an item that took the name since; legacy, after the user confirmed, did. Returns with the conflict prompt (Phase B). |
+| `undo::undoing_a_grouping_reports_the_trashed_group_folder` | Grouping (moving items into a new folder) is an app command with no engine counterpart yet; its undo returns with it. |
+| `undo::undoing_a_grouping_without_trash_removes_only_an_empty_group_folder` | Same. |
+| `undo::a_typed_name_at_a_gvfs_address_is_refused_by_the_rules_of_its_scheme` | A GVfs address: the remote adapter. |
+| `undo::a_rename_gio_has_no_backend_for_fails_instead_of_ending_the_process` | GIO: the remote adapter. |
+| `undo::undoing_a_move_back_to_another_kind_of_location_gives_fixed_names_back` | Its premise is an original addressed through GIO, which renamed with its own rules: the remote adapter. The local give-back of such names is `undoing_a_move_gives_fixed_names_back_and_reports_those_it_cannot`. |
+| `undo::undoing_a_cross_volume_move_deletes_the_moved_items_once_they_are_flushed` | Legacy flushed once for a whole undo and deleted every moved item after. The journal undoes item by item, each item's source deleted only after its own copy is flushed, so a failed flush keeps that item whole and leaves the ones before it done. |
 | `create_entry::a_folder_reported_by_a_file_create_is_a_taken_name` | Legacy's private helper `name_taken`; its rule (a folder at the name refuses an exclusive file create with `EISDIR`, so the name is taken) is in `ops::create` and runs in the ported concurrency tests. |
 | `paste_results::a_cancel_that_cuts_off_an_item_counts_it_as_not_attempted` | Drives the GTK app's `Browser`. Cancelling is the job runner's (`tests/jobs.rs`: items not begun are `NotAttempted`). |
 | `paste_results::only_a_cut_off_between_local_locations_counts_as_not_attempted` | Legacy's rule for remote (`sftp://`) ends of a cut-off paste: the remote adapter. |
@@ -192,6 +202,14 @@ ported with a reason. This list must be empty, or every entry justified, before 
   a Trash, and a destination the user confirmed that the record no longer names.
 - **Added:** `jobs::Action::Restore` (`restore` on the protocol, with `to`, the confirmed destination) and
   `trash::entry_of` for an item a Trash folder's listing shows; `trash.restore` now answers from its own thread.
+- **Fixed:** a rename moved the item, so a case-only rename on a drive that ignores case was refused as taken;
+  `ops::rename` now renames in place as legacy did (set aside and placed back under the new spelling), with
+  legacy's wording, saying where an item was left if the way back failed. `ops::rename_typed` checks a typed name
+  first.
+- **Fixed:** an undone move gave names back with a raw rename that bypassed the engine's filesystem layer, and
+  reported every name it could not give back, and every entry gone since, as a failure. It now renames in place
+  through the layer; an entry gone since is passed over, and one keeping its saved name is reported as renamed (name
+  taken, or refused) or kept, as legacy did (`undo::Outcome::changes`, `renamed` and `kept` on the protocol).
 - **Open:** a bulk path for many small items; `rename` and `create` on the protocol; a paste-planning call.
 
 ## Archives (legacy: 225 tests)

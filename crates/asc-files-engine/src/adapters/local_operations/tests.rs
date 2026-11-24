@@ -61,6 +61,7 @@ mod paths;
 mod placement;
 mod replacement;
 mod restore_safety;
+mod undo;
 
 /// Tests that change process-wide state (the clock, the kernel release, mount capabilities)
 /// run one at a time; legacy held the GLib main context for this.
@@ -850,15 +851,16 @@ struct LocalOperationProvider;
 /// returns true once it has seen the batch finish.
 struct Running {
     /// The batch until the loop first turns: as a GLib task, it starts only then.
-    pending: Option<(
-        crate::jobs::Request,
-        std::sync::mpsc::Sender<crate::jobs::Event>,
-    )>,
+    pending: Option<Starter>,
     cancel: crate::ops::Cancel,
     events: std::sync::mpsc::Receiver<crate::jobs::Event>,
     handle: Box<dyn FnMut(crate::jobs::Event) -> bool>,
     job: Option<crate::jobs::Handle>,
 }
+
+/// What starts a batch on the loop's first turn, sharing the batch's cancel: a job, or an undo
+/// reporting in job events.
+type Starter = Box<dyn FnOnce(crate::ops::Cancel) -> Option<crate::jobs::Handle>>;
 
 thread_local! {
     static RUNNING: RefCell<Vec<Running>> = const { RefCell::new(Vec::new()) };
@@ -871,6 +873,22 @@ fn start_running(
     request: crate::jobs::Request,
     handle: Box<dyn FnMut(crate::jobs::Event) -> bool>,
 ) -> crate::services::LoadHandle {
+    start_with(
+        Box::new(move |send, cancel| Some(crate::jobs::start_sharing(request, send, cancel))),
+        handle,
+    )
+}
+
+/// Starts what `start` starts, once the loop first turns; its events go to `handle`.
+fn start_with(
+    start: Box<
+        dyn FnOnce(
+            std::sync::mpsc::Sender<crate::jobs::Event>,
+            crate::ops::Cancel,
+        ) -> Option<crate::jobs::Handle>,
+    >,
+    handle: Box<dyn FnMut(crate::jobs::Event) -> bool>,
+) -> crate::services::LoadHandle {
     let (send, events) = std::sync::mpsc::channel();
     let cancel = match SHARED_CANCEL.with(|shared| shared.borrow_mut().take()) {
         Some(flag) => crate::ops::Cancel::sharing(flag),
@@ -879,7 +897,7 @@ fn start_running(
     let cancelling = cancel.clone();
     RUNNING.with(|running| {
         running.borrow_mut().push(Running {
-            pending: Some((request, send)),
+            pending: Some(Box::new(move |cancel| start(send, cancel))),
             cancel,
             events,
             handle,
@@ -900,13 +918,9 @@ fn pump() {
         }) else {
             return;
         };
-        if let Some((request, send)) = running.pending.take() {
+        if let Some(start) = running.pending.take() {
             // A batch cancelled before its first turn starts cancelled: nothing of it is tried.
-            running.job = Some(crate::jobs::start_sharing(
-                request,
-                send,
-                running.cancel.clone(),
-            ));
+            running.job = start(running.cancel.clone());
         }
         let mut finished = false;
         while !finished {
@@ -1328,6 +1342,398 @@ impl CancelFromMain {
     }
 }
 
+impl LocalOperationProvider {
+    /// Legacy's undo of a move, through the engine's journal: each record is filed as the move
+    /// it was, in a journal of the request's own, and undone; reported as legacy reported it,
+    /// as a paste back.
+    fn undo_move(
+        &self,
+        request: crate::services::UndoMoveRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> crate::services::LoadHandle {
+        use crate::jobs::{Event, JobId, Outcome};
+        use crate::undo::{Identity, Journal, Step};
+        assert!(
+            request.cleanup_locations.is_empty(),
+            "the stand-in has no grouping to undo"
+        );
+        let (id, fixing) = (request.id, request.names == crate::services::NameMode::Fix);
+        let records: Vec<_> = request
+            .items
+            .iter()
+            .map(|item| {
+                assert_eq!(
+                    item.conflict,
+                    TransferConflict::FailIfExists,
+                    "the journal's undo never replaces"
+                );
+                let path = |location: &Location| {
+                    location.native_path().expect("a native path").to_path_buf()
+                };
+                (
+                    path(&item.record.original),
+                    path(&item.record.current),
+                    item.record.renamed.clone(),
+                )
+            })
+            .collect();
+        let start = move |send: std::sync::mpsc::Sender<Event>, cancel: crate::ops::Cancel| {
+            thread::spawn(move || {
+                let job = JobId(0);
+                let steps: Vec<Step> = records
+                    .iter()
+                    .filter_map(|(original, current, renamed)| {
+                        let folder = current.parent()?;
+                        let relative = |location: &Location| {
+                            location
+                                .native_path()?
+                                .strip_prefix(folder)
+                                .ok()
+                                .map(Path::to_path_buf)
+                        };
+                        Some(Step::Moved {
+                            from: original.clone(),
+                            to: current.clone(),
+                            identity: Identity::of(current)?,
+                            renamed: renamed
+                                .iter()
+                                .filter_map(|item| {
+                                    Some((relative(&item.requested)?, relative(&item.saved_as)?))
+                                })
+                                .collect(),
+                        })
+                    })
+                    .collect();
+                // A move back that fixes names is what redo does: the move again, fixing.
+                let outcome = if fixing {
+                    let mut left = Vec::new();
+                    let mut changes = crate::ops::Changes::default();
+                    for (original, current, _) in &records {
+                        let (folder, name) = (
+                            original.parent().expect("a folder"),
+                            original.file_name().expect("a name"),
+                        );
+                        match crate::ops::move_as(
+                            current,
+                            (folder, name),
+                            crate::ops::NameMode::Fix,
+                            &cancel,
+                            &crate::ops::Progress::new(),
+                        ) {
+                            Ok(moved) => {
+                                changes
+                                    .renamed
+                                    .extend(moved.changes.renamed.into_iter().map(|renamed| {
+                                        crate::ops::Renamed {
+                                            requested: folder.join(renamed.requested),
+                                            saved_as: folder.join(renamed.saved_as),
+                                            cause: renamed.cause,
+                                        }
+                                    }));
+                            }
+                            Err(error) => left.push((current.clone(), error)),
+                        }
+                    }
+                    Ok(crate::undo::Outcome {
+                        id: 0,
+                        label: String::new(),
+                        done: records.len() - left.len(),
+                        left,
+                        changes,
+                    })
+                } else {
+                    let home = tempfile::tempdir().expect("a journal folder");
+                    let journal = Journal::at(home.path()).expect("a journal");
+                    journal.record("Move", steps).expect("the moves filed");
+                    journal.undo(&cancel, &crate::ops::Progress::new())
+                };
+                let (left, mut given_back) = match outcome {
+                    Ok(outcome) => (outcome.left, outcome.changes),
+                    Err(error) => (
+                        vec![(PathBuf::new(), error)],
+                        crate::ops::Changes::default(),
+                    ),
+                };
+                let (mut done, mut failed, mut not_attempted) = (0, 0, 0);
+                for (index, (original, current, _)) in records.iter().enumerate() {
+                    let outcome = match left.iter().find(|(path, _)| path == current) {
+                        Some((_, error)) if error.kind() == ErrorKind::Cancelled => {
+                            not_attempted += 1;
+                            Outcome::NotAttempted
+                        }
+                        Some((_, error)) => {
+                            failed += 1;
+                            Outcome::Failed {
+                                error: error.clone(),
+                                changes: crate::ops::Changes::default(),
+                            }
+                        }
+                        None => {
+                            done += 1;
+                            Outcome::Done {
+                                name: original.clone(),
+                                changes: std::mem::take(&mut given_back),
+                            }
+                        }
+                    };
+                    let _ = send.send(Event::ItemDone {
+                        job,
+                        index,
+                        outcome,
+                    });
+                }
+                // What a moved item kept under a fixed name, it could not give back.
+                let not_given_back: Vec<(PathBuf, crate::error::Error)> = left
+                    .into_iter()
+                    .filter(|(path, _)| !records.iter().any(|(_, current, _)| path == current))
+                    .collect();
+                for (path, error) in not_given_back {
+                    let _ = send.send(Event::ItemDone {
+                        job,
+                        index: usize::MAX,
+                        outcome: Outcome::Failed {
+                            error: EngineError::new(
+                                error.kind(),
+                                &format!("{}: {}", path.display(), error.message()),
+                            ),
+                            changes: crate::ops::Changes::default(),
+                        },
+                    });
+                }
+                let _ = send.send(Event::Finished {
+                    job,
+                    done,
+                    failed,
+                    not_attempted,
+                    cancelled: cancel.is_cancelled(),
+                    undo: Ok(None),
+                    settled: None,
+                });
+            });
+            None
+        };
+        let (mut completed, mut failed, mut cut_off, mut errors) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut kept_names = Vec::new();
+        let currents: Vec<Location> = request
+            .items
+            .iter()
+            .map(|item| item.record.current.clone())
+            .collect();
+        let handle = move |event| match event {
+            Event::ItemDone { index, outcome, .. } => {
+                match outcome {
+                    Outcome::Done { name, changes } => {
+                        let report = changes_report(Path::new("/"), changes);
+                        if !report.is_empty() {
+                            emit(OperationEvent::ItemsReported {
+                                request_id: id,
+                                report,
+                            });
+                        }
+                        emit(OperationEvent::ItemMoved {
+                            request_id: id,
+                            from: currents[index].clone(),
+                            to: Location::local(name),
+                            merged: false,
+                        });
+                        completed.push(currents[index].clone());
+                    }
+                    Outcome::Failed { error, .. } if index == usize::MAX => kept_names.push(error),
+                    Outcome::Failed { error, .. } => {
+                        errors.push(error.message().to_owned());
+                        failed.push(currents[index].clone());
+                    }
+                    Outcome::NotAttempted => cut_off.push(currents[index].clone()),
+                }
+                false
+            }
+            Event::Finished { cancelled, .. } => {
+                let completed = std::mem::take(&mut completed);
+                emit(if cancelled || !cut_off.is_empty() {
+                    OperationEvent::Cancelled {
+                        request_id: id,
+                        result: crate::services::CancelledOperation {
+                            completed,
+                            failed: std::mem::take(&mut failed),
+                            not_attempted: std::mem::take(&mut cut_off),
+                            affected_locations: std::collections::HashSet::new(),
+                        },
+                    }
+                } else if errors.is_empty() && kept_names.is_empty() {
+                    OperationEvent::Pasted {
+                        request_id: id,
+                        locations: completed,
+                    }
+                } else {
+                    let mut message = errors.clone();
+                    message.extend(kept_names.iter().map(|error| error.message().to_owned()));
+                    OperationEvent::TransferFailed {
+                        request_id: id,
+                        completed_locations: completed,
+                        message: message.join("\n"),
+                    }
+                });
+                true
+            }
+            _ => false,
+        };
+        start_with(Box::new(start), Box::new(handle))
+    }
+}
+
+impl LocalOperationProvider {
+    /// Legacy's rename of a listed entry to a typed name: [`crate::ops::rename_typed`].
+    fn rename(
+        &self,
+        request: crate::services::RenameRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> crate::services::LoadHandle {
+        let item = request
+            .entry
+            .location
+            .native_path()
+            .expect("a native entry")
+            .to_path_buf();
+        let name = request.new_name;
+        renaming(request.id, emit, move |cancel| {
+            crate::ops::rename_typed(&item, &name, cancel).map(|_| ())
+        })
+    }
+
+    /// Legacy's undo of a rename: the item goes back to the name and folder it had, which were
+    /// valid there, so the name is not checked again.
+    fn undo_rename(
+        &self,
+        request: crate::services::UndoRenameRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> crate::services::LoadHandle {
+        let path =
+            |location: &Location| location.native_path().expect("a native path").to_path_buf();
+        let (current, original) = (path(&request.current), path(&request.original));
+        renaming(request.id, emit, move |cancel| {
+            let (folder, name) = (
+                original.parent().expect("a folder"),
+                original.file_name().expect("a name"),
+            );
+            // Within its folder it is renamed in place, as the rename was.
+            if current.parent() == Some(folder) {
+                return crate::ops::rename(&current, name, crate::ops::NameMode::Keep, cancel)
+                    .map(|_| ());
+            }
+            crate::ops::move_as(
+                &current,
+                (folder, name),
+                crate::ops::NameMode::Keep,
+                cancel,
+                &crate::ops::Progress::new(),
+            )
+            .map(|_| ())
+        })
+    }
+}
+
+/// Runs `work` once the loop first turns (unless cancelled by then), reporting as legacy's
+/// rename did: `Renamed`, `Failed` or `Cancelled`.
+fn renaming(
+    id: OperationRequestId,
+    emit: Rc<dyn Fn(OperationEvent)>,
+    work: impl FnOnce(&crate::ops::Cancel) -> Result<(), EngineError> + Send + 'static,
+) -> crate::services::LoadHandle {
+    use crate::jobs::{Event, JobId, Outcome};
+    let start = move |send: std::sync::mpsc::Sender<Event>, cancel: crate::ops::Cancel| {
+        thread::spawn(move || {
+            let job = JobId(0);
+            let outcome = if cancel.is_cancelled() {
+                Outcome::NotAttempted
+            } else {
+                match work(&cancel) {
+                    Ok(()) => Outcome::Done {
+                        name: PathBuf::new(),
+                        changes: crate::ops::Changes::default(),
+                    },
+                    Err(error) => Outcome::Failed {
+                        error,
+                        changes: crate::ops::Changes::default(),
+                    },
+                }
+            };
+            let _ = send.send(Event::ItemDone {
+                job,
+                index: 0,
+                outcome,
+            });
+            let _ = send.send(Event::Finished {
+                job,
+                done: 0,
+                failed: 0,
+                not_attempted: 0,
+                cancelled: cancel.is_cancelled(),
+                undo: Ok(None),
+                settled: None,
+            });
+        });
+        None
+    };
+    let mut reported = None;
+    let handle = move |event| match event {
+        Event::ItemDone { outcome, .. } => {
+            reported = Some(match outcome {
+                Outcome::Done { .. } => OperationEvent::Renamed { request_id: id },
+                Outcome::Failed { error, .. } if error.kind() != ErrorKind::Cancelled => {
+                    OperationEvent::Failed {
+                        request_id: id,
+                        message: error.message().to_owned(),
+                        password_failure: None,
+                    }
+                }
+                _ => OperationEvent::Cancelled {
+                    request_id: id,
+                    result: crate::services::CancelledOperation::default(),
+                },
+            });
+            false
+        }
+        Event::Finished { .. } => {
+            if let Some(event) = reported.take() {
+                emit(event);
+            }
+            true
+        }
+        _ => false,
+    };
+    start_with(Box::new(start), Box::new(handle))
+}
+
+/// Legacy's helpers for a rename's events.
+fn settle(
+    start: impl FnOnce(Rc<dyn Fn(OperationEvent)>) -> crate::services::LoadHandle,
+) -> Vec<OperationEvent> {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let emitted = events.clone();
+    let _operation = start(Rc::new(move |event| emitted.borrow_mut().push(event)));
+    pump_all();
+    events.take()
+}
+
+fn rename(path: &Path, new_name: &str) -> Vec<OperationEvent> {
+    let entry = file_entry(path);
+    settle(|emit| {
+        LocalOperationProvider.rename(
+            crate::services::RenameRequest {
+                id: OperationRequestId(46),
+                entry,
+                new_name: new_name.to_owned(),
+            },
+            emit,
+        )
+    })
+}
+
+fn drive_until_rename_settles<T: ?Sized>(_events: &T) {
+    pump_all();
+}
+
 /// Runs file calls off a test marked as the UI thread, as legacy's provider did on its workers.
 fn off_ui_thread<T: Send>(call: impl FnOnce() -> T + Send) -> T {
     thread::scope(|scope| scope.spawn(call).join().expect("the call returns"))
@@ -1499,14 +1905,18 @@ fn permanently_delete_local_path_if_unchanged(
     permanently_delete_local(parent, name.to_os_string(), expected, cancellable)
 }
 
-fn drive_until_transfer_settles<T: ?Sized>(_events: &T) {}
+fn drive_until_transfer_settles<T: ?Sized>(_events: &T) {
+    pump_all();
+}
 
 /// The kind of error the engine reports for `errno`, as legacy compared against GIO's mapping.
 fn kind_of(errno: rustix::io::Errno) -> ErrorKind {
     crate::error::os_io_error(io::Error::from_raw_os_error(errno.raw_os_error())).kind()
 }
 
-fn pump_until_transfer<T: ?Sized>(_events: &T) {}
+fn pump_until_transfer<T: ?Sized>(_events: &T) {
+    pump_all();
+}
 
 /// Legacy's move of one item to the new path `target`, through the engine's public move.
 fn move_local(

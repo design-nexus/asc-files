@@ -48,7 +48,7 @@ pub(super) enum Placed {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum PlaceError {
+pub(crate) enum PlaceError {
     Exists,
     CrossDevice,
     Unsupported,
@@ -64,7 +64,7 @@ impl PlaceError {
     /// Whether the destination refused the name itself. `EINVAL` from a
     /// rename may mean its flags, so only `EINVAL` from a flagless call or
     /// mapped by the probe counts.
-    pub(super) fn refuses_name(self) -> bool {
+    pub(crate) fn refuses_name(self) -> bool {
         matches!(
             self,
             Self::InvalidName | Self::Io(Errno::NAMETOOLONG | Errno::ILSEQ | Errno::BADMSG)
@@ -1283,14 +1283,14 @@ pub(super) fn set_aside_if_safe(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Renamed {
+pub(crate) enum Renamed {
     Direct(Placed),
     CaseOnly,
     Unchanged,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum RenameFailure {
+pub(crate) enum RenameFailure {
     Place(PlaceError),
     Stranded {
         temporary: OsString,
@@ -1301,7 +1301,7 @@ pub(super) enum RenameFailure {
 /// Renames `from` to `to` without replacing another item. A name that only
 /// differs in case on a case-insensitive mount resolves to the item itself,
 /// so it is renamed in two steps through a hidden temporary name.
-pub(super) fn rename_in_place(
+pub(crate) fn rename_in_place(
     fs: &dyn FsOps,
     from: Entry<'_>,
     to: Entry<'_>,

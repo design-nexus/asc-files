@@ -552,17 +552,79 @@ pub fn move_as(
 
 /// Renames `item` to `name` within its folder, never over what holds that name. A failure gives
 /// its reason, as a rename prompt shows it.
-pub fn rename(item: &Path, name: &OsStr, names: NameMode, cancel: &Cancel) -> Result<Moved, Error> {
+pub fn rename(
+    item: &Path,
+    name: &OsStr,
+    _names: NameMode,
+    cancel: &Cancel,
+) -> Result<Moved, Error> {
+    use crate::adapters::local_operations::{
+        fs_ops::Entry,
+        placement::{self, PlaceError, RenameFailure},
+    };
+    plain_name(name)?;
+    let (parent, from_name) = split(item)?;
+    let from = Entry::new(&*parent, &from_name);
+    let to = Entry::new(&*parent, name);
+    // A name differing only in case on a drive that ignores case is the item itself: it is set
+    // aside and placed back under the new spelling. An SMB folder refused while a file below it
+    // waits for the client's deferred close is tried again until that closes.
+    let renamed = crate::adapters::local_operations::deferred_close::retry_folder_rename(
+        fs(),
+        from,
+        &Deadline::default(),
+        &|| cancel.is_cancelled(),
+        |failure: &RenameFailure| {
+            matches!(
+                failure,
+                RenameFailure::Place(PlaceError::Io(rustix::io::Errno::ACCESS))
+            )
+        },
+        || placement::rename_in_place(fs(), from, to),
+    )
+    .map_err(|_| crate::error::cancelled())?;
+    match renamed {
+        Ok(_) => Ok(Moved {
+            name: name.to_os_string(),
+            copied: false,
+            kept: Vec::new(),
+            changes: Changes::default(),
+            progress: ProgressSnapshot::default(),
+            stopped: None,
+        }),
+        Err(RenameFailure::Place(PlaceError::Exists)) => Err(Error::new(
+            crate::error::ErrorKind::Exists,
+            &rust_i18n::t!("“%{name}” already exists", name = name.to_string_lossy()),
+        )),
+        Err(RenameFailure::Place(error)) => Err(move_failure(item, true, from, error)),
+        Err(RenameFailure::Stranded { temporary, error }) => {
+            Err(crate::error::io_error(rust_i18n::t!(
+                "Could not rename “%{name}”; it was left as “%{temporary}”: %{error}",
+                name = from_name.to_string_lossy(),
+                temporary = temporary.to_string_lossy(),
+                error = crate::adapters::local_operations::placement_reason(error)
+            )))
+        }
+    }
+}
+
+/// Renames `item` to `name` as the user typed it: refused, before anything changes, where its
+/// folder's drive would store another name (a character FAT cannot hold, a name too long for the
+/// share, a reserved word); otherwise [`rename`], keeping the name exactly.
+pub fn rename_typed(item: &Path, name: &str, cancel: &Cancel) -> Result<Moved, Error> {
     let folder = item
         .parent()
         .ok_or_else(|| crate::error::translated_io_error("The item has no folder"))?;
-    moving(
-        item,
-        (folder, name),
-        (names, true),
-        cancel,
-        &Progress::new(),
-    )
+    // An item renamed is not a new folder, which some shares make under a longer name first.
+    if let Some(reason) =
+        crate::adapters::local_operations::typed_names::refused_in(folder, name, false)
+    {
+        return Err(Error::new(
+            crate::error::ErrorKind::InvalidFilename,
+            &reason,
+        ));
+    }
+    rename(item, OsStr::new(name), NameMode::Keep, cancel)
 }
 
 fn moving(

@@ -405,6 +405,10 @@ pub struct Outcome {
     pub done: usize,
     /// Steps left as they were, by the path they concern, with why.
     pub left: Vec<(PathBuf, Error)>,
+    /// Entries a move saved under other names that an undo could not give their names back:
+    /// `renamed` keep the names they were saved under (the name is taken now, or this drive
+    /// refuses it), `kept` could not be renamed for another reason. Entries gone since are left out.
+    pub changes: ops::Changes,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -500,15 +504,17 @@ impl Journal {
         }
         let mut redo = Vec::new();
         let mut left = Vec::new();
+        let mut changes = ops::Changes::default();
         for step in entry.steps.iter().rev() {
             if cancel.is_cancelled() {
                 left.push((step.path().to_path_buf(), crate::error::cancelled()));
                 continue;
             }
             match reverse(step, cancel, progress) {
-                Ok((undone, nested)) => {
+                Ok((undone, given_back)) => {
                     redo.push(undone);
-                    left.extend(nested);
+                    changes.renamed.extend(given_back.renamed);
+                    changes.kept.extend(given_back.kept);
                 }
                 Err(error) => left.push((step.path().to_path_buf(), error)),
             }
@@ -533,6 +539,7 @@ impl Journal {
             label: entry.label,
             done,
             left,
+            changes,
         })
     }
 
@@ -565,6 +572,7 @@ impl Journal {
             label: entry.label,
             done,
             left,
+            changes: ops::Changes::default(),
         })
     }
 
@@ -695,7 +703,7 @@ fn reverse(
     step: &Step,
     cancel: &Cancel,
     progress: &Progress,
-) -> Result<(Redo, Vec<(PathBuf, Error)>), Error> {
+) -> Result<(Redo, ops::Changes), Error> {
     match step {
         Step::Copied {
             source,
@@ -711,7 +719,7 @@ fn reverse(
                     into: into.to_path_buf(),
                     conflict: *conflict,
                 },
-                Vec::new(),
+                ops::Changes::default(),
             ))
         }
         Step::Moved {
@@ -748,7 +756,7 @@ fn reverse(
                     original: original.clone(),
                     identity,
                 },
-                Vec::new(),
+                ops::Changes::default(),
             ))
         }
         Step::MovedOver {
@@ -774,7 +782,7 @@ fn reverse(
                     identity: Identity::of(from).ok_or_else(changed)?,
                     original: Identity::of(to),
                 },
-                Vec::new(),
+                ops::Changes::default(),
             ))
         }
         Step::RemovedFolder { path, mode } => {
@@ -784,7 +792,10 @@ fn reverse(
                 fs::set_permissions(path, fs::Permissions::from_mode(*mode))
                     .map_err(crate::error::os_io_error)?;
             }
-            Ok((Redo::RemoveFolder { path: path.clone() }, Vec::new()))
+            Ok((
+                Redo::RemoveFolder { path: path.clone() },
+                ops::Changes::default(),
+            ))
         }
         Step::Replaced {
             source,
@@ -800,7 +811,7 @@ fn reverse(
                         target: target.clone(),
                         original: None,
                     },
-                    Vec::new(),
+                    ops::Changes::default(),
                 ));
             };
             let entry = trash_entry(&original.info, &original.identity)?;
@@ -828,7 +839,7 @@ fn reverse(
                     target: target.clone(),
                     original: Identity::of(target),
                 },
-                Vec::new(),
+                ops::Changes::default(),
             ))
         }
     }
@@ -838,13 +849,15 @@ fn reverse(
 /// back where they were valid. `renamed` is relative to `to`'s folder, with each saved path as
 /// written; each name is changed back inside its folder as it now is, and a folder's own name
 /// after its contents.
-fn give_names_back(
-    from: &Path,
-    to: &Path,
-    renamed: &[(PathBuf, PathBuf)],
-) -> Vec<(PathBuf, Error)> {
+fn give_names_back(from: &Path, to: &Path, renamed: &[(PathBuf, PathBuf)]) -> ops::Changes {
+    use crate::adapters::local_operations::{
+        fs_ops::{Entry, fs},
+        native_fs::open_local_parent_directory,
+        placement::{self, PlaceError, RenameFailure},
+    };
+    let mut changes = ops::Changes::default();
     let Some(moved_name) = to.file_name() else {
-        return Vec::new();
+        return changes;
     };
     let back = |path: &Path| -> Option<PathBuf> {
         let mut components = path.components();
@@ -859,23 +872,65 @@ fn give_names_back(
         .iter()
         .filter_map(|(asked, saved)| Some((back(asked)?, back(saved)?)))
         .collect();
+    // Deepest first, so a renamed folder still has the name its entries' paths use.
     pairs.sort_by_key(|(_, saved)| std::cmp::Reverse(saved.components().count()));
-    let mut left = Vec::new();
     for (asked, saved) in pairs {
-        let Some(name) = asked.file_name() else {
+        let (Some(folder), Some(saved_name), Some(name)) =
+            (saved.parent(), saved.file_name(), asked.file_name())
+        else {
             continue;
         };
-        let given_back = saved.with_file_name(name);
-        if let Err(error) = rename_no_replace(&saved, &given_back) {
-            left.push((asked, error));
-        }
+        let dir = match open_local_parent_directory(folder) {
+            Ok(dir) => dir,
+            // Gone since, with the folder it was in: nothing to give back.
+            Err(_) if std::fs::symlink_metadata(&saved).is_err() => continue,
+            Err(error) => {
+                changes.kept.push(not_restored(&asked, &saved, error));
+                continue;
+            }
+        };
+        let cause = match placement::rename_in_place(
+            fs(),
+            Entry::new(&dir, saved_name),
+            Entry::new(&dir, name),
+        ) {
+            Ok(_) | Err(RenameFailure::Place(PlaceError::Io(rustix::io::Errno::NOENT))) => continue,
+            Err(RenameFailure::Place(PlaceError::Exists)) => crate::services::RenameCause::Taken,
+            Err(RenameFailure::Place(PlaceError::Io(rustix::io::Errno::NAMETOOLONG))) => {
+                crate::services::RenameCause::TooLong
+            }
+            Err(RenameFailure::Place(error)) if error.refuses_name() => {
+                crate::services::RenameCause::Invalid
+            }
+            Err(RenameFailure::Place(error)) => {
+                let reason = crate::adapters::local_operations::placement_reason(error);
+                changes.kept.push(not_restored(&asked, &saved, reason));
+                continue;
+            }
+            Err(RenameFailure::Stranded { error, .. }) => {
+                let reason = crate::adapters::local_operations::placement_reason(error);
+                changes.kept.push(not_restored(&asked, &saved, reason));
+                continue;
+            }
+        };
+        changes.renamed.push(ops::Renamed {
+            requested: asked,
+            saved_as: saved,
+            cause,
+        });
     }
-    left
+    changes
 }
 
-fn rename_no_replace(from: &Path, to: &Path) -> Result<(), Error> {
-    use rustix::fs::{CWD, RenameFlags, renameat_with};
-    renameat_with(CWD, from, CWD, to, RenameFlags::NOREPLACE).map_err(crate::error::os_io_error)
+/// An entry that keeps the name it was saved under, as `why` stopped it getting its own back.
+fn not_restored(asked: &Path, saved: &Path, why: impl std::fmt::Display) -> ops::Kept {
+    ops::Kept {
+        path: asked.to_path_buf(),
+        cause: crate::services::KeptCause::NameNotRestored {
+            saved_as: crate::model::Location::local(saved),
+            error: why.to_string(),
+        },
+    }
 }
 
 /// Does one undone thing again. A copy merged into a folder that is there now is done but not
