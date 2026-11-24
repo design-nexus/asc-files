@@ -17,7 +17,9 @@ qt_add_library(asc_files_core STATIC
     src/models/FolderModel.cpp src/models/FolderModel.h
     src/models/JobModel.cpp src/models/JobModel.h
     src/models/Browser.cpp src/models/Browser.h
+    src/models/ColumnsModel.cpp src/models/ColumnsModel.h
     src/models/FavoritesModel.cpp src/models/FavoritesModel.h
+    src/models/FolderViews.cpp src/models/FolderViews.h
     src/models/ItemListModel.cpp src/models/ItemListModel.h
     src/models/RecentModel.cpp src/models/RecentModel.h
     src/models/TrashModel.cpp src/models/TrashModel.h
@@ -45,10 +47,13 @@ qt_add_qml_module(asc_files_qml
         qml/components/Button.qml
         qml/components/ContextMenu.qml
         qml/components/FileRow.qml
+        qml/components/FileTile.qml
+        qml/components/FolderColumn.qml
         qml/components/Icon.qml
         qml/components/IconButton.qml
         qml/components/ItemRow.qml
         qml/components/PlaceItem.qml
+        qml/components/RubberBand.qml
         qml/components/SearchField.qml
         qml/components/SectionHeading.qml
         qml/components/TabChip.qml

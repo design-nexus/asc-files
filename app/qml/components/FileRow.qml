@@ -18,7 +18,7 @@ Rectangle {
     required property string modeOctal
     required property string modeSymbolic
     required property bool loaded
-    property bool selected: false
+    required property bool selected
     /// Mode, Size, a gap, Kind and Modified; the name takes the rest, up to 600 px.
     property var columns: [70, 91, 40, 119, 140]
     /// Columns that give way as the list narrows, so the name keeps its room.
@@ -27,7 +27,8 @@ Rectangle {
     property bool showKind: true
 
     signal activated()
-    signal clicked(var mouse)
+    /// A click, with the keys held (Ctrl adds or removes, Shift extends).
+    signal clicked(int modifiers)
 
     height: Theme.rowHeight
     radius: Theme.radius
@@ -35,7 +36,8 @@ Rectangle {
 
     HoverHandler { id: hover }
     TapHandler {
-        onTapped: (point, button) => row.clicked(point)
+        id: tap
+        onTapped: row.clicked(tap.point.modifiers)
         onDoubleTapped: row.activated()
     }
 

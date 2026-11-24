@@ -265,4 +265,25 @@ fn a_drive_gives_out_a_bounded_number_of_read_places() {
     assert!(readers.claim(root.path()).is_none());
     drop(held);
     assert!(readers.claim(root.path()).is_some());
+
+    // Waiting, a read takes the place another frees.
+    let held: Vec<_> = (0..READERS_PER_DRIVE)
+        .map(|_| readers.claim(root.path()).expect("a place"))
+        .collect();
+    let releaser = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        drop(held);
+    });
+    let waited = readers.claim_within(root.path(), std::time::Duration::from_secs(5));
+    assert!(waited.is_some(), "a place freed within the wait");
+    releaser.join().unwrap();
+    let stalled: Vec<_> = (0..READERS_PER_DRIVE - 1)
+        .map(|_| readers.claim(root.path()).expect("a place"))
+        .collect();
+    assert!(
+        readers
+            .claim_within(root.path(), std::time::Duration::from_millis(50))
+            .is_none()
+    );
+    drop(stalled);
 }

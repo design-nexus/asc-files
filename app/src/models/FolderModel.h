@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QJsonArray>
 #include <QList>
+#include <QSet>
 
 class BackendClient;
 struct BackendError;
@@ -27,7 +28,10 @@ class FolderModel : public QAbstractListModel {
     Q_PROPERTY(bool followsChanges READ followsChanges NOTIFY folderChanged)
     Q_PROPERTY(qint64 generation READ generation NOTIFY generationChanged)
     Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
-    Q_PROPERTY(bool newestFirst READ newestFirst WRITE setNewestFirst NOTIFY newestFirstChanged)
+    Q_PROPERTY(int selectionCount READ selectionCount NOTIFY selectionChanged)
+    Q_PROPERTY(QString sortKey READ sortKey NOTIFY sortChanged)
+    Q_PROPERTY(bool sortDescending READ sortDescending NOTIFY sortChanged)
+    Q_PROPERTY(bool foldersFirst READ foldersFirst NOTIFY sortChanged)
 public:
     enum Role {
         NameRole = Qt::UserRole + 1,
@@ -43,6 +47,7 @@ public:
         ModeSymbolicRole,
         GoneRole,
         LoadedRole,
+        SelectedRole,
     };
     Q_ENUM(Role)
     static constexpr int PageSize = 200;
@@ -76,11 +81,38 @@ public:
     qint64 generation() const { return m_generation; }
     bool showHidden() const { return m_showHidden; }
     void setShowHidden(bool show);
-    bool newestFirst() const { return m_newestFirst; }
+    QString sortKey() const { return m_sortKey; }
+    bool sortDescending() const { return m_sortDescending; }
+    bool foldersFirst() const { return m_foldersFirst; }
+    /// Orders the listing by `key` ("name", "size" or "modified"); the backend reads the folder
+    /// again in that order, keeping what it knows.
+    Q_INVOKABLE void setSort(const QString &key, bool descending, bool foldersFirst = true);
+    /// Opens `path` already ordered by `key`, so the folder is read once.
+    void open(const QByteArray &path, const QString &key, bool descending);
     /// Lists by modified time, newest first, without folders first (for "what's new").
     void setNewestFirst(bool newest);
     bool isLoaded(int row) const;
     int pagesFetched() const { return m_pagesFetched; }
+
+    // Selection, kept by name so it outlasts the folder being read again. Ranges over rows not
+    // here yet fill in as their pages arrive; "all" is kept as all-but-these, so selecting
+    // everything in a folder of any size needs none of its names.
+    int selectionCount() const;
+    Q_INVOKABLE bool isSelected(int row) const;
+    /// Selects `row` alone and makes it the anchor for ranges.
+    Q_INVOKABLE void select(int row);
+    /// Adds or removes `row` and makes it the anchor.
+    Q_INVOKABLE void toggle(int row);
+    /// Selects the rows from the anchor to `row`, and only those.
+    Q_INVOKABLE void extendTo(int row);
+    /// Selects `rows` (a rubber band's), added to the selection or in place of it.
+    Q_INVOKABLE void selectRows(const QList<int> &rows, bool add);
+    Q_INVOKABLE void selectAll();
+    Q_INVOKABLE void clearSelection();
+    /// The names selected among the rows that are here (all of them unless "all" is selected in
+    /// a folder not fully read).
+    QList<QByteArray> selectedNames() const;
+    bool allSelected() const { return m_allSelected; }
 
     int rowCount(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role) const override;
@@ -92,9 +124,10 @@ signals:
     void errorChanged();
     void generationChanged();
     void showHiddenChanged();
-    void newestFirstChanged();
+    void sortChanged();
     /// The folder is listed and its count known.
     void opened(int count);
+    void selectionChanged();
     /// The folder went (deleted, moved away or unmounted); the model moved to `nearest`.
     void folderLeft(const QString &folder, const QString &nearest, bool unmounted);
 
@@ -105,6 +138,9 @@ private:
     /// The folder was read again: `count` rows at `generation`.
     void reread(qint64 generation, int count);
     void setLoading(bool loading);
+    /// Asks the backend to order the open listing as the model is set.
+    void reorder();
+    QJsonObject sortParams() const;
     void setError(const BackendError &error);
 
     BackendClient *m_backend;
@@ -117,7 +153,9 @@ private:
     bool m_loading = false;
     bool m_followsChanges = false;
     bool m_showHidden = false;
-    bool m_newestFirst = false;
+    QString m_sortKey = QStringLiteral("name");
+    bool m_sortDescending = false;
+    bool m_foldersFirst = true;
     QString m_error;
     QString m_errorKind;
     mutable QHash<int, QJsonArray> m_pages;
@@ -125,4 +163,15 @@ private:
     /// Pages asked for, with the generation each was asked for in.
     mutable QHash<int, qint64> m_inFlight;
     mutable int m_pagesFetched = 0;
+
+    void selectionTouched();
+    /// Adds the names of the rows of `first`–`last` that are here; returns the rows that are not.
+    QList<int> addNames(int first, int last);
+    /// Adds pending range rows whose page has just arrived.
+    void resolvePending(int page);
+    QSet<QByteArray> m_selected;
+    bool m_allSelected = false;
+    /// Rows a range named before their pages arrived, in the generation it was made in.
+    QSet<int> m_pendingRows;
+    int m_anchor = -1;
 };

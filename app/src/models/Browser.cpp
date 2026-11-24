@@ -3,6 +3,7 @@
 
 #include "../backend/Wire.h"
 #include "FolderModel.h"
+#include "FolderViews.h"
 
 #include <QDir>
 #include <QFile>
@@ -22,7 +23,10 @@ bool isWithin(const QByteArray &path, const QByteArray &folder) {
 
 } // namespace
 
-Browser::Browser(BackendClient *backend, QObject *parent) : QObject(parent), m_folders(new FolderModel(backend, this)) {
+Browser::Browser(BackendClient *backend, QObject *parent)
+    : QObject(parent), m_folders(new FolderModel(backend, this)), m_columns(new ColumnsModel(backend, this)) {
+    connect(this, &Browser::locationChanged, this, &Browser::updateColumns);
+    connect(this, &Browser::viewChanged, this, &Browser::updateColumns);
     // The folder model may move on its own (its folder was deleted): follow it.
     connect(m_folders, &FolderModel::folderChanged, this, [this] {
         if (m_here.page == Folder) {
@@ -87,9 +91,41 @@ void Browser::go(const Place &place) {
 void Browser::show(const Place &place) {
     m_here = place;
     if (place.page == Folder) {
-        m_folders->open(place.path);
+        // The folder opens as it was last shown; one never set keeps the view it is opened in.
+        const QString folder = QFile::decodeName(place.path);
+        FolderViews::Choice choice = FolderViews::shared().choice(folder);
+        if (!FolderViews::shared().has(folder) && !m_folders->rawFolder().isEmpty()) {
+            choice.view = m_view;
+        }
+        m_folders->open(place.path, choice.sortKey, choice.descending);
+        if (m_view != choice.view) {
+            m_view = choice.view;
+            emit viewChanged();
+        }
     }
     emit locationChanged();
+}
+
+void Browser::setView(int view) {
+    if (view == m_view || view < FolderViews::List || view > FolderViews::Columns) {
+        return;
+    }
+    m_view = view;
+    emit viewChanged();
+    rememberChoice();
+}
+
+void Browser::sortBy(const QString &key) {
+    const bool descending = key == m_folders->sortKey() ? !m_folders->sortDescending() : key != QLatin1String("name");
+    m_folders->setSort(key, descending);
+    rememberChoice();
+}
+
+void Browser::rememberChoice() {
+    if (m_here.page == Folder && !m_here.path.isEmpty()) {
+        FolderViews::shared().remember(QFile::decodeName(m_here.path),
+                                       {m_view, m_folders->sortKey(), m_folders->sortDescending()});
+    }
 }
 
 QString Browser::saved() const {
@@ -212,4 +248,23 @@ QVariantList Browser::crumbs() const {
         result.append(QVariantMap{{QStringLiteral("label"), label}, {QStringLiteral("home"), isHome}});
     }
     return result;
+}
+
+void Browser::updateColumns() {
+    // Only while Columns view is chosen: the listings each column holds cost a reader.
+    if (m_view == FolderViews::Columns && m_here.page == Folder && !m_here.path.isEmpty()) {
+        m_columns->setPath(m_here.path, m_folders);
+    }
+}
+
+void Browser::goInto(const QByteArray &path, const QByteArray &name) {
+    if (!name.isEmpty()) {
+        go(Wire::join(path, name));
+    }
+}
+
+void Browser::goColumnRow(FolderModel *column, int row) {
+    if (column) {
+        goInto(column->rawFolder(), column->rawName(row));
+    }
 }

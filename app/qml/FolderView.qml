@@ -5,93 +5,228 @@ import QtQuick.Layouts
 
 import AscFiles
 
-// A folder in List view: the column titles, then its entries. Mode, Kind and the gap before Kind
-// give way as the view narrows, so the name keeps its room.
-ColumnLayout {
+// A folder, in the view the tab has chosen for it: List (columns you can sort by), Icons, or
+// Columns. Clicks select (Ctrl adds or removes, Shift extends), a box dragged from empty space
+// selects what it covers, and a double click or Enter opens a folder.
+Item {
     id: view
 
     required property var browser
     readonly property var folderModel: browser ? browser.folderModel : null
-    property int selectedRow: -1
-    readonly property string status: selectedRow >= 0 ? qsTr("%n items", "", list.count) + " · " + qsTr("1 selected")
-                                                      : qsTr("%n items", "", list.count)
+    readonly property int mode: browser ? browser.view : 0
+    readonly property int selectionCount: folderModel ? folderModel.selectionCount : 0
+    readonly property string status: {
+        const items = qsTr("%n items", "", list.count)
+        return selectionCount > 0 ? items + " · " + qsTr("%n selected", "", selectionCount) : items
+    }
+    // List columns that give way as the view narrows.
     readonly property bool showGap: list.width >= 1000
     readonly property bool showMode: list.width >= 720
     readonly property bool showKind: list.width >= 600
 
-    function openSelected() {
-        if (selectedRow >= 0 && folderModel.isFolder(selectedRow)) {
-            browser.goRow(selectedRow)
-        }
+    function focusList() {
+        (mode === 1 ? grid : mode === 2 ? columnsView : list).forceActiveFocus()
     }
-    function focusList() { list.forceActiveFocus() }
-
-    spacing: 0
-    Connections {
-        target: view.browser
-        function onLocationChanged() { view.selectedRow = -1 }
+    // What a click does to the selection.
+    function click(model, row, modifiers) {
+        if (modifiers & Qt.ControlModifier) model.toggle(row)
+        else if (modifiers & Qt.ShiftModifier) model.extendTo(row)
+        else model.select(row)
     }
-    onBrowserChanged: selectedRow = -1
+    // Moves the keyboard's place by `step` rows, selecting there (Shift extends).
+    function moveBy(target, step, modifiers) {
+        const next = Math.max(0, Math.min(target.count - 1, target.currentIndex + step))
+        target.currentIndex = next
+        if (modifiers & Qt.ShiftModifier) folderModel.extendTo(next)
+        else folderModel.select(next)
+        target.positionViewAtIndex(next, target === grid ? GridView.Contain : ListView.Contain)
+    }
+    function openCurrent(target) {
+        if (target.currentIndex >= 0 && folderModel.isFolder(target.currentIndex))
+            browser.goRow(target.currentIndex)
+    }
 
-    RowLayout {
-        Layout.preferredHeight: 36
-        Layout.leftMargin: 24
+    Keys.onPressed: (event) => {
+        if (event.matches(StandardKey.SelectAll)) { folderModel.selectAll(); event.accepted = true }
+        else if (event.key === Qt.Key_Escape) { folderModel.clearSelection(); event.accepted = true }
+    }
+
+    // List
+    ColumnLayout {
+        anchors.fill: parent
+        visible: view.mode === 0
         spacing: 0
-        Repeater {
-            // The name takes what the other columns leave, up to 600 px.
-            model: [[qsTr("Name"), -1, false], [qsTr("Mode"), 70, false], [qsTr("Size"), 91, true], ["", 40, false], [qsTr("Kind"), 119, false], [qsTr("Modified"), 140, false]]
+
+        RowLayout {
+            Layout.preferredHeight: 36
+            Layout.leftMargin: 24
+            spacing: 0
+            Repeater {
+                // The name takes what the other columns leave, up to 600 px.
+                model: [[qsTr("Name"), -1, false, "name"], [qsTr("Mode"), 70, false, ""], [qsTr("Size"), 91, true, "size"],
+                        ["", 40, false, ""], [qsTr("Kind"), 119, false, ""], [qsTr("Modified"), 140, false, "modified"]]
+                Item {
+                    id: heading
+                    required property var modelData
+                    required property int index
+                    readonly property bool sorted: view.folderModel !== null && modelData[3] === view.folderModel.sortKey
+                    visible: index === 1 ? view.showMode : index === 4 ? view.showKind : true
+                    Layout.fillWidth: modelData[1] < 0
+                    Layout.maximumWidth: modelData[1] < 0 ? 600 : index === 3 && !view.showGap ? 16 : modelData[1]
+                    Layout.preferredWidth: modelData[1] < 0 ? 600 : index === 3 && !view.showGap ? 16 : modelData[1]
+                    implicitHeight: 24
+                    RowLayout {
+                        anchors.fill: parent
+                        spacing: 6
+                        layoutDirection: heading.modelData[2] ? Qt.RightToLeft : Qt.LeftToRight
+                        Text {
+                            text: heading.modelData[0]
+                            color: heading.sorted ? Theme.textDim : Theme.textMute
+                            font.family: Theme.family
+                            font.pointSize: Theme.tiny
+                            font.weight: Font.DemiBold
+                        }
+                        Icon {
+                            visible: heading.sorted
+                            path: view.folderModel && view.folderModel.sortDescending ? "m4 6 4 4 4-4" : "m4 10 4-4 4 4"
+                            color: Theme.accent
+                            size: 10
+                            strokeWidth: 2
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+                    TapHandler {
+                        enabled: heading.modelData[3].length > 0
+                        onTapped: view.browser.sortBy(heading.modelData[3])
+                    }
+                    HoverHandler { enabled: heading.modelData[3].length > 0; cursorShape: Qt.PointingHandCursor }
+                }
+            }
+            Item { Layout.fillWidth: true }
+        }
+        ListView {
+            id: list
+            objectName: "fileList"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.leftMargin: 8
+            Layout.rightMargin: 8
+            clip: true
+            reuseItems: true
+            cacheBuffer: 600
+            focus: view.mode === 0
+            interactive: false
+            model: view.folderModel
+            currentIndex: -1
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            delegate: FileRow {
+                width: ListView.view.width
+                showGap: view.showGap
+                showMode: view.showMode
+                showKind: view.showKind
+                onClicked: (modifiers) => { list.currentIndex = index; view.click(view.folderModel, index, modifiers); list.forceActiveFocus() }
+                onActivated: if (isFolder) view.browser.goRow(index)
+            }
+            Keys.onUpPressed: (event) => view.moveBy(list, -1, event.modifiers)
+            Keys.onDownPressed: (event) => view.moveBy(list, 1, event.modifiers)
+            Keys.onReturnPressed: view.openCurrent(list)
+            Keys.onEnterPressed: view.openCurrent(list)
+            RubberBand {
+                anchors.fill: parent
+                view: list
+                rowAt: (x, y) => list.indexAt(x, y)
+                rowsIn: (rect) => {
+                    const first = Math.max(0, Math.floor(rect.y / Theme.rowHeight))
+                    const last = Math.min(list.count - 1, Math.floor((rect.y + rect.height) / Theme.rowHeight))
+                    const rows = []
+                    for (let row = first; row <= last; ++row) rows.push(row)
+                    return rows
+                }
+                onSelected: (rows, add) => view.folderModel.selectRows(rows, add)
+                onCleared: view.folderModel.clearSelection()
+            }
             Text {
-                required property var modelData
-                required property int index
-                visible: index === 1 ? view.showMode : index === 4 ? view.showKind : true
-                Layout.fillWidth: modelData[1] < 0
-                Layout.maximumWidth: modelData[1] < 0 ? 600 : index === 3 && !view.showGap ? 16 : modelData[1]
-                Layout.preferredWidth: modelData[1] < 0 ? 600 : index === 3 && !view.showGap ? 16 : modelData[1]
-                horizontalAlignment: modelData[2] ? Text.AlignRight : Text.AlignLeft
-                text: modelData[0]
+                anchors.centerIn: parent
+                visible: view.folderModel !== null && (view.folderModel.error.length > 0 || (!view.folderModel.loading && list.count === 0))
+                text: view.folderModel !== null && view.folderModel.error.length > 0 ? view.folderModel.error : qsTr("This folder is empty")
                 color: Theme.textMute
                 font.family: Theme.family
-                font.pointSize: Theme.tiny
-                font.weight: Font.DemiBold
+                font.pointSize: Theme.body
             }
         }
-        Item { Layout.fillWidth: true }
     }
-    ListView {
-        id: list
-        objectName: "fileList"
-        Layout.fillWidth: true
-        Layout.fillHeight: true
-        Layout.leftMargin: 8
-        Layout.rightMargin: 8
+
+    // Icons
+    GridView {
+        id: grid
+        objectName: "fileGrid"
+        anchors.fill: parent
+        anchors.margins: 12
+        visible: view.mode === 1
         clip: true
-        reuseItems: true
-        cacheBuffer: 600
-        focus: true
-        model: view.folderModel
-        boundsBehavior: Flickable.StopAtBounds
+        focus: view.mode === 1
+        interactive: false
+        // Only a shown grid holds the model, so a hidden view asks for no rows.
+        model: visible ? view.folderModel : null
+        cellWidth: 120
+        cellHeight: 124
+        currentIndex: -1
         ScrollBar.vertical: ScrollBar {}
-        currentIndex: view.selectedRow
-        delegate: FileRow {
-            width: ListView.view.width
-            selected: index === view.selectedRow
-            showGap: view.showGap
-            showMode: view.showMode
-            showKind: view.showKind
-            onClicked: { view.selectedRow = index; list.forceActiveFocus() }
+        readonly property int perRow: Math.max(1, Math.floor(width / cellWidth))
+        delegate: FileTile {
+            width: GridView.view.cellWidth - 8
+            height: GridView.view.cellHeight - 8
+            onClicked: (modifiers) => { grid.currentIndex = index; view.click(view.folderModel, index, modifiers); grid.forceActiveFocus() }
             onActivated: if (isFolder) view.browser.goRow(index)
         }
-        Keys.onUpPressed: { view.selectedRow = Math.max(0, view.selectedRow - 1); positionViewAtIndex(view.selectedRow, ListView.Contain) }
-        Keys.onDownPressed: { view.selectedRow = Math.min(count - 1, view.selectedRow + 1); positionViewAtIndex(view.selectedRow, ListView.Contain) }
-        Keys.onReturnPressed: view.openSelected()
-        Keys.onEnterPressed: view.openSelected()
-        Text {
-            anchors.centerIn: parent
-            visible: view.folderModel !== null && (view.folderModel.error.length > 0 || (!view.folderModel.loading && list.count === 0))
-            text: view.folderModel !== null && view.folderModel.error.length > 0 ? view.folderModel.error : qsTr("This folder is empty")
-            color: Theme.textMute
-            font.family: Theme.family
-            font.pointSize: Theme.body
+        Keys.onLeftPressed: (event) => view.moveBy(grid, -1, event.modifiers)
+        Keys.onRightPressed: (event) => view.moveBy(grid, 1, event.modifiers)
+        Keys.onUpPressed: (event) => view.moveBy(grid, -grid.perRow, event.modifiers)
+        Keys.onDownPressed: (event) => view.moveBy(grid, grid.perRow, event.modifiers)
+        Keys.onReturnPressed: view.openCurrent(grid)
+        Keys.onEnterPressed: view.openCurrent(grid)
+        RubberBand {
+            anchors.fill: parent
+            view: grid
+            rowAt: (x, y) => grid.indexAt(x, y)
+            rowsIn: (rect) => {
+                const rows = []
+                const firstRow = Math.max(0, Math.floor(rect.y / grid.cellHeight))
+                const lastRow = Math.floor((rect.y + rect.height) / grid.cellHeight)
+                const firstColumn = Math.max(0, Math.floor(rect.x / grid.cellWidth))
+                const lastColumn = Math.min(grid.perRow - 1, Math.floor((rect.x + rect.width) / grid.cellWidth))
+                for (let r = firstRow; r <= lastRow; ++r)
+                    for (let c = firstColumn; c <= lastColumn; ++c) {
+                        const at = r * grid.perRow + c
+                        if (at < grid.count) rows.push(at)
+                    }
+                return rows
+            }
+            onSelected: (rows, add) => view.folderModel.selectRows(rows, add)
+            onCleared: view.folderModel.clearSelection()
+        }
+    }
+
+    // Columns
+    ListView {
+        id: columnsView
+        objectName: "columns"
+        anchors.fill: parent
+        anchors.topMargin: 6
+        visible: view.mode === 2
+        orientation: ListView.Horizontal
+        clip: true
+        focus: view.mode === 2
+        boundsBehavior: Flickable.StopAtBounds
+        model: visible && view.browser ? view.browser.columns : null
+        ScrollBar.horizontal: ScrollBar {}
+        // The newest column stays in view.
+        onCountChanged: Qt.callLater(() => positionViewAtEnd())
+        delegate: FolderColumn {
+            height: ListView.view.height
+            last: index === ListView.view.count - 1
+            onOpenRow: (row) => view.browser.goColumnRow(folderModel, row)
+            onClickRow: (row, modifiers) => view.click(folderModel, row, modifiers)
         }
     }
 }

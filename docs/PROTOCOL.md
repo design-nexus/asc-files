@@ -55,7 +55,7 @@ A row: `{name, kind: "folder"|"file"|"link"|"special", linkToFolder, hidden, siz
 an entry that went since the read is `{name, kind, linkToFolder, hidden, gone: true}`.
 
 `followsChanges` is false when inotify refused the folder: the listing works but goes stale until refreshed.
-A drive with two reads already outstanding (a stalled share) refuses `list.open` with kind `TimedOut`.
+A drive whose two read places are still taken after two seconds (a stalled share) refuses `list.open` with kind `TimedOut`; folders opened together on a drive that answers just queue.
 
 Notifications:
 - `list.changed {listing, generation, count}`: the folder changed outside and was read again.

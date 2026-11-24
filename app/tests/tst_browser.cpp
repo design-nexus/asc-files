@@ -3,6 +3,8 @@
 #include "backend/BackendClient.h"
 #include "models/Browser.h"
 #include "models/FolderModel.h"
+#include "models/ColumnsModel.h"
+#include "models/FolderViews.h"
 #include "models/TabModel.h"
 
 #include <QFile>
@@ -144,6 +146,68 @@ private slots:
         tabs.setCurrentIndex(1);
         tabs.openTab();
         QCOMPARE(tabs.current()->page(), Browser::Recent);
+    }
+
+    void eachFolderKeepsItsViewAndSort() {
+        QTemporaryDir dir;
+        QVERIFY(QDir().mkpath(dir.filePath("photos")));
+        QVERIFY(QDir().mkpath(dir.filePath("papers")));
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        Browser browser(&backend);
+        browser.goPath(dir.filePath("photos"));
+        QVERIFY(openedAt(browser, dir.filePath("photos")));
+        QCOMPARE(browser.view(), FolderViews::shared().defaultView());
+        browser.setView(FolderViews::Icons);
+        browser.sortBy(QStringLiteral("modified"));
+        QCOMPARE(browser.folderModel()->sortKey(), QStringLiteral("modified"));
+        QVERIFY(browser.folderModel()->sortDescending());
+        // A folder never set keeps the view it is opened in, and sorts by name.
+        browser.goPath(dir.filePath("papers"));
+        QVERIFY(openedAt(browser, dir.filePath("papers")));
+        QCOMPARE(browser.view(), int(FolderViews::Icons));
+        QCOMPARE(browser.folderModel()->sortKey(), QStringLiteral("name"));
+        browser.setView(FolderViews::List);
+        browser.back();
+        QVERIFY(openedAt(browser, dir.filePath("photos")));
+        QCOMPARE(browser.view(), int(FolderViews::Icons));
+        QCOMPARE(browser.folderModel()->sortKey(), QStringLiteral("modified"));
+        // Sorting by the same key again turns it the other way.
+        browser.sortBy(QStringLiteral("modified"));
+        QVERIFY(!browser.folderModel()->sortDescending());
+        QFile saved(FolderViews::filePath());
+        QVERIFY(saved.open(QIODevice::ReadOnly));
+        QVERIFY(saved.readAll().contains("photos"));
+    }
+
+    void columnsRunFromHomeToTheFolder() {
+        QTemporaryDir dir(QDir::home().filePath(QStringLiteral("columns-XXXXXX")));
+        QVERIFY(QDir().mkpath(dir.filePath("a/b")));
+        QVERIFY(QDir().mkpath(dir.filePath("a/c")));
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        Browser browser(&backend);
+        browser.goPath(dir.filePath("a/b"));
+        QVERIFY(openedAt(browser, dir.filePath("a/b")));
+        browser.setView(FolderViews::Columns);
+        ColumnsModel *columns = browser.columns();
+        QCOMPARE(columns->rowCount(), 4);
+        QCOMPARE(columns->data(columns->index(0), ColumnsModel::OpenNameRole).toString(), QFileInfo(dir.path()).fileName());
+        QCOMPARE(columns->data(columns->index(2), ColumnsModel::OpenNameRole).toString(), QStringLiteral("b"));
+        // The last column is the tab's own listing.
+        QCOMPARE(columns->column(3), browser.folderModel());
+        FolderModel *kept = columns->column(1);
+        // Across to a sibling: the shared columns stay.
+        browser.goPath(dir.filePath("a/c"));
+        QVERIFY(openedAt(browser, dir.filePath("a/c")));
+        QCOMPARE(columns->rowCount(), 4);
+        QCOMPARE(columns->column(1), kept);
+        QCOMPARE(columns->data(columns->index(2), ColumnsModel::OpenNameRole).toString(), QStringLiteral("c"));
+        // Up: one column fewer.
+        browser.up();
+        QVERIFY(openedAt(browser, dir.filePath("a")));
+        QCOMPARE(columns->rowCount(), 3);
+        browser.setView(FolderViews::List);
     }
 
     void tabsOpenCloseAndMove() {

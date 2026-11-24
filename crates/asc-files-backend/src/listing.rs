@@ -25,6 +25,9 @@ use crate::{
     wire::{self, Fault},
 };
 
+/// How long a listing waits for one of its drive's read places before giving up on the drive.
+const READ_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 enum Command {
     Window {
         id: Value,
@@ -145,7 +148,8 @@ fn run(
     let reply = |id: Value, result: Result<Value, Fault>| {
         let _ = out.send(wire::reply(id, result));
     };
-    let Some(reading) = readers.claim(&folder) else {
+    // Waits a little for a place: many folders opened at once only queue; a stalled share refuses.
+    let Some(reading) = readers.claim_within(&folder, READ_WAIT) else {
         reply(id, Err(Fault::operation(&not_responding())));
         return;
     };

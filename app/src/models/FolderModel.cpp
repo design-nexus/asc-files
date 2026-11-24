@@ -91,13 +91,15 @@ void FolderModel::open(const QByteArray &path) {
     m_pages.clear();
     m_order.clear();
     m_inFlight.clear();
+    m_selected.clear();
+    m_pendingRows.clear();
+    m_allSelected = false;
+    m_anchor = -1;
     endResetModel();
     emit folderChanged();
+    emit selectionChanged();
     QJsonObject params{{"path", Wire::encode(path)}, {"showHidden", m_showHidden}};
-    if (m_newestFirst) {
-        params.insert(QStringLiteral("sort"),
-                      QJsonObject{{"key", "modified"}, {"descending", true}, {"foldersFirst", false}});
-    }
+    params.insert(QStringLiteral("sort"), sortParams());
     m_backend->call(QStringLiteral("list.open"), params, this,
                     [this, opening](const QJsonValue &result, const BackendError &error) {
                         if (opening != m_opening) {
@@ -121,6 +123,15 @@ void FolderModel::open(const QByteArray &path) {
                         emit folderChanged();
                         emit opened(m_count);
                     });
+}
+
+void FolderModel::open(const QByteArray &path, const QString &key, bool descending) {
+    if (key != m_sortKey || descending != m_sortDescending) {
+        m_sortKey = key;
+        m_sortDescending = descending;
+        emit sortChanged();
+    }
+    open(path);
 }
 
 void FolderModel::openPath(const QString &path) { open(QFile::encodeName(path)); }
@@ -160,11 +171,40 @@ void FolderModel::setShowHidden(bool show) {
     }
     m_showHidden = show;
     emit showHiddenChanged();
+    reorder();
+}
+
+QJsonObject FolderModel::sortParams() const {
+    return {{"key", m_sortKey}, {"descending", m_sortDescending}, {"foldersFirst", m_foldersFirst}};
+}
+
+void FolderModel::setSort(const QString &key, bool descending, bool foldersFirst) {
+    static const QStringList keys{QStringLiteral("name"), QStringLiteral("size"), QStringLiteral("modified")};
+    if (!keys.contains(key) || (key == m_sortKey && descending == m_sortDescending && foldersFirst == m_foldersFirst)) {
+        return;
+    }
+    m_sortKey = key;
+    m_sortDescending = descending;
+    m_foldersFirst = foldersFirst;
+    emit sortChanged();
+    reorder();
+}
+
+void FolderModel::setNewestFirst(bool newest) {
+    if (newest) {
+        setSort(QStringLiteral("modified"), true, false);
+    } else {
+        setSort(QStringLiteral("name"), false, true);
+    }
+}
+
+void FolderModel::reorder() {
     if (m_listing < 0) {
         return;
     }
     const qint64 listing = m_listing;
-    m_backend->call(QStringLiteral("list.reorder"), {{"listing", listing}, {"showHidden", show}}, this,
+    m_backend->call(QStringLiteral("list.reorder"),
+                    {{"listing", listing}, {"showHidden", m_showHidden}, {"sort", sortParams()}}, this,
                     [this, listing](const QJsonValue &result, const BackendError &error) {
                         if (listing != m_listing || !error.isNull()) {
                             return;
@@ -173,16 +213,6 @@ void FolderModel::setShowHidden(bool show) {
                         reread(counted.value(QStringLiteral("generation")).toInteger(),
                                counted.value(QStringLiteral("count")).toInt());
                     });
-}
-
-void FolderModel::setNewestFirst(bool newest) {
-    if (m_newestFirst != newest) {
-        m_newestFirst = newest;
-        emit newestFirstChanged();
-        if (!m_folder.isEmpty()) {
-            open(m_folder);
-        }
-    }
 }
 
 QString FolderModel::folder() const { return Wire::display(m_folder); }
@@ -196,6 +226,8 @@ void FolderModel::reread(qint64 generation, int count) {
     m_pages.clear();
     m_order.clear();
     m_inFlight.clear();
+    m_pendingRows.clear();
+    m_anchor = -1;
     // The new generation first: a view told of new rows asks for them at once.
     const bool newGeneration = m_generation != generation;
     m_generation = generation;
@@ -307,6 +339,8 @@ QVariant FolderModel::data(const QModelIndex &index, int role) const {
         return row.value(QStringLiteral("gone")).toBool();
     case LoadedRole:
         return true;
+    case SelectedRole:
+        return isSelected(index.row());
     default:
         return {};
     }
@@ -325,7 +359,8 @@ QHash<int, QByteArray> FolderModel::roleNames() const {
             {ModeOctalRole, "modeOctal"},
             {ModeSymbolicRole, "modeSymbolic"},
             {GoneRole, "gone"},
-            {LoadedRole, "loaded"}};
+            {LoadedRole, "loaded"},
+            {SelectedRole, "selected"}};
 }
 
 void FolderModel::request(int page) const {
@@ -358,6 +393,7 @@ void FolderModel::request(int page) const {
                             self->m_pages.remove(self->m_order.takeFirst());
                         }
                         ++self->m_pagesFetched;
+                        self->resolvePending(page);
                         const int first = page * PageSize;
                         const int last = qMin(first + PageSize, self->m_count) - 1;
                         if (last >= first) {
@@ -380,4 +416,148 @@ void FolderModel::setError(const BackendError &error) {
         m_errorKind = error.kind;
         emit errorChanged();
     }
+}
+
+int FolderModel::selectionCount() const {
+    if (m_allSelected) {
+        return qMax(0, m_count - int(m_selected.size()));
+    }
+    return int(m_selected.size() + m_pendingRows.size());
+}
+
+bool FolderModel::isSelected(int row) const {
+    if (row < 0 || row >= m_count) {
+        return false;
+    }
+    if (m_pendingRows.contains(row)) {
+        return true;
+    }
+    const QByteArray name = rawName(row);
+    // In "all" mode the set holds the rows taken out.
+    return !name.isEmpty() && (m_selected.contains(name) != m_allSelected);
+}
+
+void FolderModel::selectionTouched() {
+    if (m_count > 0) {
+        emit dataChanged(index(0), index(m_count - 1), {SelectedRole});
+    }
+    emit selectionChanged();
+}
+
+QList<int> FolderModel::addNames(int first, int last) {
+    QList<int> missing;
+    for (int row = qMax(0, first); row <= qMin(last, m_count - 1); ++row) {
+        const QByteArray name = rawName(row);
+        if (name.isEmpty()) {
+            missing.append(row);
+        } else {
+            m_selected.insert(name);
+        }
+    }
+    return missing;
+}
+
+void FolderModel::resolvePending(int page) {
+    if (m_pendingRows.isEmpty()) {
+        return;
+    }
+    const int first = page * PageSize;
+    bool changed = false;
+    for (int row = first; row < first + PageSize; ++row) {
+        if (m_pendingRows.remove(row)) {
+            const QByteArray name = rawName(row);
+            if (!name.isEmpty()) {
+                m_selected.insert(name);
+            }
+            changed = true;
+        }
+    }
+    if (changed) {
+        emit selectionChanged();
+    }
+}
+
+void FolderModel::select(int row) {
+    m_selected.clear();
+    m_pendingRows.clear();
+    m_allSelected = false;
+    m_anchor = row;
+    addNames(row, row);
+    selectionTouched();
+}
+
+void FolderModel::toggle(int row) {
+    const QByteArray name = rawName(row);
+    if (name.isEmpty()) {
+        return;
+    }
+    if (m_selected.contains(name)) {
+        m_selected.remove(name);
+    } else {
+        m_selected.insert(name);
+    }
+    m_anchor = row;
+    selectionTouched();
+}
+
+void FolderModel::extendTo(int row) {
+    if (m_anchor < 0) {
+        select(row);
+        return;
+    }
+    m_selected.clear();
+    m_pendingRows.clear();
+    m_allSelected = false;
+    const QList<int> missing = addNames(qMin(m_anchor, row), qMax(m_anchor, row));
+    for (const int missingRow : missing) {
+        m_pendingRows.insert(missingRow);
+        request(missingRow / PageSize);
+    }
+    selectionTouched();
+}
+
+void FolderModel::selectRows(const QList<int> &rows, bool add) {
+    if (!add) {
+        m_selected.clear();
+        m_pendingRows.clear();
+        m_allSelected = false;
+    }
+    for (const int row : rows) {
+        addNames(row, row);
+    }
+    selectionTouched();
+}
+
+void FolderModel::selectAll() {
+    m_selected.clear();
+    m_pendingRows.clear();
+    m_allSelected = true;
+    selectionTouched();
+}
+
+void FolderModel::clearSelection() {
+    if (m_selected.isEmpty() && m_pendingRows.isEmpty() && !m_allSelected) {
+        return;
+    }
+    m_selected.clear();
+    m_pendingRows.clear();
+    m_allSelected = false;
+    m_anchor = -1;
+    selectionTouched();
+}
+
+QList<QByteArray> FolderModel::selectedNames() const {
+    QList<QByteArray> names;
+    if (!m_allSelected) {
+        names = QList<QByteArray>(m_selected.cbegin(), m_selected.cend());
+        std::sort(names.begin(), names.end());
+        return names;
+    }
+    for (int row = 0; row < m_count; ++row) {
+        const QByteArray name = rawName(row);
+        if (!name.isEmpty() && !m_selected.contains(name)) {
+            names.append(name);
+        }
+    }
+    return names;
 }

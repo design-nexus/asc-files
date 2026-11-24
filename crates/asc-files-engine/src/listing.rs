@@ -586,6 +586,8 @@ pub const READERS_PER_DRIVE: usize = 2;
 #[derive(Default)]
 pub struct Readers {
     reading: std::sync::Mutex<Vec<u64>>,
+    /// Woken when a read ends, for those waiting for a place.
+    freed: std::sync::Condvar,
 }
 
 /// A read in progress; it frees its place when dropped.
@@ -598,15 +600,35 @@ impl Readers {
     /// A place to read `folder`, or None when its drive already has as many stalled-or-running
     /// reads as it may.
     pub fn claim(self: &Arc<Self>, folder: &Path) -> Option<Reading> {
+        self.claim_within(folder, std::time::Duration::ZERO)
+    }
+
+    /// A place to read `folder`, waiting up to `wait` for one to free: reads that end quickly
+    /// (many folders opened at once, as Columns view does) only queue, and only reads that have
+    /// not ended by then (a stalled share) refuse it.
+    pub fn claim_within(
+        self: &Arc<Self>,
+        folder: &Path,
+        wait: std::time::Duration,
+    ) -> Option<Reading> {
         // stat of the folder itself can stall too; the drive is known from its parent's mount,
         // which for a mount point is the mount itself, so fall back to the folder's own path.
         let device = device_of(folder)?;
+        let deadline = std::time::Instant::now() + wait;
         let mut reading = self
             .reading
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if reading.iter().filter(|held| **held == device).count() >= READERS_PER_DRIVE {
-            return None;
+        while reading.iter().filter(|held| **held == device).count() >= READERS_PER_DRIVE {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return None;
+            }
+            reading = self
+                .freed
+                .wait_timeout(reading, left)
+                .unwrap_or_else(|error| error.into_inner())
+                .0;
         }
         reading.push(device);
         Some(Reading {
@@ -626,6 +648,7 @@ impl Drop for Reading {
         if let Some(at) = reading.iter().position(|held| *held == self.device) {
             reading.swap_remove(at);
         }
+        self.readers.freed.notify_all();
     }
 }
 

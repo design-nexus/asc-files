@@ -78,9 +78,9 @@ ApplicationWindow {
                     id: views
                     anchors.centerIn: parent
                     spacing: 2
-                    IconButton { width: 30; height: 30; label: qsTr("List"); checked: true; iconPath: "M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01" }
-                    IconButton { width: 30; height: 30; label: qsTr("Icons"); iconPath: "M3.5 2.5h2.5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1zM10 2.5h2.5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1zM3.5 9h2.5a1 1 0 0 1 1 1v2.5a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1zM10 9h2.5a1 1 0 0 1 1 1v2.5a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1z" }
-                    IconButton { width: 30; height: 30; label: qsTr("Columns"); iconPath: "M3.5 3h9A1.5 1.5 0 0 1 14 4.5v7a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7A1.5 1.5 0 0 1 3.5 3zM8 3v10" }
+                    IconButton { width: 30; height: 30; label: qsTr("List (Ctrl+1)"); checked: window.browser !== null && window.page === 0 && window.browser.view === 0; onClicked: window.browser.setView(0); iconPath: "M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01" }
+                    IconButton { width: 30; height: 30; label: qsTr("Icons (Ctrl+2)"); checked: window.browser !== null && window.page === 0 && window.browser.view === 1; onClicked: window.browser.setView(1); iconPath: "M3.5 2.5h2.5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1zM10 2.5h2.5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1zM3.5 9h2.5a1 1 0 0 1 1 1v2.5a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1zM10 9h2.5a1 1 0 0 1 1 1v2.5a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1z" }
+                    IconButton { width: 30; height: 30; label: qsTr("Columns (Ctrl+3)"); checked: window.browser !== null && window.page === 0 && window.browser.view === 2; onClicked: window.browser.setView(2); iconPath: "M3.5 3h9A1.5 1.5 0 0 1 14 4.5v7a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7A1.5 1.5 0 0 1 3.5 3zM8 3v10" }
                 }
             }
             Button { Layout.leftMargin: 12; text: qsTr("New"); menu: true; iconPath: "M2 4.2c0-.6.5-1.2 1.2-1.2h3.3l1.5 1.5h4.8c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3.2c-.7 0-1.2-.5-1.2-1.2zM8 7v4M6 9h4" }
@@ -410,5 +410,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Shift+Tab"; onActivated: window.tabs.previous() }
     Shortcut { sequence: "Ctrl+B"; onActivated: window.places.stepMode() }
     Shortcut { sequence: "Ctrl+H"; onActivated: window.folderModel.showHidden = !window.folderModel.showHidden }
-    Shortcut { sequence: "Ctrl+1"; onActivated: window.browser.goPage(1) }
+    Shortcut { sequence: "Ctrl+1"; onActivated: window.browser.setView(0) }
+    Shortcut { sequence: "Ctrl+2"; onActivated: window.browser.setView(1) }
+    Shortcut { sequence: "Ctrl+3"; onActivated: window.browser.setView(2) }
 }

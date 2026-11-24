@@ -80,6 +80,26 @@ private slots:
         QTRY_VERIFY(folders.isLoaded(0));
         QVERIFY(QTest::qWaitForWindowExposed(window));
 
+        // Each view shows without a warning, and selection reaches the rows.
+        tabs.current()->setView(1);
+        QTRY_VERIFY(window->findChild<QQuickItem *>(QStringLiteral("fileGrid"))->property("count").toInt() == 3);
+        tabs.current()->setView(2);
+        QTRY_VERIFY(window->findChild<QQuickItem *>(QStringLiteral("columns"))->property("count").toInt() >= 1);
+        // The last column lists the folder.
+        auto *columns = window->findChild<QQuickItem *>(QStringLiteral("columns"));
+        const auto lastColumnCount = [&] {
+            QQuickItem *column = nullptr;
+            QMetaObject::invokeMethod(columns, "itemAtIndex", Q_RETURN_ARG(QQuickItem *, column),
+                                      Q_ARG(int, columns->property("count").toInt() - 1));
+            auto *entries = column ? column->findChild<QQuickItem *>(QStringLiteral("columnEntries")) : nullptr;
+            return entries ? entries->property("count").toInt() : -1;
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(lastColumnCount(), 3, 5000);
+        tabs.current()->setView(0);
+        folders.selectAll();
+        QCOMPARE(folders.selectionCount(), 3);
+        folders.clearSelection();
+
         // Every page shows without a warning.
         for (const Browser::Page page : {Browser::Overview, Browser::Recent, Browser::Favorites, Browser::Trash}) {
             tabs.current()->goPage(page);

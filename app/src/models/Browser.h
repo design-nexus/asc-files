@@ -7,6 +7,7 @@
 #include <QVariantList>
 
 class BackendClient;
+#include "ColumnsModel.h"
 #include "FolderModel.h"
 
 /// One tab's browsing: the folder or page it shows, with back and forward history and the
@@ -16,7 +17,11 @@ class BackendClient;
 class Browser : public QObject {
     Q_OBJECT
     Q_PROPERTY(Page page READ page NOTIFY locationChanged)
+    /// How the folder is shown (0 List, 1 Icons, 2 Columns), remembered for each folder.
+    Q_PROPERTY(int view READ view WRITE setView NOTIFY viewChanged)
     Q_PROPERTY(FolderModel *folderModel READ folderModel CONSTANT)
+    /// The columns Columns view shows; kept up to date while that view is chosen.
+    Q_PROPERTY(ColumnsModel *columns READ columns CONSTANT)
     Q_PROPERTY(bool canGoBack READ canGoBack NOTIFY historyChanged)
     Q_PROPERTY(bool canGoForward READ canGoForward NOTIFY historyChanged)
     Q_PROPERTY(bool canGoUp READ canGoUp NOTIFY locationChanged)
@@ -30,6 +35,11 @@ public:
     explicit Browser(BackendClient *backend, QObject *parent = nullptr);
 
     Page page() const { return m_here.page; }
+    int view() const { return m_view; }
+    void setView(int view);
+    /// Sorts the folder by `key`; the key it is sorted by already, it turns the other way.
+    /// Remembered for the folder.
+    Q_INVOKABLE void sortBy(const QString &key);
     /// Shows a page other than a folder.
     Q_INVOKABLE void goPage(Page page);
     /// Where the tab is, as text a session can be restored from: a path, or `page:<name>`.
@@ -37,6 +47,11 @@ public:
     Q_INVOKABLE void restore(const QString &saved);
 
     FolderModel *folderModel() const { return m_folders; }
+    ColumnsModel *columns() const { return m_columns; }
+    /// Goes into `name` (raw bytes) in the folder at `path`; Columns view's way down.
+    void goInto(const QByteArray &path, const QByteArray &name);
+    /// Goes into the folder at `row` of a column's listing.
+    Q_INVOKABLE void goColumnRow(FolderModel *column, int row);
     QByteArray rawLocation() const;
     QString location() const;
     QString title() const;
@@ -63,6 +78,7 @@ public:
 signals:
     void historyChanged();
     void locationChanged();
+    void viewChanged();
 
 private:
     struct Place {
@@ -76,7 +92,12 @@ private:
     QList<QByteArray> crumbPaths() const;
 
     FolderModel *m_folders;
+    ColumnsModel *m_columns;
+    void updateColumns();
     Place m_here;
     QList<Place> m_back;
     QList<Place> m_forward;
+    int m_view = 0;
+    /// Keeps this folder's view and sort for next time.
+    void rememberChoice();
 };

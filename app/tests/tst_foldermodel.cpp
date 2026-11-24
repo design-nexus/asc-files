@@ -181,6 +181,78 @@ private slots:
         QCOMPARE(names(model), QStringList{QStringLiteral("kept.txt")});
     }
 
+    void selectionIsKeptByName() {
+        QTemporaryDir dir;
+        const QByteArray root = QFile::encodeName(dir.path());
+        for (int i = 0; i < 500; ++i) {
+            touch(root + "/f" + QByteArray::number(i).rightJustified(3, '0'));
+        }
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        FolderModel model(&backend);
+        QSignalSpy opened(&model, &FolderModel::opened);
+        model.open(root);
+        QVERIFY(opened.wait(10000));
+        model.data(model.index(0), FolderModel::NameRole);
+        QTRY_VERIFY(model.isLoaded(0));
+        model.select(2);
+        QCOMPARE(model.selectionCount(), 1);
+        model.toggle(4);
+        QCOMPARE(model.selectionCount(), 2);
+        model.toggle(2);
+        QCOMPARE(model.selectedNames(), QList<QByteArray>{"f004"});
+        // A range, from the last row clicked (2), reaching rows not read yet: they fill in as
+        // their pages come.
+        model.extendTo(450);
+        QCOMPARE(model.selectionCount(), 449);
+        QTRY_COMPARE(model.selectedNames().size(), 449);
+        QVERIFY(model.isSelected(300));
+        // Everything, then all but one, without loading every name.
+        model.selectAll();
+        QCOMPARE(model.selectionCount(), 500);
+        model.toggle(0);
+        QCOMPARE(model.selectionCount(), 499);
+        QVERIFY(!model.isSelected(0));
+        model.clearSelection();
+        QCOMPARE(model.selectionCount(), 0);
+
+        // A new file shifts the rows; the selection follows the names.
+        model.select(10);
+        QCOMPARE(model.selectedNames(), QList<QByteArray>{"f010"});
+        touch(root + "/a-first");
+        QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), 501, 10000);
+        model.data(model.index(11), FolderModel::NameRole);
+        QTRY_VERIFY(model.isLoaded(11));
+        QVERIFY(model.isSelected(11));
+        QVERIFY(!model.isSelected(10));
+        // Opening another folder clears it.
+        model.open(root + "/..");
+        QVERIFY(opened.wait(10000));
+        QCOMPARE(model.selectionCount(), 0);
+    }
+
+    void sortingReadsTheFolderInAnotherOrder() {
+        QTemporaryDir dir;
+        const QByteArray root = QFile::encodeName(dir.path());
+        touch(root + "/b-small", "x");
+        touch(root + "/a-large", QByteArray(5000, 'x'));
+        touch(root + "/c-medium", QByteArray(100, 'x'));
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        FolderModel model(&backend);
+        QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+        QSignalSpy opened(&model, &FolderModel::opened);
+        model.open(root);
+        QVERIFY(opened.wait(10000));
+        QVERIFY(loadAll(model));
+        QCOMPARE(names(model), (QStringList{"a-large", "b-small", "c-medium"}));
+        model.setSort(QStringLiteral("size"), true);
+        QTRY_VERIFY(loadAll(model) && names(model) == (QStringList{"a-large", "c-medium", "b-small"}));
+        QCOMPARE(model.sortKey(), QStringLiteral("size"));
+        model.setSort(QStringLiteral("name"), true);
+        QTRY_VERIFY(loadAll(model) && names(model) == (QStringList{"c-medium", "b-small", "a-large"}));
+    }
+
     void modesShowOctalAndSymbolic() {
         QTemporaryDir dir;
         const QByteArray root = QFile::encodeName(dir.path());
