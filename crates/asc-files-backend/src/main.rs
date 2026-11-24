@@ -4,6 +4,7 @@
 
 use std::{
     collections::HashMap,
+    ffi::OsString,
     io::{BufRead, Write},
     path::PathBuf,
     sync::mpsc::{self, Sender},
@@ -15,7 +16,8 @@ use asc_files_engine::{
     jobs::{self, Action, Event, Item, JobId, Outcome, Record, Request},
     merge::{self, Clash, MergePlan},
     ops::{Cancel, Conflict, NameMode, Progress, RenameCause, SpecialKind},
-    services::{Holder, KeptCause},
+    recovery,
+    services::{Holder, KeptCause, LeftoverInside, ReviewedLeftover},
     trash,
     undo::{self, Journal},
 };
@@ -116,6 +118,11 @@ impl Session {
             Err((INVALID_REQUEST, "initialize first".to_owned()))
         } else if let Some(direction) = method.strip_prefix("undo.").filter(|d| *d != "history") {
             match self.start_undo(direction, id.clone().unwrap_or(Value::Null)) {
+                Ok(()) => return None,
+                Err(error) => Err(error),
+            }
+        } else if let Some(action) = method.strip_prefix("leftovers.") {
+            match self.start_leftovers(action, id.clone().unwrap_or(Value::Null), &params) {
                 Ok(()) => return None,
                 Err(error) => Err(error),
             }
@@ -264,6 +271,68 @@ impl Session {
                 .map(|source| clashes_json(source, &into))
                 .collect();
             let _ = out.send(json!({"jsonrpc": "2.0", "id": id, "result": {"items": items}}));
+        }));
+        Ok(())
+    }
+
+    /// Runs `leftovers.recover`, `leftovers.review` or `leftovers.sweep` on a thread of its own,
+    /// since each may wait on a share; it answers `id` when done.
+    fn start_leftovers(
+        &mut self,
+        action: &str,
+        id: Value,
+        params: &Value,
+    ) -> Result<(), (i64, String)> {
+        enum Leftovers {
+            Recover(PathBuf),
+            Review(PathBuf, Vec<OsString>),
+            Sweep(PathBuf, Vec<OsString>),
+        }
+        let names = || -> Result<Vec<OsString>, (i64, String)> {
+            params
+                .get("names")
+                .and_then(Value::as_array)
+                .ok_or((INVALID_PARAMS, "names must be an array".to_owned()))?
+                .iter()
+                .map(|name| {
+                    name.as_str()
+                        .map(OsString::from)
+                        .ok_or((INVALID_PARAMS, "names must be strings".to_owned()))
+                })
+                .collect()
+        };
+        let work = match action {
+            "recover" => Leftovers::Recover(path_param(params, "path")?),
+            "review" => Leftovers::Review(path_param(params, "folder")?, names()?),
+            "sweep" => Leftovers::Sweep(path_param(params, "folder")?, names()?),
+            other => {
+                return Err((
+                    METHOD_NOT_FOUND,
+                    format!("unknown method leftovers.{other}"),
+                ));
+            }
+        };
+        let out = self.out.clone();
+        self.workers.push(thread::spawn(move || {
+            let result = match work {
+                Leftovers::Recover(container) => recovery::recover(&container, &Cancel::new())
+                    .map(|recovered| recovered_json(&recovered))
+                    .map_err(operation_error),
+                Leftovers::Review(folder, names) => Ok(json!({
+                    "leftovers": recovery::review(&folder, &names)
+                        .iter()
+                        .map(reviewed_json)
+                        .collect::<Vec<_>>(),
+                })),
+                Leftovers::Sweep(folder, names) => {
+                    recovery::sweep_probes(&folder, &names);
+                    Ok(Value::Null)
+                }
+            };
+            let _ = out.send(match result {
+                Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
+                Err((code, message)) => error_reply(id, code, &message),
+            });
         }));
         Ok(())
     }
@@ -479,6 +548,46 @@ fn rename_cause(cause: RenameCause) -> &'static str {
 }
 
 /// What an item did otherwise than asked, or left in place.
+fn recovered_json(recovered: &recovery::Recovered) -> Value {
+    json!({
+        "restored": recovered.restored.iter().map(|path| lossy(path)).collect::<Vec<_>>(),
+        "renamed": recovered.renamed.iter().map(|renamed| json!({
+            "requested": lossy(&renamed.requested),
+            "savedAs": lossy(&renamed.saved_as),
+            "cause": rename_cause(renamed.cause),
+        })).collect::<Vec<_>>(),
+        "kept": recovered.kept.iter().map(|kept| json!({
+            "path": lossy(&kept.path),
+            "cause": kept_cause(&kept.cause),
+        })).collect::<Vec<_>>(),
+        "failed": recovered.failed.iter().map(|(path, error)| json!({
+            "path": lossy(path),
+            "error": error,
+        })).collect::<Vec<_>>(),
+        "notAttempted": recovered.not_attempted.iter().map(|path| lossy(path)).collect::<Vec<_>>(),
+        "removed": recovered.removed,
+    })
+}
+
+fn reviewed_json(reviewed: &ReviewedLeftover) -> Value {
+    let inside = match &reviewed.inside {
+        LeftoverInside::Item => json!({"kind": "item"}),
+        LeftoverInside::Items { names, more } => json!({
+            "kind": "items",
+            "names": names.iter().map(|name| lossy(name)).collect::<Vec<_>>(),
+            "more": more,
+        }),
+        LeftoverInside::StillOpen(reason) => json!({"kind": "stillOpen", "reason": reason}),
+        LeftoverInside::Gone => json!({"kind": "gone"}),
+        LeftoverInside::Unreadable(reason) => json!({"kind": "unreadable", "reason": reason}),
+    };
+    json!({
+        "name": reviewed.name.to_string_lossy(),
+        "modified": reviewed.modified,
+        "inside": inside,
+    })
+}
+
 fn changes_json(changes: &asc_files_engine::ops::Changes) -> Value {
     json!({
         "renamed": changes.renamed.iter().map(|renamed| json!({

@@ -19,6 +19,7 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `create_entry.rs` | 6 | 5 | 0 | 1 |
 | `file_copy.rs` | 29 | 28 | 1 | 0 |
 | `folder_copy.rs` | 22 | 21 | 1 (upstream: run by another test) | 0 |
+| `leftovers.rs` | 10 | 10 | 0 | 0 |
 | `moves.rs` | 51 | 42 | 0 | 9 |
 | `naming.rs` | 21 | 19 | 0 | 2 |
 | `paste_results.rs` | 8 | 6 | 0 | 2 |
@@ -28,8 +29,8 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `replacement.rs` | 28 | 25 | 0 | 3 |
 | `trash_capabilities.rs` | 1 | 0 | 0 | 1 (ignored upstream too) |
 | `merge.rs`, first pass | 66 | 14 | 0 | 2 (50 still to port: legacy's merge hooks and seams, and its snapshot undo) |
-| **So far** | **261** | **222** | **2** | **37** |
-| Remaining 7 files (`copy`, `deletion`, `leftovers`, `progress`, `restore_safety`, `sync`, `undo`), and 50 of `merge.rs` | 231 | – | – | – |
+| **So far** | **271** | **232** | **2** | **37** |
+| Remaining 6 files (`copy`, `deletion`, `progress`, `restore_safety`, `sync`, `undo`), and 50 of `merge.rs` | 221 | – | – | – |
 
 ## Ignored
 
@@ -49,6 +50,7 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | Same test, ReplacedLonger on a path-keyed SFTP mount | **Open gap.** Refused as it must be, but the item put in the original's place is left set aside (and named in the error) instead of put back. |
 | `replacement::rejected_exchange_falls_back_to_aside_and_is_remembered`, the exchange count | Legacy skipped the exchange for a read-only staged folder; the engine tries it, is refused, and falls back. The outcome and what is remembered are checked. |
 | `replacement::a_failed_publication_puts_the_original_back`, the FAT row | Re-aimed at the engine's publish, its fourth rename at the name on FAT as in legacy (the refused swap through an originals folder makes two). |
+| `leftovers::stale_probes_go_only_when_empty_and_old`, the mount-lane half | Legacy swept on its mount's background lane and checked that a slow sweep kept the lane answering. The engine has no lanes: the backend runs the sweep on a thread of its own. That the sweep removes a listed stale probe is still checked. |
 | `paste_results::an_item_replaced_without_trash_is_left_out_of_the_paste_undo`, the order of moves | Legacy moved the items without a conflict first; jobs keep the order asked for. The moves are compared as a set. |
 
 ## Not ported
@@ -151,6 +153,14 @@ ported with a reason. This list must be empty, or every entry justified, before 
   (`KeptCause::OriginalNotRemoved`, with why), where before it was deleted silently or lost under the stage name.
   `jobs` carries `original_deleted` (`originalDeleted` on `job.itemDone`), and a replace whose original was
   deleted or kept is neither filed for undo nor reported as created.
+- **Added:** recovery of what an interrupted operation left (legacy `leftovers.rs`, ported): `recovery::recover`
+  puts set-aside originals back under their names, numbered where a name is taken now, never over an item;
+  `recovery::review` says what each leftover holds; `recovery::sweep_probes` removes stale probes. On the
+  protocol as `leftovers.recover`, `leftovers.review` and `leftovers.sweep`. Before, the engine left these
+  folders for good.
+- **Fixed:** a replace staged its copy under the `.asc-files-replacement-` prefix, which marks a possible
+  original, so a copy an unplug cut off would have been shown as one; it now stages under `.asc-files-copy-`,
+  an incomplete copy, as legacy did.
 - **Open:** a bulk path for many small items; `rename` and `create` on the protocol; a paste-planning call.
 
 ## Archives (legacy: 225 tests)

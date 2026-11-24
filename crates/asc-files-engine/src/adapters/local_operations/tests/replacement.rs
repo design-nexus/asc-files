@@ -829,10 +829,9 @@ fn publish_index(directory: bool, mode: u32) -> Result<usize, Box<dyn Error>> {
         .filter(|call| call.op == Op::Rename && call.names.iter().any(|name| name == "target"))
         .collect();
     let at = renames.iter().position(|call| {
-        call.names.iter().any(|name| {
-            name.to_string_lossy()
-                .starts_with(".asc-files-replacement-")
-        })
+        call.names
+            .iter()
+            .any(|name| name.to_string_lossy().starts_with(".asc-files-copy-"))
     });
     if target.exists() {
         fs::set_permissions(&target, fs::Permissions::from_mode(0o755))?;

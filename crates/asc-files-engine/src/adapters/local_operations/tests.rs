@@ -51,6 +51,7 @@ mod create_entry;
 mod file_copy;
 mod folder_copy;
 pub(crate) mod fs_quirks;
+mod leftovers;
 mod merge;
 mod moves;
 mod naming;

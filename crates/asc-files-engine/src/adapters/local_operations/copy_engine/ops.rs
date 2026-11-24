@@ -1008,7 +1008,7 @@ fn copy_then_replace(
         options,
         Deadline::default(),
     );
-    let stage = crate::model::hidden_names::HiddenName::Replacement.fresh();
+    let stage = crate::model::hidden_names::HiddenName::Copy.fresh();
     let (stage, ownership) = copy_new(
         &copy,
         &source,
@@ -1299,7 +1299,7 @@ pub fn replace_as(
     // Opened before the copy is written, so reaching it covers the replacement; it is reached
     // only where an original has to be deleted for want of a Trash.
     let barrier = super::Barrier::open(fs(), into)?;
-    let stage = HiddenName::Replacement.fresh();
+    let stage = HiddenName::Copy.fresh();
     let (source_parent, source_name) = split(source)?;
     let source = Source {
         parent: source_parent,
@@ -1816,12 +1816,7 @@ mod tests {
         let _fat = FsQuirks::install(
             root.path(),
             Quirks {
-                fail: vec![(
-                    Op::Rename,
-                    ".asc-files-replacement-*",
-                    0,
-                    rustix::io::Errno::IO,
-                )],
+                fail: vec![(Op::Rename, ".asc-files-copy-*", 0, rustix::io::Errno::IO)],
                 ..Quirks::vfat()
             },
         );

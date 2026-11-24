@@ -12,6 +12,7 @@ pub mod jobs;
 pub mod listing;
 pub mod merge;
 pub mod model;
+pub mod recovery;
 pub(crate) mod serde_path;
 pub mod services;
 pub mod trash;

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! Spike: engine items extracted from the legacy adapters/local_operations/leftovers.rs.
+//! What operations leave behind: folders a lingering file holds, and the originals and probes an
+//! interrupted operation left, which [`crate::recovery`] puts back or sweeps.
 
 use std::{
     cell::OnceCell,
@@ -41,6 +42,10 @@ use rustix::{
 };
 
 const LINGERS: Duration = Duration::from_secs(2);
+const PROBES_STALE_AFTER: Duration = Duration::from_secs(60 * 60);
+const REVIEWED_ENTRIES: usize = 1_000;
+
+static SWEPT: LazyLock<Mutex<HashSet<(PathBuf, OsString)>>> = LazyLock::new(Mutex::default);
 
 #[derive(Clone, Default)]
 pub(crate) struct Deadline(Arc<OnceLock<SystemTime>>);
@@ -117,6 +122,13 @@ pub(super) fn remove_held_folder(
         return Err(Refused::Changed(Errno::NOENT));
     }
     remove_folder(fs, at, deadline, stopped, &unchanged)
+}
+
+pub(super) fn kept_open(fs: &dyn FsOps, folder: Entry<'_>, errno: Errno) -> KeptCause {
+    match holder(fs, folder) {
+        None if errno == Errno::ACCESS => KeptCause::Undeletable(errno.raw_os_error()),
+        holder => KeptCause::StillOpen(holder),
+    }
 }
 
 pub(super) fn holder(fs: &dyn FsOps, at: Entry<'_>) -> Option<Holder> {
@@ -200,4 +212,413 @@ fn only_leftovers(fs: &dyn FsOps, folder: Entry<'_>) -> bool {
                 || fs.stat(entry, false).is_ok_and(|stat| stat.is_directory())
                     && only_leftovers(fs, entry)
         })
+}
+
+#[derive(Default)]
+pub(crate) struct Recovered {
+    pub restored: Vec<Location>,
+    pub report: TransferReport,
+    pub failed: Vec<(Location, String)>,
+    pub not_attempted: Vec<Location>,
+    pub removed: bool,
+}
+
+pub(crate) fn recover(
+    fs: &dyn FsOps,
+    container: &Path,
+    stopped: &dyn Fn() -> bool,
+) -> Result<Recovered, String> {
+    let invalid = || crate::i18n::tr("Invalid local filesystem target");
+    let (Some(root), Some(name)) = (container.parent(), container.file_name()) else {
+        return Err(invalid());
+    };
+    let mirrors = match classify(name) {
+        Some(Leftover::Originals) => false,
+        Some(Leftover::MergeOriginals) => true,
+        _ => return Err(invalid()),
+    };
+    let folder = open_local_parent_directory(root)?;
+    let failed = |reason: String| item_error(&name.to_string_lossy(), reason);
+    let held = placement::open_beneath(fs, folder.as_fd(), Path::new(name))
+        .map_err(|error| failed(placement_reason(error)))?;
+    let names = listed(fs, &held).map_err(|error| failed(os_error_detail(error)))?;
+    let mut recovery = Recovery {
+        fs,
+        stopped,
+        root,
+        container,
+        deadline: Deadline::default(),
+        recovered: Recovered::default(),
+    };
+    let destination = Destination::Folder(folder.as_fd());
+    recovery.empty(&held, names, &destination, Path::new(""), mirrors);
+    if !stopped() {
+        recovery.recovered.removed =
+            recovery.remove(Entry::new(&folder, name), &held, Path::new(""), 0);
+    }
+    Ok(recovery.recovered)
+}
+
+enum Destination<'p> {
+    Folder(BorrowedFd<'p>),
+    Mirrored {
+        within: &'p Destination<'p>,
+        name: &'p OsStr,
+        relative: &'p Path,
+        opened: OnceCell<Option<OwnedFd>>,
+    },
+}
+
+impl Destination<'_> {
+    fn open(&self, recovery: &mut Recovery<'_>) -> Option<BorrowedFd<'_>> {
+        match self {
+            Self::Folder(dir) => Some(*dir),
+            Self::Mirrored {
+                within,
+                name,
+                relative,
+                opened,
+            } => opened
+                .get_or_init(|| {
+                    let dir = within.open(recovery)?;
+                    match folder(recovery.fs, Entry { dir, name }) {
+                        Ok(opened) => Some(opened),
+                        Err(error) => {
+                            recovery.failed(relative, error, dir);
+                            None
+                        }
+                    }
+                })
+                .as_ref()
+                .map(AsFd::as_fd),
+        }
+    }
+}
+
+struct Recovery<'a> {
+    fs: &'a dyn FsOps,
+    stopped: &'a dyn Fn() -> bool,
+    root: &'a Path,
+    container: &'a Path,
+    deadline: Deadline,
+    recovered: Recovered,
+}
+
+impl Recovery<'_> {
+    fn empty(
+        &mut self,
+        held: &OwnedFd,
+        names: Vec<OsString>,
+        into: &Destination<'_>,
+        relative: &Path,
+        mirrors: bool,
+    ) {
+        let fs = self.fs;
+        for name in names {
+            let path = relative.join(&name);
+            if (self.stopped)() {
+                self.recovered
+                    .not_attempted
+                    .push(Location::local(self.inside(&path)));
+                continue;
+            }
+            if is_leftover(fs, held.as_fd(), &name) {
+                continue;
+            }
+            let from = Entry::new(held, &name);
+            let stat = match fs.stat(from, false) {
+                Ok(stat) => stat,
+                Err(Errno::NOENT) => continue,
+                Err(error) => {
+                    self.failed(&path, PlaceError::Io(error), held.as_fd());
+                    continue;
+                }
+            };
+            if mirrors && stat.is_directory() {
+                self.mirror(from, into, &path);
+            } else if stat.is_directory() && only_leftovers(fs, from) {
+                let cause = KeptCause::StillOpen(holder(fs, from));
+                self.kept(&path, cause);
+            } else if let Some(dir) = into.open(self) {
+                self.put(from, &stat, Entry { dir, name: &name }, relative);
+            }
+        }
+    }
+
+    fn mirror(&mut self, mirror: Entry<'_>, into: &Destination<'_>, relative: &Path) {
+        let opened = placement::open_beneath(self.fs, mirror.dir, Path::new(mirror.name))
+            .and_then(|held| Ok((listed(self.fs, &held).map_err(PlaceError::Io)?, held)));
+        let (names, held) = match opened {
+            Ok(opened) => opened,
+            Err(error) => return self.failed(relative, error, mirror.dir),
+        };
+        let reported = self.reported();
+        let destination = Destination::Mirrored {
+            within: into,
+            name: mirror.name,
+            relative,
+            opened: OnceCell::new(),
+        };
+        self.empty(&held, names, &destination, relative, true);
+        if !(self.stopped)() {
+            self.remove(mirror, &held, relative, reported);
+        }
+    }
+
+    fn put(&mut self, from: Entry<'_>, stat: &EntryStat, to: Entry<'_>, relative: &Path) {
+        let fs = self.fs;
+        let requested = relative.join(to.name);
+        let place = |name: &OsStr| {
+            placement::place_back(
+                fs,
+                from,
+                Entry { dir: to.dir, name },
+                stat.identity,
+                stat.kept_attributes(),
+            )
+        };
+        match place(to.name) {
+            Ok(_) => return self.restored(&requested),
+            Err(PlaceError::Exists) if same_inode(fs, from, to) => {
+                return match fs.unlink(from, AtFlags::empty()) {
+                    Ok(()) | Err(Errno::NOENT) => self.restored(&requested),
+                    Err(error) => self.failed(&requested, PlaceError::Io(error), to.dir),
+                };
+            }
+            Err(PlaceError::Exists) => {}
+            Err(error) => return self.failed(&requested, error, to.dir),
+        }
+        let limit = name_limit(fs, to.dir);
+        for name in numbered_names(to.name, stat.is_directory(), limit) {
+            match place(&name) {
+                Ok(_) => {
+                    let saved = relative.join(&name);
+                    self.recovered.report.renamed.push(RenamedItem {
+                        requested: Location::local(self.root.join(&requested)),
+                        saved_as: Location::local(self.root.join(&saved)),
+                        cause: RenameCause::Taken,
+                    });
+                    return self.restored(&saved);
+                }
+                Err(PlaceError::Exists) => {}
+                Err(error) => return self.failed(&requested, error, to.dir),
+            }
+        }
+        self.failed(&requested, PlaceError::Exists, to.dir);
+    }
+
+    fn remove(
+        &mut self,
+        folder: Entry<'_>,
+        held: &OwnedFd,
+        relative: &Path,
+        reported: usize,
+    ) -> bool {
+        let fs = self.fs;
+        let removed = remove_held_folder(fs, folder, held.as_fd(), &self.deadline, self.stopped);
+        let refused = match removed {
+            Ok(()) | Err(Refused::Os(Errno::NOENT)) => return true,
+            Err(Refused::Os(Errno::NOTEMPTY | Errno::EXIST) | Refused::Changed(_)) => return false,
+            Err(Refused::Stopped(_)) => return false,
+            Err(refused) => refused,
+        };
+        let cause = match refused {
+            Refused::Os(_) if self.reported() != reported => return false,
+            Refused::Os(errno) if self.needs_check(errno, folder.dir) => {
+                self.failed(relative, PlaceError::Io(errno), folder.dir);
+                return false;
+            }
+            Refused::StillOpen(errno) => kept_open(fs, folder, errno),
+            refused => KeptCause::Undeletable(refused.errno().raw_os_error()),
+        };
+        self.kept(relative, cause);
+        false
+    }
+
+    fn restored(&mut self, relative: &Path) {
+        self.recovered
+            .restored
+            .push(Location::local(self.root.join(relative)));
+    }
+
+    fn reported(&self) -> usize {
+        let recovered = &self.recovered;
+        recovered.failed.len() + recovered.report.kept.len() + recovered.not_attempted.len()
+    }
+
+    fn inside(&self, relative: &Path) -> PathBuf {
+        if relative.as_os_str().is_empty() {
+            self.container.to_path_buf()
+        } else {
+            self.container.join(relative)
+        }
+    }
+
+    fn kept(&mut self, relative: &Path, cause: KeptCause) {
+        self.recovered.report.kept.push(KeptItem {
+            location: Location::local(self.inside(relative)),
+            cause,
+        });
+    }
+
+    fn needs_check(&self, error: Errno, dir: BorrowedFd<'_>) -> bool {
+        error == Errno::ROFS && known_mount(self.fs, dir).1.family == Some(Family::Ntfs3)
+    }
+
+    fn failed(&mut self, relative: &Path, error: PlaceError, dir: BorrowedFd<'_>) {
+        let reason = match error {
+            PlaceError::Io(error) if self.needs_check(error, dir) => crate::i18n::tr(
+                "The drive is read-only. It may need to be checked for errors after it was unplugged without being ejected.",
+            ),
+            error => placement_reason(error),
+        };
+        let location = self.inside(relative);
+        let shown = if relative.as_os_str().is_empty() {
+            self.container.file_name().unwrap_or_default()
+        } else {
+            relative.as_os_str()
+        };
+        self.recovered.failed.push((
+            Location::local(location),
+            item_error(&shown.to_string_lossy(), reason),
+        ));
+    }
+}
+
+fn same_inode(fs: &dyn FsOps, aside: Entry<'_>, named: Entry<'_>) -> bool {
+    let (Ok(aside), Ok(named)) = (fs.stat(aside, false), fs.stat(named, false)) else {
+        return false;
+    };
+    !aside.is_directory()
+        && aside.nlink > 1
+        && aside.identity == named.identity
+        && (aside.nlink, aside.size, aside.mtime, aside.ctime)
+            == (named.nlink, named.size, named.mtime, named.ctime)
+}
+
+pub(crate) fn sweep_probes(fs: &dyn FsOps, folder: &Path, names: &[OsString]) {
+    let claimed: Vec<_> = {
+        let mut swept = SWEPT.lock().unwrap_or_else(|poison| poison.into_inner());
+        names
+            .iter()
+            .filter(|name| {
+                classify(name) == Some(Leftover::Probe)
+                    && swept.insert((folder.to_path_buf(), (*name).clone()))
+            })
+            .collect()
+    };
+    if claimed.is_empty() {
+        return;
+    }
+    let Ok(dir) = open_local_parent_directory(folder) else {
+        return;
+    };
+    let now = now();
+    for name in claimed {
+        let entry = Entry::new(&dir, name);
+        let stat = fs.stat(entry, false);
+        let Ok(stat) = stat else {
+            continue;
+        };
+        let flags = match stat.kind {
+            FileType::RegularFile if stat.size == 0 => AtFlags::empty(),
+            FileType::Directory => AtFlags::REMOVEDIR,
+            _ => continue,
+        };
+        let (seconds, nanoseconds) = stat.mtime;
+        let stale = u64::try_from(seconds)
+            .ok()
+            .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::new(seconds, nanoseconds)))
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age > PROBES_STALE_AFTER);
+        if stale {
+            let _ = fs.unlink(entry, flags);
+        }
+    }
+}
+
+pub(crate) fn review(fs: &dyn FsOps, folder: &Path, names: &[OsString]) -> Vec<ReviewedLeftover> {
+    let reviewed = |name: &OsString, modified, inside| ReviewedLeftover {
+        name: name.clone(),
+        modified,
+        inside,
+    };
+    let dir = match open_local_parent_directory(folder) {
+        Ok(dir) => dir,
+        Err(error) => {
+            return names
+                .iter()
+                .map(|name| reviewed(name, None, LeftoverInside::Unreadable(error.clone())))
+                .collect();
+        }
+    };
+    names
+        .iter()
+        .map(|name| {
+            let entry = Entry::new(&dir, name);
+            let stat = fs.stat(entry, false);
+            let stat = match stat {
+                Ok(stat) => stat,
+                Err(Errno::NOENT) => return reviewed(name, None, LeftoverInside::Gone),
+                Err(error) => {
+                    let message = crate::services::io_error_message(&error.into());
+                    return reviewed(name, None, LeftoverInside::Unreadable(message));
+                }
+            };
+            let inside = match classify(name) {
+                Some(Leftover::Originals) if stat.is_directory() => contents(fs, entry, false),
+                Some(Leftover::MergeOriginals) if stat.is_directory() => contents(fs, entry, true),
+                _ => LeftoverInside::Item,
+            };
+            reviewed(name, Some(stat.mtime.0), inside)
+        })
+        .collect()
+}
+
+fn contents(fs: &dyn FsOps, container: Entry<'_>, mirrors: bool) -> LeftoverInside {
+    let held = match placement::open_beneath(fs, container.dir, Path::new(container.name)) {
+        Ok(held) => held,
+        Err(error) => return LeftoverInside::Unreadable(placement_reason(error)),
+    };
+    let mut shown = Vec::new();
+    let mut more = 0;
+    let mut held_open = false;
+    let mut folders = vec![(held, PathBuf::new())];
+    while let Some((folder, relative)) = folders.pop() {
+        let names = listed(fs, &folder);
+        let names = match names {
+            Ok(names) => names,
+            Err(error) => return LeftoverInside::Unreadable(os_error_detail(error)),
+        };
+        for name in names {
+            if is_leftover(fs, folder.as_fd(), &name) {
+                held_open = true;
+                continue;
+            }
+            let path = relative.join(&name);
+            if shown.len() >= REVIEWED_ENTRIES {
+                more += 1;
+                continue;
+            }
+            let entry = Entry::new(&folder, &name);
+            if mirrors && fs.stat(entry, false).is_ok_and(|stat| stat.is_directory()) {
+                match placement::open_beneath(fs, folder.as_fd(), Path::new(&name)) {
+                    Ok(mirror) => folders.push((mirror, path)),
+                    Err(error) => return LeftoverInside::Unreadable(placement_reason(error)),
+                }
+                continue;
+            }
+            shown.push(path);
+        }
+    }
+    if shown.is_empty() && more == 0 && held_open {
+        let reason = still_open(fs, container).unwrap_or_else(|| holders::held(None));
+        return LeftoverInside::StillOpen(reason);
+    }
+    shown.sort();
+    LeftoverInside::Items { names: shown, more }
+}
+
+fn item_error(name: &str, error: impl std::fmt::Display) -> String {
+    rust_i18n::t!("%{name}: %{error}", name = name, error = error).into_owned()
 }

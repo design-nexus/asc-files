@@ -103,3 +103,24 @@ not list the `undo` capability.
 | `trash.restore` | `info` (an entry's `.trashinfo` path from `trash.list`) | `{path}` |
 | `trash.delete` | `info` | `null` |
 | `trash.empty` | – | `{deleted, failed}` |
+
+## Leftovers
+
+An operation cut off part way (a crash, an unplugged drive) can leave hidden entries beside its target:
+`.asc-files-originals-*` and `.asc-files-merge-originals-*` folders holding originals a replace or merge set
+aside, `.asc-files-copy-*` copies that never finished, and `.asc-files-probe-*` tests of what a drive can do.
+A listing shows them like any hidden entry; these let a client say what one holds and put originals back.
+Each runs on a thread of its own, since it may wait on a share.
+
+| Method | Params | Result |
+|---|---|---|
+| `leftovers.review` | `folder`, `names` (leftovers listed there) | `{leftovers: [{name, modified, inside}]}`, `inside` `{kind: "item"}`, `{kind: "items", names, more}` (up to 1,000 names; a merge's by their path inside it), `{kind: "stillOpen", reason}`, `{kind: "gone"}` or `{kind: "unreadable", reason}` |
+| `leftovers.recover` | `path` (an originals folder) | `{restored, renamed, kept, failed: [{path, error}], notAttempted, removed}` |
+| `leftovers.sweep` | `folder`, `names` | `null` |
+
+`leftovers.recover` puts each original back under its name beside the folder (a merge's into the folder it came
+from), and never over an item that holds that name now: such an original comes back numbered, listed in
+`renamed`. `removed` says the folder is gone, everything in it having been put back; `kept` lists what stays in
+it and why (a file still open in a program, say). A path that is not an originals folder, or one holding only
+another program's leftover, is refused. `leftovers.sweep` removes the probes among `names` that are empty and
+more than an hour old, each tried once per backend.

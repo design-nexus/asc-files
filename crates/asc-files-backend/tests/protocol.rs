@@ -498,3 +498,55 @@ fn a_merge_is_planned_from_its_clashes_and_done_as_planned() {
     assert_eq!(shutdown["result"], Value::Null);
     assert!(backend.child.wait().unwrap().success());
 }
+
+#[test]
+fn originals_an_interrupted_replace_left_are_reviewed_and_put_back() {
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    backend.call("initialize", json!({}), &mut notes);
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    let container = ".asc-files-originals-0123abcd-4567-89ab-cdef-0123456789ab";
+    fs::create_dir(root.path().join(container)).unwrap();
+    fs::write(root.path().join(container).join("song.flac"), "old").unwrap();
+    fs::write(root.path().join("song.flac"), "new").unwrap();
+
+    let reviewed = backend.call(
+        "leftovers.review",
+        json!({"folder": root.path(), "names": [container]}),
+        &mut notes,
+    );
+    assert_eq!(
+        reviewed["result"]["leftovers"][0]["inside"],
+        json!({"kind": "items", "names": ["song.flac"], "more": 0}),
+        "{reviewed}"
+    );
+
+    let recovered = backend.call(
+        "leftovers.recover",
+        json!({"path": root.path().join(container)}),
+        &mut notes,
+    );
+    let result = &recovered["result"];
+    // The name is taken, so the original comes back numbered and never over the item there.
+    let numbered = root.path().join("song (1).flac");
+    assert_eq!(result["restored"], json!([numbered]), "{recovered}");
+    assert_eq!(
+        result["renamed"][0]["savedAs"],
+        json!(numbered),
+        "{recovered}"
+    );
+    assert_eq!(result["removed"], json!(true), "{recovered}");
+    assert_eq!(fs::read_to_string(&numbered).unwrap(), "old");
+    assert_eq!(
+        fs::read_to_string(root.path().join("song.flac")).unwrap(),
+        "new"
+    );
+    assert!(!root.path().join(container).exists());
+
+    let refused = backend.call(
+        "leftovers.recover",
+        json!({"path": root.path().join("song.flac")}),
+        &mut notes,
+    );
+    assert!(refused.get("error").is_some(), "{refused}");
+}
