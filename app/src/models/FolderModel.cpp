@@ -228,6 +228,10 @@ QByteArray FolderModel::rawName(int row) const {
     return Wire::decode(page->at(row % PageSize).toObject().value(QStringLiteral("name")));
 }
 
+bool FolderModel::isFolder(int row) const {
+    return row >= 0 && row < m_count && isLoaded(row) && data(index(row), IsFolderRole).toBool();
+}
+
 int FolderModel::rowCount(const QModelIndex &parent) const { return parent.isValid() ? 0 : m_count; }
 
 bool FolderModel::isLoaded(int row) const { return m_pages.contains(row / PageSize); }

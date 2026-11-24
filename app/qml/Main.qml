@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-import QtCore
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -8,20 +7,23 @@ import QtQuick.Window
 import AscFiles
 
 // The Files window in its current layout: header across the top, the sidebar of places, and the
-// rounded content panel holding the tab row and the folder. B0 wires the models into the look;
-// navigation history, tabs and the other views come in B1 and B2.
+// rounded content panel holding the tab row and the folder.
 ApplicationWindow {
     id: window
 
-    required property var folderModel
+    required property var tabs
+    required property var places
     required property var jobModel
     required property var backend
+
+    readonly property var browser: tabs.current
+    readonly property var folderModel: browser ? browser.folderModel : null
 
     width: 1600
     height: 968
     visible: true
     color: Theme.window
-    title: folderModel.folderName
+    title: browser ? browser.title : ""
 
     property int selectedRow: -1
     // List view columns that give way as the panel narrows: the gap, then Mode, then Kind.
@@ -29,7 +31,17 @@ ApplicationWindow {
     readonly property bool showMode: list.width >= 720
     readonly property bool showKind: list.width >= 600
 
-    function home() { return StandardPaths.writableLocation(StandardPaths.HomeLocation).toString().replace("file://", "") }
+    Connections {
+        target: window.browser
+        function onLocationChanged() { window.selectedRow = -1 }
+    }
+    onBrowserChanged: selectedRow = -1
+
+    function openSelected() {
+        if (selectedRow >= 0 && folderModel.isFolder(selectedRow)) {
+            browser.goRow(selectedRow)
+        }
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -49,21 +61,19 @@ ApplicationWindow {
                 spacing: 4
                 Icon { path: "M2 4.2c0-.6.5-1.2 1.2-1.2h3.3l1.5 1.5h4.8c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3.2c-.7 0-1.2-.5-1.2-1.2z"; color: Theme.accent; size: 20 }
                 Text { visible: window.width >= 1000; text: qsTr("Files"); color: Theme.accentText; font.family: Theme.family; font.pointSize: Theme.title; font.weight: Font.DemiBold; Layout.leftMargin: 6; Layout.rightMargin: 10 }
-                IconButton { id: sidebarToggle; label: qsTr("Sidebar"); checkable: true; checked: true; iconPath: "M4 3h8a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 12 13H4a1.5 1.5 0 0 1-1.5-1.5v-7A1.5 1.5 0 0 1 4 3zM6.5 3v10" }
-                IconButton { label: qsTr("Back"); enabled: false; iconPath: "M13 8H3M7 4 3 8l4 4" }
-                IconButton { label: qsTr("Forward"); enabled: false; iconPath: "M3 8h10M9 4l4 4-4 4" }
-                IconButton { label: qsTr("Up"); iconPath: "M8 13V3M4 7l4-4 4 4"; onClicked: window.folderModel.openParent() }
+                IconButton { id: sidebarToggle; label: qsTr("Sidebar (Ctrl+B)"); checkable: true; checked: true; iconPath: "M4 3h8a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 12 13H4a1.5 1.5 0 0 1-1.5-1.5v-7A1.5 1.5 0 0 1 4 3zM6.5 3v10" }
+                IconButton { label: qsTr("Back (Alt+Left)"); enabled: window.browser && window.browser.canGoBack; iconPath: "M13 8H3M7 4 3 8l4 4"; onClicked: window.browser.back() }
+                IconButton { label: qsTr("Forward (Alt+Right)"); enabled: window.browser && window.browser.canGoForward; iconPath: "M3 8h10M9 4l4 4-4 4"; onClicked: window.browser.forward() }
+                IconButton { label: qsTr("Up (Alt+Up)"); enabled: window.browser && window.browser.canGoUp; iconPath: "M8 13V3M4 7l4-4 4 4"; onClicked: window.browser.up() }
             }
-            Text {
-                Layout.leftMargin: window.width >= 1000 ? 28 : 8
-                text: window.folderModel.folder
-                elide: Text.ElideLeft
-                Layout.maximumWidth: 380
-                Layout.minimumWidth: 0
+            Breadcrumb {
+                id: breadcrumb
+                browser: window.browser
+                Layout.leftMargin: window.width >= 1000 ? 22 : 6
                 Layout.fillWidth: true
-                color: Theme.text
-                font.family: Theme.family
-                font.pointSize: Theme.body
+                Layout.minimumWidth: 60
+                Layout.maximumWidth: 520
+                onEdited: list.forceActiveFocus()
             }
             Item { Layout.fillWidth: true }
             SearchField { Layout.fillWidth: true; Layout.maximumWidth: 352; Layout.minimumWidth: 120; placeholderText: qsTr("Search Home and drives") }
@@ -106,33 +116,38 @@ ApplicationWindow {
                 Layout.minimumWidth: Theme.sidebarWidth
                 Layout.maximumWidth: Theme.sidebarWidth
                 Layout.fillHeight: true
-                spacing: 2
+                spacing: 0
 
-                PlaceItem { Layout.fillWidth: true; text: qsTr("Home"); iconPath: "M2.5 7.5 8 3l5.5 4.5V13h-11z"; selected: window.folderModel.folder === window.home(); onClicked: window.folderModel.openPath(window.home()) }
-                SectionHeading { Layout.fillWidth: true; title: qsTr("Folders"); color: Theme.sectionFolders }
-                Repeater {
-                    model: [
-                        { name: qsTr("Desktop"), location: StandardPaths.DesktopLocation, icon: "M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM6 13.5h4M8 11v2.5" },
-                        { name: qsTr("Documents"), location: StandardPaths.DocumentsLocation, icon: "M2 4.5h4l1.5 1.5H14v6.5H2zM5 9h6" },
-                        { name: qsTr("Downloads"), location: StandardPaths.DownloadLocation, icon: "M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" },
-                        { name: qsTr("Music"), location: StandardPaths.MusicLocation, icon: "M6 12V3.5l7-1.5v8.5M6 12a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM13 10.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z" },
-                        { name: qsTr("Pictures"), location: StandardPaths.PicturesLocation, icon: "M3.5 3h9A1.5 1.5 0 0 1 14 4.5v7a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7A1.5 1.5 0 0 1 3.5 3zM2.5 12l4-4 3 3 2-2 2.5 2.5" },
-                        { name: qsTr("Videos"), location: StandardPaths.MoviesLocation, icon: "M3.5 4h6A1.5 1.5 0 0 1 11 5.5v5A1.5 1.5 0 0 1 9.5 12h-6A1.5 1.5 0 0 1 2 10.5v-5A1.5 1.5 0 0 1 3.5 4zM11 7l3-2v6l-3-2" }
-                    ]
-                    PlaceItem {
-                        required property var modelData
-                        readonly property string path: StandardPaths.writableLocation(modelData.location).toString().replace("file://", "")
-                        Layout.fillWidth: true
-                        text: modelData.name
-                        iconPath: modelData.icon
-                        selected: window.folderModel.folder === path
-                        onClicked: window.folderModel.openPath(path)
+                ListView {
+                    id: placesList
+                    objectName: "places"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    model: window.places
+                    spacing: 2
+                    section.property: "section"
+                    section.delegate: SectionHeading {
+                        required property string section
+                        width: ListView.view.width
+                        title: section === "0" ? qsTr("Folders") : section === "1" ? qsTr("Pinned") : qsTr("Storage")
+                        color: section === "0" ? Theme.sectionFolders : section === "1" ? Theme.sectionPinned : Theme.sectionStorage
+                    }
+                    delegate: PlaceItem {
+                        // Roles are read through `model`: `icon` would clash with the button's own.
+                        required property var model
+                        width: ListView.view.width
+                        text: model.name
+                        iconPath: model.icon
+                        sectionColor: model.section === 0 ? Theme.sectionFolders : model.section === 1 ? Theme.sectionPinned : Theme.sectionStorage
+                        used: model.section === 2 ? model.used : -1
+                        badge: model.section === 2 ? model.freeText : ""
+                        selected: window.browser !== null && window.browser.location === model.path
+                        onClicked: window.browser.goPath(model.path)
                     }
                 }
-                SectionHeading { Layout.fillWidth: true; title: qsTr("Storage"); color: Theme.sectionStorage }
-                PlaceItem { Layout.fillWidth: true; text: qsTr("System"); iconPath: "M3.5 4h9A1.5 1.5 0 0 1 14 5.5v5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 10.5v-5A1.5 1.5 0 0 1 3.5 4zM2 8h12M4.5 10h.01"; sectionColor: Theme.sectionStorage; selected: window.folderModel.folder === "/"; onClicked: window.folderModel.openPath("/") }
-                Item { Layout.fillHeight: true }
-                Text { Layout.leftMargin: 26; Layout.bottomMargin: 18; text: qsTr("F1 Shortcuts"); color: "#c9cbd6"; font.family: Theme.family; font.pointSize: Theme.tiny; font.weight: Font.Bold }
+                Text { Layout.leftMargin: 26; Layout.bottomMargin: 18; Layout.topMargin: 8; text: qsTr("F1 Shortcuts"); color: "#c9cbd6"; font.family: Theme.family; font.pointSize: Theme.tiny; font.weight: Font.Bold }
             }
 
             // Content panel
@@ -156,8 +171,28 @@ ApplicationWindow {
                     RowLayout {
                         Layout.preferredHeight: 46
                         Layout.leftMargin: 16
+                        Layout.rightMargin: 16
                         spacing: 4
-                        TabChip { Layout.alignment: Qt.AlignBottom; text: window.folderModel.folderName; current: true }
+                        Repeater {
+                            model: window.tabs
+                            TabChip {
+                                required property int index
+                                required property string title
+                                Layout.alignment: Qt.AlignBottom
+                                text: title
+                                current: index === window.tabs.currentIndex
+                                onClicked: window.tabs.currentIndex = index
+                                onCloseRequested: window.tabs.closeTab(index)
+                            }
+                        }
+                        IconButton {
+                            Layout.alignment: Qt.AlignBottom
+                            width: 30; height: 30
+                            label: qsTr("New tab (Ctrl+T)")
+                            iconPath: "M8 3v10M3 8h10"
+                            onClicked: window.tabs.openTab()
+                        }
+                        Item { Layout.fillWidth: true }
                     }
                     RowLayout {
                         Layout.preferredHeight: 36
@@ -193,22 +228,28 @@ ApplicationWindow {
                         clip: true
                         reuseItems: true
                         cacheBuffer: 600
+                        focus: true
                         model: window.folderModel
                         boundsBehavior: Flickable.StopAtBounds
                         ScrollBar.vertical: ScrollBar {}
+                        currentIndex: window.selectedRow
                         delegate: FileRow {
                             width: ListView.view.width
                             selected: index === window.selectedRow
                             showGap: window.showGap
                             showMode: window.showMode
                             showKind: window.showKind
-                            onClicked: window.selectedRow = index
-                            onActivated: if (isFolder) { window.selectedRow = -1; window.folderModel.openRow(index) }
+                            onClicked: { window.selectedRow = index; list.forceActiveFocus() }
+                            onActivated: if (isFolder) window.browser.goRow(index)
                         }
+                        Keys.onUpPressed: { window.selectedRow = Math.max(0, window.selectedRow - 1); positionViewAtIndex(window.selectedRow, ListView.Contain) }
+                        Keys.onDownPressed: { window.selectedRow = Math.min(count - 1, window.selectedRow + 1); positionViewAtIndex(window.selectedRow, ListView.Contain) }
+                        Keys.onReturnPressed: window.openSelected()
+                        Keys.onEnterPressed: window.openSelected()
                         Text {
                             anchors.centerIn: parent
-                            visible: window.folderModel.error.length > 0 || (!window.folderModel.loading && list.count === 0)
-                            text: window.folderModel.error.length > 0 ? window.folderModel.error : qsTr("This folder is empty")
+                            visible: window.folderModel !== null && (window.folderModel.error.length > 0 || (!window.folderModel.loading && list.count === 0))
+                            text: window.folderModel !== null && window.folderModel.error.length > 0 ? window.folderModel.error : qsTr("This folder is empty")
                             color: Theme.textMute
                             font.family: Theme.family
                             font.pointSize: Theme.body
@@ -231,6 +272,14 @@ ApplicationWindow {
         }
     }
 
-    Shortcut { sequence: "Backspace"; onActivated: window.folderModel.openParent() }
+    Shortcut { sequences: ["Alt+Left", "Backspace"]; enabled: !breadcrumb.editing; onActivated: window.browser.back() }
+    Shortcut { sequence: "Alt+Right"; onActivated: window.browser.forward() }
+    Shortcut { sequence: "Alt+Up"; onActivated: window.browser.up() }
+    Shortcut { sequence: "Ctrl+L"; onActivated: breadcrumb.edit() }
+    Shortcut { sequence: "Ctrl+T"; onActivated: window.tabs.openTab() }
+    Shortcut { sequence: "Ctrl+W"; onActivated: window.tabs.closeTab(window.tabs.currentIndex) }
+    Shortcut { sequence: "Ctrl+Tab"; onActivated: window.tabs.next() }
+    Shortcut { sequence: "Ctrl+Shift+Tab"; onActivated: window.tabs.previous() }
+    Shortcut { sequence: "Ctrl+B"; onActivated: sidebarToggle.checked = !sidebarToggle.checked }
     Shortcut { sequence: "Ctrl+H"; onActivated: window.folderModel.showHidden = !window.folderModel.showHidden }
 }

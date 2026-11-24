@@ -61,6 +61,8 @@ public:
     Q_INVOKABLE void openParent();
     Q_INVOKABLE void refresh();
 
+    /// Whether `row` is a folder, or a link to one; false while its page is not here.
+    Q_INVOKABLE bool isFolder(int row) const;
     QByteArray rawFolder() const { return m_folder; }
     /// The raw name of `row`, or empty while its page is not here.
     QByteArray rawName(int row) const;

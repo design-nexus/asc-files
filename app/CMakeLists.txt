@@ -15,7 +15,10 @@ qt_add_library(asc_files_core STATIC
     src/backend/BackendClient.cpp src/backend/BackendClient.h
     src/backend/Wire.cpp src/backend/Wire.h
     src/models/FolderModel.cpp src/models/FolderModel.h
-    src/models/JobModel.cpp src/models/JobModel.h)
+    src/models/JobModel.cpp src/models/JobModel.h
+    src/models/Browser.cpp src/models/Browser.h
+    src/models/PlacesModel.cpp src/models/PlacesModel.h
+    src/models/TabModel.cpp src/models/TabModel.h)
 target_include_directories(asc_files_core PUBLIC src)
 target_link_libraries(asc_files_core PUBLIC Qt6::Core Qt6::Gui)
 target_compile_options(asc_files_core PRIVATE -Wall -Wextra -Werror=return-type)
@@ -31,6 +34,7 @@ qt_add_qml_module(asc_files_qml
         qml/Main.qml
         qml/Theme.qml
         qml/components/Badge.qml
+        qml/components/Breadcrumb.qml
         qml/components/Button.qml
         qml/components/FileRow.qml
         qml/components/Icon.qml
@@ -48,7 +52,7 @@ target_link_libraries(asc-files PRIVATE asc_files_core asc_files_qmlplugin Qt6::
 # Tests run against the real backend: ASC_FILES_BACKEND names it (scripts/app.sh builds it).
 enable_testing()
 set(ASC_FILES_BACKEND "" CACHE FILEPATH "The asc-files-backend binary the tests run")
-foreach(test wire backendclient foldermodel jobmodel)
+foreach(test wire backendclient foldermodel jobmodel browser places)
     qt_add_executable(tst_${test} tests/tst_${test}.cpp)
     target_link_libraries(tst_${test} PRIVATE asc_files_core Qt6::Test)
     add_test(NAME ${test} COMMAND tst_${test})

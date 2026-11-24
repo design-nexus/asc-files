@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 #include "TestSupport.h"
 #include "backend/BackendClient.h"
+#include "models/Browser.h"
 #include "models/FolderModel.h"
 #include "models/JobModel.h"
+#include "models/PlacesModel.h"
+#include "models/TabModel.h"
 
 #include <QFile>
 #include <QQmlApplicationEngine>
@@ -34,21 +37,34 @@ private slots:
 
         BackendClient backend(TestSupport::backend());
         backend.start();
-        FolderModel folders(&backend);
+        TabModel tabs(&backend);
+        PlacesModel places;
         JobModel jobs(&backend);
+        tabs.openTab(dir.path());
+        FolderModel &folders = *tabs.current()->folderModel();
+        QSignalSpy opened(&folders, &FolderModel::opened);
         QQmlApplicationEngine engine;
-        engine.setInitialProperties({{"folderModel", QVariant::fromValue(&folders)},
+        engine.setInitialProperties({{"tabs", QVariant::fromValue(&tabs)},
+                                     {"places", QVariant::fromValue(&places)},
                                      {"jobModel", QVariant::fromValue(&jobs)},
                                      {"backend", QVariant::fromValue(&backend)}});
         engine.loadFromModule("AscFiles", "Main");
         QCOMPARE(engine.rootObjects().size(), 1);
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         QVERIFY(window);
-        QSignalSpy opened(&folders, &FolderModel::opened);
-        folders.openPath(dir.path());
-        QVERIFY(opened.wait(10000));
+        QVERIFY(opened.count() > 0 || opened.wait(10000));
         auto *list = window->findChild<QQuickItem *>(QStringLiteral("fileList"));
         QVERIFY(list);
+        QTRY_COMPARE(list->property("count").toInt(), 3);
+        auto *sidebar = window->findChild<QQuickItem *>(QStringLiteral("places"));
+        QVERIFY(sidebar);
+        QVERIFY(sidebar->property("count").toInt() >= 2);
+
+        // A second tab, then back to the first.
+        tabs.openTab(QDir::homePath());
+        QCOMPARE(tabs.rowCount(), 2);
+        QTRY_VERIFY(tabs.current()->folderModel()->rowCount() >= 0);
+        tabs.setCurrentIndex(0);
         QTRY_COMPARE(list->property("count").toInt(), 3);
         QTRY_VERIFY(folders.isLoaded(0));
         QVERIFY(QTest::qWaitForWindowExposed(window));

@@ -2,8 +2,11 @@
 //! Files: the Qt Quick app over `asc-files-backend`.
 
 #include "backend/BackendClient.h"
+#include "models/Browser.h"
 #include "models/FolderModel.h"
 #include "models/JobModel.h"
+#include "models/PlacesModel.h"
+#include "models/TabModel.h"
 
 #include <QCommandLineParser>
 #include <QDir>
@@ -29,14 +32,16 @@ int main(int argc, char *argv[]) {
 
     BackendClient backend(parser.isSet(QStringLiteral("backend")) ? parser.value(QStringLiteral("backend"))
                                                                   : BackendClient::defaultProgram());
-    FolderModel folders(&backend);
+    TabModel tabs(&backend);
+    PlacesModel places;
     JobModel jobs(&backend);
     QObject::connect(&backend, &BackendClient::failed, &app, [](const QString &why) {
         qCritical().noquote() << why;
     });
 
     QQmlApplicationEngine engine;
-    engine.setInitialProperties({{QStringLiteral("folderModel"), QVariant::fromValue(&folders)},
+    engine.setInitialProperties({{QStringLiteral("tabs"), QVariant::fromValue(&tabs)},
+                                 {QStringLiteral("places"), QVariant::fromValue(&places)},
                                  {QStringLiteral("jobModel"), QVariant::fromValue(&jobs)},
                                  {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
@@ -44,7 +49,14 @@ int main(int argc, char *argv[]) {
     engine.loadFromModule("AscFiles", "Main");
 
     backend.start();
-    const QStringList folder = parser.positionalArguments();
-    folders.openPath(folder.isEmpty() ? QDir::homePath() : QDir(folder.first()).absolutePath());
+    const QStringList folders = parser.positionalArguments();
+    if (folders.isEmpty()) {
+        tabs.openTab(QDir::homePath());
+    }
+    for (const QString &folder : folders) {
+        tabs.openTab(QDir(folder).absolutePath());
+    }
+    // The window was made before the first tab: start it on the first.
+    tabs.setCurrentIndex(0);
     return app.exec();
 }
