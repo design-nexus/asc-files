@@ -10,6 +10,10 @@ backend. The Qt app arrives in Phase B.
 Build: `cargo build --workspace --locked`. Test: `scripts/test.sh`, which uses a private home and XDG dirs and caps
 memory at 4 GB; run tests only through it. Dependency guard: `scripts/check-no-glib.sh`.
 
+The Qt Quick app is in `app/` (C++ models and backend client, QML in the current Files look). Build and test it
+with `scripts/app.sh build|test`, or start it with `scripts/app.sh run [folder]`; the script uses a nix shell
+for Qt where the system has none. Its tests run against the real backend in the same private home.
+
 Plan and status: `NYX-FILES-2.0-PLAN.md` (Phase A). Backend protocol (version 2): `docs/PROTOCOL.md`, with its JSON Schema
 `docs/protocol.schema.json`. Provenance: `docs/PROVENANCE.md`. Every legacy test and what became of it:
 `docs/PORTING-LEDGER.md`.

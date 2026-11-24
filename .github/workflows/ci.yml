@@ -29,3 +29,25 @@ jobs:
         run: cargo fmt --all --check
       - name: Tests
         run: scripts/test.sh
+
+  app:
+    runs-on: ubuntu-latest
+    container: fedora:43
+    env:
+      XDG_CACHE_HOME: ${{ github.workspace }}/.ci-cache
+      CARGO_TERM_COLOR: always
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Tools
+        run: >
+          dnf install -y --setopt=install_weak_deps=False gcc gcc-c++ git rustup cmake ninja-build pkgconf
+          qt6-qtbase-devel qt6-qtdeclarative-devel shared-mime-info
+      - uses: actions/checkout@v5
+      - name: Rust toolchain from rust-toolchain.toml
+        run: |
+          rustup-init -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Build the app and the backend
+        run: scripts/app.sh build
+      - name: App tests (against the real backend, private home)
+        run: scripts/app.sh test

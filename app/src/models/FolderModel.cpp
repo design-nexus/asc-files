@@ -1,0 +1,365 @@
+// SPDX-License-Identifier: MIT
+#include "FolderModel.h"
+
+#include "../backend/BackendClient.h"
+#include "../backend/Wire.h"
+
+#include <QDateTime>
+#include <QFile>
+#include <QJsonObject>
+#include <QLocale>
+#include <QMimeDatabase>
+
+namespace {
+
+/// `drwxr-xr-x` for a folder with mode 0755.
+QString symbolicMode(const QString &kind, int mode) {
+    QString text;
+    text += kind == QLatin1String("folder") ? u'd' : kind == QLatin1String("link") ? u'l' : u'-';
+    const char *letters = "rwxrwxrwx";
+    for (int bit = 0; bit < 9; ++bit) {
+        text += (mode & (0400 >> bit)) ? QChar::fromLatin1(letters[bit]) : u'-';
+    }
+    return text;
+}
+
+/// What a file is, by its name alone, as Files shows it ("Markdown document"): reading contents
+/// for every row would stall on a slow drive.
+QString kindText(const QString &kind, const QString &name) {
+    if (kind == QLatin1String("folder")) {
+        return FolderModel::tr("Folder");
+    }
+    if (kind == QLatin1String("link")) {
+        return FolderModel::tr("Link");
+    }
+    static QMimeDatabase mimes;
+    const QMimeType type = mimes.mimeTypeForFile(name, QMimeDatabase::MatchExtension);
+    return type.isDefault() ? FolderModel::tr("File") : type.comment();
+}
+
+/// When an item changed, as Files words it: hours ago today, the weekday this week, else the date.
+QString modifiedText(const QDateTime &when) {
+    const QDateTime now = QDateTime::currentDateTime();
+    const qint64 seconds = when.secsTo(now);
+    if (seconds < 0) {
+        return QLocale().toString(when, QLocale::ShortFormat);
+    }
+    if (seconds < 60) {
+        return FolderModel::tr("Just now");
+    }
+    if (seconds < 3600) {
+        return FolderModel::tr("%1m ago").arg(seconds / 60);
+    }
+    if (seconds < 86400) {
+        return FolderModel::tr("%1h ago").arg(seconds / 3600);
+    }
+    if (when.date().daysTo(now.date()) < 7) {
+        return QLocale().dayName(when.date().dayOfWeek());
+    }
+    return QLocale().toString(when.date(), QStringLiteral("MMM d, yyyy"));
+}
+
+} // namespace
+
+FolderModel::FolderModel(BackendClient *backend, QObject *parent) : QAbstractListModel(parent), m_backend(backend) {
+    connect(m_backend, &BackendClient::notification, this, &FolderModel::notification);
+    // A new backend holds no listing: read the folder again from it.
+    connect(m_backend, &BackendClient::restarted, this, [this] {
+        m_listing = -1;
+        if (!m_folder.isEmpty()) {
+            open(m_folder);
+        }
+    });
+}
+
+FolderModel::~FolderModel() { close(); }
+
+void FolderModel::close() {
+    if (m_listing >= 0) {
+        m_backend->call(QStringLiteral("list.close"), {{"listing", m_listing}});
+        m_listing = -1;
+    }
+}
+
+void FolderModel::open(const QByteArray &path) {
+    close();
+    const quint64 opening = ++m_opening;
+    m_folder = path;
+    setLoading(true);
+    beginResetModel();
+    m_count = 0;
+    m_pages.clear();
+    m_order.clear();
+    m_inFlight.clear();
+    endResetModel();
+    emit folderChanged();
+    QJsonObject params{{"path", Wire::encode(path)}, {"showHidden", m_showHidden}};
+    m_backend->call(QStringLiteral("list.open"), params,
+                    [this, opening](const QJsonValue &result, const BackendError &error) {
+                        if (opening != m_opening) {
+                            // Opened somewhere else meanwhile: let this listing go.
+                            if (error.isNull()) {
+                                m_backend->call(QStringLiteral("list.close"),
+                                                {{"listing", result.toObject().value("listing")}});
+                            }
+                            return;
+                        }
+                        setLoading(false);
+                        setError(error);
+                        if (!error.isNull()) {
+                            return;
+                        }
+                        const QJsonObject listing = result.toObject();
+                        m_listing = listing.value(QStringLiteral("listing")).toInteger();
+                        m_followsChanges = listing.value(QStringLiteral("followsChanges")).toBool();
+                        reread(listing.value(QStringLiteral("generation")).toInteger(),
+                               listing.value(QStringLiteral("count")).toInt());
+                        emit folderChanged();
+                        emit opened(m_count);
+                    });
+}
+
+void FolderModel::openPath(const QString &path) { open(QFile::encodeName(path)); }
+
+void FolderModel::openRow(int row) {
+    const QByteArray name = rawName(row);
+    if (!name.isEmpty()) {
+        open(Wire::join(m_folder, name));
+    }
+}
+
+void FolderModel::openParent() {
+    if (!m_folder.isEmpty() && m_folder != "/") {
+        open(Wire::parent(m_folder));
+    }
+}
+
+void FolderModel::refresh() {
+    if (m_listing < 0) {
+        return;
+    }
+    const qint64 listing = m_listing;
+    m_backend->call(QStringLiteral("list.refresh"), {{"listing", listing}},
+                    [this, listing](const QJsonValue &result, const BackendError &error) {
+                        if (listing != m_listing || !error.isNull()) {
+                            return;
+                        }
+                        const QJsonObject counted = result.toObject();
+                        reread(counted.value(QStringLiteral("generation")).toInteger(),
+                               counted.value(QStringLiteral("count")).toInt());
+                    });
+}
+
+void FolderModel::setShowHidden(bool show) {
+    if (m_showHidden == show) {
+        return;
+    }
+    m_showHidden = show;
+    emit showHiddenChanged();
+    if (m_listing < 0) {
+        return;
+    }
+    const qint64 listing = m_listing;
+    m_backend->call(QStringLiteral("list.reorder"), {{"listing", listing}, {"showHidden", show}},
+                    [this, listing](const QJsonValue &result, const BackendError &error) {
+                        if (listing != m_listing || !error.isNull()) {
+                            return;
+                        }
+                        const QJsonObject counted = result.toObject();
+                        reread(counted.value(QStringLiteral("generation")).toInteger(),
+                               counted.value(QStringLiteral("count")).toInt());
+                    });
+}
+
+QString FolderModel::folder() const { return Wire::display(m_folder); }
+
+QString FolderModel::folderName() const {
+    return m_folder == "/" ? QStringLiteral("/") : Wire::display(Wire::baseName(m_folder));
+}
+
+void FolderModel::reread(qint64 generation, int count) {
+    // Rows of the old generation are dropped; the view asks for what it shows again.
+    m_pages.clear();
+    m_order.clear();
+    m_inFlight.clear();
+    // The new generation first: a view told of new rows asks for them at once.
+    const bool newGeneration = m_generation != generation;
+    m_generation = generation;
+    const int old = m_count;
+    if (count > old) {
+        beginInsertRows({}, old, count - 1);
+        m_count = count;
+        endInsertRows();
+    } else if (count < old) {
+        beginRemoveRows({}, count, old - 1);
+        m_count = count;
+        endRemoveRows();
+    }
+    if (m_count > 0) {
+        emit dataChanged(index(0), index(m_count - 1));
+    }
+    if (newGeneration) {
+        emit generationChanged();
+    }
+}
+
+void FolderModel::notification(const QString &method, const QJsonObject &params) {
+    if (!method.startsWith(QLatin1String("list.")) || params.value(QStringLiteral("listing")).toInteger() != m_listing ||
+        m_listing < 0) {
+        return;
+    }
+    if (method == QLatin1String("list.changed")) {
+        reread(params.value(QStringLiteral("generation")).toInteger(), params.value(QStringLiteral("count")).toInt());
+    } else if (method == QLatin1String("list.gone") || method == QLatin1String("list.unmounted")) {
+        const QString left = folder();
+        const QByteArray nearest = Wire::decode(params.value(QStringLiteral("nearest")));
+        // The backend's listing ended with its folder.
+        m_listing = -1;
+        open(nearest.isEmpty() ? QByteArrayLiteral("/") : nearest);
+        emit folderLeft(left, folder(), method == QLatin1String("list.unmounted"));
+    }
+}
+
+QByteArray FolderModel::rawName(int row) const {
+    const auto page = m_pages.constFind(row / PageSize);
+    if (page == m_pages.cend() || row < 0 || row >= m_count) {
+        return {};
+    }
+    return Wire::decode(page->at(row % PageSize).toObject().value(QStringLiteral("name")));
+}
+
+int FolderModel::rowCount(const QModelIndex &parent) const { return parent.isValid() ? 0 : m_count; }
+
+bool FolderModel::isLoaded(int row) const { return m_pages.contains(row / PageSize); }
+
+QVariant FolderModel::data(const QModelIndex &index, int role) const {
+    if (!index.isValid() || index.row() >= m_count) {
+        return {};
+    }
+    const int page = index.row() / PageSize;
+    const auto found = m_pages.constFind(page);
+    if (found == m_pages.cend()) {
+        request(page);
+        return role == LoadedRole ? QVariant(false) : QVariant();
+    }
+    // Ask for the neighbouring page before the view reaches it, in whichever direction it goes.
+    const int within = index.row() % PageSize;
+    if (within >= PageSize * 3 / 4 && (page + 1) * PageSize < m_count && !m_pages.contains(page + 1)) {
+        request(page + 1);
+    } else if (within < PageSize / 4 && page > 0 && !m_pages.contains(page - 1)) {
+        request(page - 1);
+    }
+    const QJsonObject row = found->at(within).toObject();
+    const QString kind = row.value(QStringLiteral("kind")).toString();
+    const int mode = row.value(QStringLiteral("mode")).toInt();
+    switch (role) {
+    case NameRole:
+        return Wire::display(row.value(QStringLiteral("name")));
+    case KindRole:
+        return kind;
+    case KindTextRole:
+        return kindText(kind, Wire::display(row.value(QStringLiteral("name"))));
+    case IsFolderRole:
+        return kind == QLatin1String("folder") || row.value(QStringLiteral("linkToFolder")).toBool();
+    case HiddenRole:
+        return row.value(QStringLiteral("hidden")).toBool();
+    case SizeRole:
+        return row.value(QStringLiteral("size")).toDouble();
+    case SizeTextRole:
+        if (kind == QLatin1String("folder") || row.value(QStringLiteral("gone")).toBool()) {
+            return QString();
+        }
+        return QLocale().formattedDataSize(row.value(QStringLiteral("size")).toInteger(), 1,
+                                           QLocale::DataSizeSIFormat);
+    case ModifiedRole: {
+        if (!row.contains(QStringLiteral("modified"))) {
+            return {};
+        }
+        const qint64 ms = row.value(QStringLiteral("modified")).toInteger() * 1000 +
+                          row.value(QStringLiteral("modifiedNs")).toInteger() / 1'000'000;
+        return QDateTime::fromMSecsSinceEpoch(ms);
+    }
+    case ModifiedTextRole:
+        return row.contains(QStringLiteral("modified")) ? modifiedText(data(index, ModifiedRole).toDateTime()) : QString();
+    case ModeOctalRole:
+        return row.contains(QStringLiteral("mode")) ? QString::number(mode & 07777, 8) : QString();
+    case ModeSymbolicRole:
+        return row.contains(QStringLiteral("mode")) ? symbolicMode(kind, mode) : QString();
+    case GoneRole:
+        return row.value(QStringLiteral("gone")).toBool();
+    case LoadedRole:
+        return true;
+    default:
+        return {};
+    }
+}
+
+QHash<int, QByteArray> FolderModel::roleNames() const {
+    return {{NameRole, "name"},
+            {KindRole, "kind"},
+            {KindTextRole, "kindText"},
+            {IsFolderRole, "isFolder"},
+            {HiddenRole, "hidden"},
+            {SizeRole, "size"},
+            {SizeTextRole, "sizeText"},
+            {ModifiedRole, "modified"},
+            {ModifiedTextRole, "modifiedText"},
+            {ModeOctalRole, "modeOctal"},
+            {ModeSymbolicRole, "modeSymbolic"},
+            {GoneRole, "gone"},
+            {LoadedRole, "loaded"}};
+}
+
+void FolderModel::request(int page) const {
+    if (m_listing < 0 || m_inFlight.value(page, -1) == m_generation) {
+        return;
+    }
+    m_inFlight.insert(page, m_generation);
+    auto *self = const_cast<FolderModel *>(this);
+    const qint64 listing = m_listing;
+    const qint64 generation = m_generation;
+    m_backend->call(QStringLiteral("list.window"),
+                    {{"listing", listing}, {"start", page * PageSize}, {"count", PageSize}},
+                    [self, page, listing, generation](const QJsonValue &result, const BackendError &error) {
+                        if (listing != self->m_listing || generation != self->m_generation) {
+                            return; // Meant for a listing or a read the model has left.
+                        }
+                        self->m_inFlight.remove(page);
+                        if (!error.isNull()) {
+                            return;
+                        }
+                        const QJsonObject window = result.toObject();
+                        if (window.value(QStringLiteral("generation")).toInteger() != generation) {
+                            // The folder was read again before this window: the change notice
+                            // is on its way and will ask for the rows afresh.
+                            return;
+                        }
+                        self->m_pages.insert(page, window.value(QStringLiteral("rows")).toArray());
+                        self->m_order.append(page);
+                        while (self->m_order.size() > MaxPages) {
+                            self->m_pages.remove(self->m_order.takeFirst());
+                        }
+                        ++self->m_pagesFetched;
+                        const int first = page * PageSize;
+                        const int last = qMin(first + PageSize, self->m_count) - 1;
+                        if (last >= first) {
+                            emit self->dataChanged(self->index(first), self->index(last));
+                        }
+                    });
+}
+
+void FolderModel::setLoading(bool loading) {
+    if (m_loading != loading) {
+        m_loading = loading;
+        emit loadingChanged();
+    }
+}
+
+void FolderModel::setError(const BackendError &error) {
+    const QString message = error.isNull() ? QString() : error.message;
+    if (m_error != message || m_errorKind != error.kind) {
+        m_error = message;
+        m_errorKind = error.kind;
+        emit errorChanged();
+    }
+}
