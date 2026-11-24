@@ -48,6 +48,7 @@ use crate::{
 mod aliases;
 mod conflicts;
 mod create_entry;
+mod deletion;
 mod file_copy;
 mod folder_copy;
 pub(crate) mod fs_quirks;
@@ -832,7 +833,394 @@ fn numbers_at(path: &Path) -> (u64, u64) {
 }
 
 /// Legacy pumped the main loop until the operation ended; a batch here has ended on return.
-fn wait_for_operation<T: ?Sized>(_events: &T, _ended: impl Fn(&OperationEvent) -> bool) {}
+/// Delivers the events of every deletion started with [`LocalOperationProvider`] until each has
+/// finished, as legacy's tests turned the GLib loop.
+fn wait_for_operation<T: ?Sized>(_events: &T, _ended: impl Fn(&OperationEvent) -> bool) {
+    pump();
+}
+
+/// Legacy's operation provider, as far as deleting and restoring from the Trash go: a deletion is
+/// a batch of jobs (`Action::Delete` or `Action::Trash`), reported as legacy's `run_deletion`
+/// did. Its events reach `emit` only as [`pump`] delivers them, on the test's thread, so a test can
+/// cancel by dropping the handle from inside `emit`, as it could under GLib.
+struct LocalOperationProvider;
+
+struct Deleting {
+    id: OperationRequestId,
+    permanent: bool,
+    entries: Vec<crate::model::FileEntry>,
+    events: std::sync::mpsc::Receiver<crate::jobs::Event>,
+    emit: Rc<dyn Fn(OperationEvent)>,
+    _job: Rc<crate::jobs::Handle>,
+}
+
+thread_local! {
+    static DELETING: RefCell<Vec<Deleting>> = const { RefCell::new(Vec::new()) };
+    /// The flag the next deletion's job shares, set by [`run_deletion`].
+    static SHARED_CANCEL: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+}
+
+impl LocalOperationProvider {
+    fn delete(
+        &self,
+        request: crate::services::DeleteRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> crate::services::LoadHandle {
+        use crate::jobs::{self, Action, Item, Request};
+        let path = |entry: &crate::model::FileEntry| {
+            entry
+                .location
+                .native_path()
+                .expect("a native entry")
+                .to_path_buf()
+        };
+        let items = request
+            .entries
+            .iter()
+            .map(|entry| Item {
+                source: path(entry),
+                action: if request.permanent {
+                    Action::Delete
+                } else {
+                    Action::Trash
+                },
+                name: None,
+            })
+            .collect::<Vec<_>>();
+        let into = request
+            .entries
+            .first()
+            .and_then(|entry| path(entry).parent().map(Path::to_path_buf))
+            .unwrap_or_default();
+        let (send, events) = std::sync::mpsc::channel();
+        let request_items = Request {
+            into,
+            items,
+            names: crate::ops::NameMode::Fix,
+            record: None,
+            durable: Some(false),
+        };
+        let job = Rc::new(
+            match SHARED_CANCEL.with(|shared| shared.borrow_mut().take()) {
+                Some(flag) => {
+                    jobs::start_sharing(request_items, send, crate::ops::Cancel::sharing(flag))
+                }
+                None => jobs::start(request_items, send),
+            },
+        );
+        let cancelling = job.clone();
+        DELETING.with(|deleting| {
+            deleting.borrow_mut().push(Deleting {
+                id: request.id,
+                permanent: request.permanent,
+                entries: request.entries,
+                events,
+                emit,
+                _job: job,
+            });
+        });
+        crate::services::LoadHandle::new(move || cancelling.cancel())
+    }
+
+    fn restore(
+        &self,
+        request: crate::services::RestoreRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> crate::services::LoadHandle {
+        let crate::services::RestoreSource::OriginalLocations { locations, .. } = request.source
+        else {
+            panic!("the stand-in restores by original location only");
+        };
+        let (mut restored, mut failed) = (Vec::new(), Vec::new());
+        for location in locations {
+            let original = location.native_path().map(Path::to_path_buf);
+            let entry = off_ui_thread(crate::trash::list)
+                .into_iter()
+                .filter(|entry| Some(&entry.original) == original.as_ref())
+                .max_by_key(|entry| entry.deleted.clone());
+            match entry.map(|entry| off_ui_thread(|| crate::trash::restore(&entry))) {
+                Some(Ok(path)) => {
+                    if let Some(identity) =
+                        off_ui_thread(|| super::native_fs::identity_at_path(&path))
+                    {
+                        emit(OperationEvent::ItemRestored {
+                            request_id: request.id,
+                            location: Location::local(&path),
+                            identity,
+                        });
+                    }
+                    restored.push(Location::local(&path));
+                }
+                _ => failed.push(location),
+            }
+        }
+        emit(if failed.is_empty() {
+            OperationEvent::Restored {
+                request_id: request.id,
+                locations: restored.clone(),
+                restored,
+            }
+        } else {
+            OperationEvent::RestoreCompletedWithErrors {
+                request_id: request.id,
+                restored_locations: restored.clone(),
+                restored,
+                message: "restore failed".to_owned(),
+            }
+        });
+        crate::services::LoadHandle::new(|| {})
+    }
+}
+
+/// Runs file calls off a test marked as the UI thread, as legacy's provider did on its workers.
+fn off_ui_thread<T: Send>(call: impl FnOnce() -> T + Send) -> T {
+    thread::scope(|scope| scope.spawn(call).join().expect("the call returns"))
+}
+
+/// Legacy's `run_deletion`: deletes or trashes `entries`, stopping when `cancellable` is set.
+fn run_deletion(
+    id: OperationRequestId,
+    entries: Vec<crate::model::FileEntry>,
+    permanent: bool,
+    emit: Rc<dyn Fn(OperationEvent)>,
+    cancellable: Cancellable,
+) {
+    // The job reads the test's flag itself, as legacy's walk read its cancellable.
+    SHARED_CANCEL.with(|shared| shared.replace(Some(cancellable.flag())));
+    let _operation = LocalOperationProvider.delete(
+        crate::services::DeleteRequest {
+            id,
+            entries,
+            permanent,
+        },
+        emit,
+    );
+    pump();
+}
+
+/// Delivers every pending deletion's events, as legacy's `run_deletion` emitted them, until each
+/// has finished.
+fn pump() {
+    use crate::jobs::{Event, Outcome};
+    loop {
+        let Some(mut deleting) = DELETING.with(|deleting| deleting.borrow_mut().pop()) else {
+            return;
+        };
+        let (id, permanent, total) = (deleting.id, deleting.permanent, deleting.entries.len());
+        let location = |index: usize| deleting.entries[index].location.clone();
+        let mut affected = std::collections::HashSet::new();
+        for entry in &deleting.entries {
+            affected.extend(entry.location.parent());
+            if entry.kind == crate::model::EntryKind::Directory {
+                affected.insert(entry.location.clone());
+            }
+        }
+        if !permanent {
+            affected.insert(Location::uri("trash:///"));
+        }
+        let (mut deleted, mut failed, mut cut_off) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut errors, mut retryable, mut completed) = (Vec::new(), Vec::new(), 0);
+        let mut cancelled = false;
+        let emit = deleting.emit.clone();
+        while let Ok(event) = deleting.events.recv_timeout(Duration::from_secs(60)) {
+            match event {
+                Event::ItemDone { index, outcome, .. } => {
+                    let mut progressed = Vec::new();
+                    match outcome {
+                        Outcome::Done { name, .. } => {
+                            completed += 1;
+                            if !permanent
+                                && let Some(identity) =
+                                    off_ui_thread(|| super::native_fs::identity_at_path(&name))
+                            {
+                                emit(OperationEvent::ItemTrashed {
+                                    request_id: id,
+                                    location: location(index),
+                                    identity,
+                                });
+                            }
+                            deleted.push(location(index));
+                            progressed.push(location(index));
+                        }
+                        // A trash cut off left its item whole; a delete cut off part way did not.
+                        Outcome::Failed { error, .. } if error.kind() == ErrorKind::Cancelled => {
+                            completed += 1;
+                            cancelled = true;
+                            if permanent {
+                                failed.push(location(index));
+                            } else {
+                                cut_off.push(location(index));
+                            }
+                        }
+                        Outcome::Failed { error, .. } => {
+                            completed += 1;
+                            if !permanent && error.kind() == ErrorKind::NotSupported {
+                                retryable.push(location(index));
+                            }
+                            errors.push(format!(
+                                "{}: {}",
+                                deleting.entries[index].display_name,
+                                error.message()
+                            ));
+                            failed.push(location(index));
+                        }
+                        Outcome::NotAttempted => {
+                            cancelled = true;
+                            cut_off.push(location(index));
+                            continue;
+                        }
+                    }
+                    emit(OperationEvent::DeleteProgress {
+                        request_id: id,
+                        completed,
+                        total,
+                        deleted_locations: progressed,
+                    });
+                }
+                Event::Finished { .. } => break,
+                _ => {}
+            }
+        }
+        emit(if cancelled {
+            OperationEvent::Cancelled {
+                request_id: id,
+                result: crate::services::CancelledOperation {
+                    completed: deleted,
+                    failed,
+                    not_attempted: cut_off,
+                    affected_locations: affected,
+                },
+            }
+        } else if errors.is_empty() {
+            OperationEvent::Deleted {
+                request_id: id,
+                locations: deleted,
+            }
+        } else {
+            OperationEvent::CompletedWithErrors {
+                request_id: id,
+                deleted_locations: deleted,
+                has_non_retryable_failures: errors.len() > retryable.len(),
+                retryable_locations: retryable,
+                message: errors.join("\n"),
+            }
+        });
+    }
+}
+
+/// A listing's entry for `path`, as legacy's views handed to its provider.
+fn file_entry(path: &std::path::Path) -> crate::model::FileEntry {
+    use crate::model::{EntryKind, FileEntry, MetadataValue};
+    FileEntry {
+        location: Location::local(path),
+        thumbnail_path: None,
+        native_name: path.file_name().unwrap_or_default().to_owned(),
+        display_name: path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
+        kind: EntryKind::File,
+        size: MetadataValue::Unknown,
+        modified_unix_seconds: MetadataValue::Unknown,
+        recent_unix_seconds: MetadataValue::Unknown,
+        is_hidden: false,
+        mode: MetadataValue::Unknown,
+        image_dimensions: MetadataValue::Unknown,
+        child_count: MetadataValue::Unknown,
+        duration_seconds: MetadataValue::Unknown,
+        recent_uri: None,
+    }
+}
+
+fn directory_entry(path: &std::path::Path) -> crate::model::FileEntry {
+    use crate::model::{EntryKind, FileEntry, MetadataValue};
+    FileEntry {
+        kind: EntryKind::Directory,
+        image_dimensions: MetadataValue::Unknown,
+        child_count: MetadataValue::Unknown,
+        duration_seconds: MetadataValue::Unknown,
+        ..file_entry(path)
+    }
+}
+
+/// Legacy's GLib-driven forms of the deletion walk, run synchronously.
+use super::deletion::PinnedEntry;
+
+fn parallel_delete_local_with(
+    roots: Vec<PinnedEntry>,
+    cancellable: Cancellable,
+    delete: impl FnOnce(Vec<PinnedEntry>, Arc<AtomicBool>) -> Result<(), String>,
+) -> Result<(), EngineError> {
+    if roots.is_empty() {
+        return Ok(());
+    }
+    if cancellable.is_cancelled() {
+        return Err(crate::error::cancelled());
+    }
+    match delete(roots, cancellable.flag()) {
+        Ok(()) => Ok(()),
+        Err(error) if error == "Delete cancelled" => Err(crate::error::cancelled()),
+        Err(error) => Err(EngineError::new(ErrorKind::Failed, &error)),
+    }
+}
+
+fn parallel_delete_local(
+    roots: Vec<PinnedEntry>,
+    cancellable: Cancellable,
+) -> Result<(), EngineError> {
+    parallel_delete_local_with(roots, cancellable, |roots, cancelled| {
+        let workers = super::deletion::local_delete_worker_count(&roots);
+        super::deletion::parallel_delete_local_blocking_with_workers(
+            roots,
+            cancelled,
+            workers,
+            &super::leftovers::Deadline::default(),
+        )
+    })
+}
+
+fn permanently_delete_local(
+    parent: OwnedFd,
+    name: OsString,
+    expected: Option<super::native_fs::Recorded>,
+    cancellable: Cancellable,
+) -> Result<(), EngineError> {
+    parallel_delete_local(
+        vec![PinnedEntry {
+            parent: Arc::new(parent),
+            name,
+            identity: expected,
+        }],
+        cancellable,
+    )
+}
+
+/// What deletion pins an item by, read now; None for a path with no parent.
+fn local_file_identity(path: &Path) -> Result<Option<super::native_fs::Recorded>, EngineError> {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return Ok(None);
+    };
+    let parent =
+        super::native_fs::open_local_parent_directory(parent).map_err(crate::error::io_error)?;
+    let stat = super::fs_ops::fs()
+        .stat(super::fs_ops::Entry::new(&parent, name), false)
+        .map_err(|errno| crate::error::os_io_error(io::Error::from(errno)))?;
+    Ok(Some(super::native_fs::Recorded::of(&stat)))
+}
+
+fn permanently_delete_local_path_if_unchanged(
+    path: PathBuf,
+    expected: Option<super::native_fs::Recorded>,
+    cancellable: Cancellable,
+) -> Result<(), EngineError> {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(crate::error::translated_io_error("Invalid delete target"));
+    };
+    let parent =
+        super::native_fs::open_local_parent_directory(parent).map_err(crate::error::io_error)?;
+    permanently_delete_local(parent, name.to_os_string(), expected, cancellable)
+}
 
 fn drive_until_transfer_settles<T: ?Sized>(_events: &T) {}
 

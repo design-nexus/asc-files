@@ -903,10 +903,21 @@ pub use crate::trash::Trashed;
 /// emptied by parallel workers, one on a spinning disk. A cancel stops at the next entry, keeping
 /// what is left whole.
 pub fn delete(item: &Path, cancel: &Cancel) -> Result<(), Error> {
-    use crate::adapters::local_operations::{
-        deletion::{self, PinnedEntry},
-        leftovers::Deadline,
-    };
+    delete_within(
+        item,
+        cancel,
+        &crate::adapters::local_operations::leftovers::Deadline::default(),
+    )
+}
+
+/// [`delete`], waiting for files still open elsewhere within `deadline`, which a batch shares so
+/// that one wait covers every item of it.
+pub(crate) fn delete_within(
+    item: &Path,
+    cancel: &Cancel,
+    deadline: &crate::adapters::local_operations::leftovers::Deadline,
+) -> Result<(), Error> {
+    use crate::adapters::local_operations::deletion::{self, PinnedEntry};
     let (Some(parent), Some(name)) = (
         item.parent()
             .filter(|parent| !parent.as_os_str().is_empty()),
@@ -928,7 +939,7 @@ pub fn delete(item: &Path, cancel: &Cancel) -> Result<(), Error> {
         roots,
         cancel.0.clone(),
         workers,
-        &Deadline::default(),
+        deadline,
     ) {
         Ok(()) => Ok(()),
         Err(error) if cancel.is_cancelled() || error == "Delete cancelled" => {

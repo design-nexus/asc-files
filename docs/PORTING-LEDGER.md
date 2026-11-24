@@ -17,6 +17,7 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `closes.rs` | 1 | 0 | 0 | 1 |
 | `conflicts.rs` | 20 | 15 | 0 | 5 |
 | `create_entry.rs` | 6 | 5 | 0 | 1 |
+| `deletion.rs` | 30 | 21 | 0 | 9 |
 | `file_copy.rs` | 29 | 28 | 1 | 0 |
 | `folder_copy.rs` | 22 | 21 | 1 (upstream: run by another test) | 0 |
 | `leftovers.rs` | 10 | 10 | 0 | 0 |
@@ -29,8 +30,8 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `replacement.rs` | 28 | 25 | 0 | 3 |
 | `trash_capabilities.rs` | 1 | 0 | 0 | 1 (ignored upstream too) |
 | `merge.rs`, first pass | 66 | 14 | 0 | 2 (50 still to port: legacy's merge hooks and seams, and its snapshot undo) |
-| **So far** | **271** | **232** | **2** | **37** |
-| Remaining 6 files (`copy`, `deletion`, `progress`, `restore_safety`, `sync`, `undo`), and 50 of `merge.rs` | 221 | – | – | – |
+| **So far** | **301** | **253** | **2** | **46** |
+| Remaining 5 files (`copy`, `progress`, `restore_safety`, `sync`, `undo`), and 50 of `merge.rs` | 191 | – | – | – |
 
 ## Ignored
 
@@ -50,6 +51,10 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | Same test, ReplacedLonger on a path-keyed SFTP mount | **Open gap.** Refused as it must be, but the item put in the original's place is left set aside (and named in the error) instead of put back. |
 | `replacement::rejected_exchange_falls_back_to_aside_and_is_remembered`, the exchange count | Legacy skipped the exchange for a read-only staged folder; the engine tries it, is refused, and falls back. The outcome and what is remembered are checked. |
 | `replacement::a_failed_publication_puts_the_original_back`, the FAT row | Re-aimed at the engine's publish, its fourth rename at the name on FAT as in legacy (the refused swap through an originals folder makes two). |
+| `deletion::a_cancelled_delete_counts_only_what_it_left_whole_as_not_attempted`, the Trash row | It cancelled inside GIO's trash, which checked its cancellable just before renaming, so the item stayed. The native Trash moves in one rename and the hook fires at it, so the cancel lands as the item moves. A job still stops before its next item; the permanent rows run. |
+| `deletion::trash_reports_the_item_it_moved_when_another_took_the_name_first`, the OpenAt row | Legacy swapped the item at the open it made before trashing; the native Trash makes none, so what holds the name at the rename goes. The rows swapping at the rename run. |
+| Same test, the nfs3 row | Legacy reported the item it had checked: it read the item at its name through NFS's attribute cache, which still showed it after another was renamed over. The Trash moved the arrival, and the engine reports what reached the Trash. |
+| `deletion::a_folder_only_leftovers_keep_goes_once_they_do_within_the_mount_s_wait`, the rows held by Files itself | Legacy knew what Files held (a preview's read, another of its operations) through `file_activity` and said so. Previews are the Qt app's (Phase B); the rows run held by a program or by nobody named. |
 | `leftovers::stale_probes_go_only_when_empty_and_old`, the mount-lane half | Legacy swept on its mount's background lane and checked that a slow sweep kept the lane answering. The engine has no lanes: the backend runs the sweep on a thread of its own. That the sweep removes a listed stale probe is still checked. |
 | `paste_results::an_item_replaced_without_trash_is_left_out_of_the_paste_undo`, the order of moves | Legacy moved the items without a conflict first; jobs keep the order asked for. The moves are compared as a set. |
 
@@ -84,6 +89,15 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `replacement::replacement_publication_preserves_concurrent_arrivals` | Legacy `replacement.rs` publication internals (`publish_staged_replacement`), superseded by `ops::replace`'s own staging, exchange and set-aside. |
 | `replacement::replacement_publication_reports_a_stage_it_cannot_remove` | Same. |
 | `replacement::replace_falls_back_to_aside_when_trash_lies` | GIO's `g_file_trash` reporting success without moving (GLib #4060); the native Trash moves by rename, which cannot. |
+| `deletion::cancelling_between_deletions_reports_completed_and_unattempted_items` | Legacy ran in lock step, so a cancel sent on the first item's progress landed before the second began. A job runs ahead of its events, so the second may be under way or done. That a cancel leaves the rest not attempted is `tests/jobs.rs`'s `cancelling_reports_the_rest_as_not_attempted`. |
+| `deletion::provider_cleans_only_confirmed_pins_on_failure_and_cancellation` | Sidebar bookmarks (pins) of deleted items: the app (Phase B). |
+| `deletion::deleting_browser_can_drop_after_a_confirmed_deletion_without_losing_pin_cleanup` | Same, through the GTK `Browser`. |
+| `deletion::bookmark_cleanup_failure_preserves_the_successful_deletion_outcome` | Same. |
+| `deletion::deletion_error_summaries_are_bounded_and_report_the_failure_count` | The dialog's summary of failures. The protocol reports each item's error; the client words the summary. |
+| `deletion::deletion_failures_explain_trash_problems_and_keep_other_details` | GIO error codes worded for the dialog. Native Trash errors carry their kind (`Unsupported` tells a client to offer Delete); the wording is the client's. |
+| `deletion::a_refused_trash_is_retryable_and_remembered_only_on_fuse` | GIO's `trash_support` remembering FUSE mounts that refused `g_file_trash`; the native Trash decides by the drive's Trash folder. |
+| `deletion::verified_trash_learns_fuse_refusals_and_cleans_leftovers_on_both_worker_routes` | Same, and GIO's half-written `.trashinfo` leftovers. |
+| `deletion::a_trash_that_moves_nothing_is_retryable_and_records_no_undo` | `g_file_trash` reporting success without moving (GLib #4060); the native Trash moves by rename. |
 | `create_entry::a_folder_reported_by_a_file_create_is_a_taken_name` | Legacy's private helper `name_taken`; its rule (a folder at the name refuses an exclusive file create with `EISDIR`, so the name is taken) is in `ops::create` and runs in the ported concurrency tests. |
 | `paste_results::a_cancel_that_cuts_off_an_item_counts_it_as_not_attempted` | Drives the GTK app's `Browser`. Cancelling is the job runner's (`tests/jobs.rs`: items not begun are `NotAttempted`). |
 | `paste_results::only_a_cut_off_between_local_locations_counts_as_not_attempted` | Legacy's rule for remote (`sftp://`) ends of a cut-off paste: the remote adapter. |
@@ -161,6 +175,10 @@ ported with a reason. This list must be empty, or every entry justified, before 
 - **Fixed:** a replace staged its copy under the `.asc-files-replacement-` prefix, which marks a possible
   original, so a copy an unplug cut off would have been shown as one; it now stages under `.asc-files-copy-`,
   an incomplete copy, as legacy did.
+- **Added:** permanent delete (`ops::delete`, `jobs::Action::Delete`, `delete` on the protocol): the engine's pinned,
+  parallel walk was there but nothing reached it.
+- **Fixed:** each item of a batch waited the whole budget for files still open on NFS or SMB, so a delete or Trash
+  of N folders held open waited N times as long; one wait now covers the batch, as legacy's did.
 - **Open:** a bulk path for many small items; `rename` and `create` on the protocol; a paste-planning call.
 
 ## Archives (legacy: 225 tests)

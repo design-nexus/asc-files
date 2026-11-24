@@ -176,8 +176,17 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(100);
 
 /// Starts `request` on its own worker thread, sending its events to `events`.
 pub fn start(request: Request, events: Sender<Event>) -> Handle {
+    start_with(request, events, Cancel::new())
+}
+
+/// [`start`], stopped by `cancel` as well as by the handle, as a test's fault hook stops it.
+#[cfg(test)]
+pub(crate) fn start_sharing(request: Request, events: Sender<Event>, cancel: Cancel) -> Handle {
+    start_with(request, events, cancel)
+}
+
+fn start_with(request: Request, events: Sender<Event>, cancel: Cancel) -> Handle {
     let id = JobId(NEXT_JOB.fetch_add(1, Ordering::Relaxed));
-    let cancel = Cancel::new();
     let worker_cancel = cancel.clone();
     let thread = thread::Builder::new()
         .name(format!("asc-files-job-{}", id.0))
@@ -224,6 +233,8 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
         },
     ));
     let folds = case_variants::folds(&request.into);
+    // One wait for files still open elsewhere covers the whole batch, as legacy's did.
+    let deadline = crate::adapters::local_operations::leftovers::Deadline::default();
     for (index, item) in request.items.iter().enumerate() {
         let (outcome, step) = if cancel.is_cancelled() {
             (Outcome::NotAttempted, Vec::new())
@@ -237,7 +248,7 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
                     request.names,
                     (&variants.earlier(index), folds),
                 ),
-                cancel,
+                (cancel, &deadline),
                 &send,
             )
         };
@@ -350,7 +361,10 @@ fn run_item(
     index: usize,
     item: &Item,
     (into, names, earlier): (&std::path::Path, NameMode, (&[Saved], bool)),
-    cancel: &Cancel,
+    (cancel, deadline): (
+        &Cancel,
+        &crate::adapters::local_operations::leftovers::Deadline,
+    ),
     send: &(impl Fn(Event) + Sync),
 ) -> (Outcome, Vec<Step>) {
     let progress = Progress::new();
@@ -484,13 +498,13 @@ fn run_item(
                 )
             })
             .map_err(plain),
-            Action::Trash => ops::trash(source)
+            Action::Trash => crate::trash::put_within(source, deadline)
                 .map(|trashed| {
                     let step = Step::trashed(source, &trashed);
                     (trashed.file, Changes::default(), Vec::from_iter(step))
                 })
                 .map_err(plain),
-            Action::Delete => ops::delete(source, cancel)
+            Action::Delete => ops::delete_within(source, cancel, deadline)
                 .map(|()| (source.to_path_buf(), Changes::default(), Vec::new()))
                 .map_err(plain),
         };

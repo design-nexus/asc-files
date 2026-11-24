@@ -8,6 +8,7 @@
 //! `RENAME_NOREPLACE`, so a Trash entry is never overwritten and a lost race costs a number.
 //! Restore and delete act only on the entry a listing showed, proven by device and inode.
 
+use crate::adapters::local_operations::leftovers::Deadline;
 use std::{
     ffi::OsString,
     io::Write,
@@ -85,12 +86,22 @@ pub fn available(item: &Path) -> bool {
 
 /// Moves `item` to the Trash on its own drive, never copying between drives.
 pub fn put(item: &Path) -> Result<Trashed, Error> {
-    put_recording(item, None)
+    put_within(item, &Deadline::default())
+}
+
+/// [`put`], waiting for a folder's deferred closes on SMB within `deadline`, which a batch shares
+/// so that one wait covers every item of it.
+pub(crate) fn put_within(item: &Path, deadline: &Deadline) -> Result<Trashed, Error> {
+    put_in(item, None, deadline)
 }
 
 /// [`put`], recording `original` as where the item came from when a replace has already moved
 /// it to a hidden name. `original` must be on the item's drive, in a folder that exists.
 pub(crate) fn put_recording(item: &Path, original: Option<&Path>) -> Result<Trashed, Error> {
+    put_in(item, original, &Deadline::default())
+}
+
+fn put_in(item: &Path, original: Option<&Path>, deadline: &Deadline) -> Result<Trashed, Error> {
     let unnamed = || crate::error::translated_io_error("The item has no name");
     // A symlinked parent would record a path restore cannot trust; record the real one.
     let real = |path: &Path| -> Result<PathBuf, Error> {
@@ -175,7 +186,7 @@ pub(crate) fn put_recording(item: &Path, original: Option<&Path>) -> Result<Tras
             return Err(os_io_error(error));
         }
         let file_path = files.join(&stored);
-        match move_in(&item, &file_path) {
+        match move_in(&item, &file_path, deadline) {
             Ok(()) => {
                 return Ok(Trashed {
                     file: file_path,
@@ -527,13 +538,12 @@ fn move_out(from: &Path, to: &Path) -> Result<(), rustix::io::Errno> {
 
 /// Into a Trash, through the engine's filesystem. An SMB folder refused while a file below it
 /// waits for the client's deferred close is tried again until that closes.
-fn move_in(from: &Path, to: &Path) -> Result<(), rustix::io::Errno> {
+fn move_in(from: &Path, to: &Path, deadline: &Deadline) -> Result<(), rustix::io::Errno> {
     use rustix::io::Errno;
 
     use crate::adapters::local_operations::{
         deferred_close,
         fs_ops::{Entry, fs},
-        leftovers::Deadline,
         native_fs::open_local_parent_directory,
     };
     let (Some(from_dir), Some(from_name), Some(to_dir), Some(to_name)) =
@@ -547,7 +557,7 @@ fn move_in(from: &Path, to: &Path) -> Result<(), rustix::io::Errno> {
     deferred_close::retry_folder_rename(
         fs(),
         moving,
-        &Deadline::default(),
+        deadline,
         &|| false,
         |error: &Errno| *error == Errno::ACCESS,
         || fs().trash(moving, Entry::new(&to_dir, to_name)),
