@@ -31,9 +31,9 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `restore_safety.rs` | 28 | 28 | 0 | 0 |
 | `undo.rs` | 23 | 16 | 0 | 7 |
 | `trash_capabilities.rs` | 1 | 0 | 0 | 1 (ignored upstream too) |
-| `merge.rs`, so far | 66 | 28 | 1 | 3 (34 still to port: legacy's merge hooks and seams, and its snapshot undo) |
-| **So far** | **368** | **311** | **3** | **54** |
-| Remaining 3 files (`copy`, `progress`, `sync`), and 34 of `merge.rs` | 124 | – | – | – |
+| `merge.rs`, so far | 66 | 32 | 1 | 3 (30 still to port: legacy's merge undo by placed snapshots, and its cancels) |
+| **So far** | **372** | **315** | **3** | **54** |
+| Remaining 3 files (`copy`, `progress`, `sync`), and 30 of `merge.rs` | 120 | – | – | – |
 
 ## Ignored
 
@@ -72,6 +72,7 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `merge::merge_originals_are_deleted_only_once_the_merge_is_flushed`, the source on a failed flush | Legacy copied a merging move within one drive, so a failed flush kept the source as well as the original. The engine renames there: the moved item is at the name, and the original stays aside, named in the error. |
 | `merge::a_failed_merge_preserves_the_destinations_existing_contents`, `merge::a_staging_failure_aborts_the_merge_and_reports_only_what_was_staged` | Legacy's copy and staging hooks became a cancel and a refused Trash through the filesystem seam. Legacy left an original staged before the failure; the engine puts it back, which is checked. |
 | `merge::*`, the GIO copy rows | Legacy ran several merge tests with GIO's copy as well as its own: the remote adapter. |
+| `merge::*` undo tests | Legacy undid a merge from lists of what it created and overwrote, finding originals through a lookup hook; the ported tests run a real merge, file its steps in a journal of their own as a job does, and undo through the journal. The bookmark half of `merge_undo_restores_staged_originals_and_removes_created` is the app's. |
 | `leftovers::stale_probes_go_only_when_empty_and_old`, the mount-lane half | Legacy swept on its mount's background lane and checked that a slow sweep kept the lane answering. The engine has no lanes: the backend runs the sweep on a thread of its own. That the sweep removes a listed stale probe is still checked. |
 | `paste_results::an_item_replaced_without_trash_is_left_out_of_the_paste_undo`, the order of moves | Legacy moved the items without a conflict first; jobs keep the order asked for. The moves are compared as a set. |
 
@@ -242,6 +243,8 @@ ported with a reason. This list must be empty, or every entry justified, before 
 - **Fixed:** an item a merge copied under a name the copy changed (cut to fit, fixed, or numbered as it met
   another) was not filed, so undo would have left it behind. It is now filed from the copy's own record of the
   names it changed.
+- **Changed, to legacy's behaviour:** undoing a copy that is gone already counts as done instead of being reported
+  as left.
 - **Open:** a bulk path for many small items; `rename` and `create` on the protocol; a paste-planning call.
 
 ## Archives (legacy: 225 tests)

@@ -666,7 +666,11 @@ fn parent_and_name(path: &Path) -> Result<(&Path, &std::ffi::OsStr), Error> {
 
 /// Takes away an item the operation made: to the Trash, or where its drive has none, deleted
 /// if it is a file not written to since.
+/// Takes away a copy an operation made. One gone already needs no undoing, as legacy counted it.
 fn discard(path: &Path, identity: &Identity) -> Result<(), Error> {
+    if fs::symlink_metadata(path).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
+        return Ok(());
+    }
     still(path, identity)?;
     match trash::put(path) {
         Ok(_) => Ok(()),

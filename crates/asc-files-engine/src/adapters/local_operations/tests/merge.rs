@@ -1569,3 +1569,189 @@ fn a_merge_within_one_disk_fixes_the_names_another_filesystem_mounted_in_its_sou
     }
     Ok(())
 }
+
+/// A merge filed in a journal of its own, as a job files it, ready to undo.
+struct Filed {
+    journal: crate::undo::Journal,
+    _home: tempfile::TempDir,
+}
+
+impl Filed {
+    fn undo(&self) -> Result<crate::undo::Outcome, EngineError> {
+        self.journal
+            .undo(&crate::ops::Cancel::new(), &crate::ops::Progress::new())
+    }
+}
+
+/// Merges `source` into `target` (every clash replaced) and files what it did.
+fn merge_and_file(source: &Path, target: &Path, moving: bool) -> Result<Filed, Box<dyn Error>> {
+    use crate::merge::{self, Clash, MergePlan};
+    let (into, name) = (
+        target.parent().ok_or("a target folder")?,
+        target.file_name().ok_or("a target name")?,
+    );
+    let plan = MergePlan {
+        otherwise: Clash::Replace,
+        ..MergePlan::default()
+    };
+    let (cancel, progress) = (crate::ops::Cancel::new(), crate::ops::Progress::new());
+    let merged = if moving {
+        merge::merge_moving_as(
+            source,
+            (into, name),
+            &plan,
+            NameMode::Fix,
+            &cancel,
+            &progress,
+        )
+    } else {
+        merge::merge_as(
+            source,
+            (into, name),
+            &plan,
+            NameMode::Fix,
+            &cancel,
+            &progress,
+        )
+    }?;
+    if let Some((_, error)) = merged.failed.first() {
+        return Err(error.clone().into());
+    }
+    let home = tempfile::tempdir()?;
+    let journal = crate::undo::Journal::at(home.path())?;
+    journal.record("Merge", crate::undo::Step::merged(&merged))?;
+    Ok(Filed {
+        journal,
+        _home: home,
+    })
+}
+
+#[test]
+fn merge_undo_restores_staged_originals_and_removes_created() -> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    let root = tempfile::tempdir()?;
+    let (source, target) = (root.path().join("source"), root.path().join("target"));
+    write_files(
+        &source,
+        &[("shared.txt", "incoming wins"), ("incoming.txt", "new")],
+    )?;
+    write_files(&target, &[("shared.txt", "old"), ("stays.txt", "keep me")])?;
+    let filed = merge_and_file(&source, &target, false)?;
+    assert_eq!(fs::read(target.join("shared.txt"))?, b"incoming wins");
+
+    let outcome = filed.undo()?;
+
+    assert_eq!(outcome.left.len(), 0, "{:?}", outcome.left);
+    assert_eq!(
+        fs::read(target.join("shared.txt"))?,
+        b"old",
+        "the original is back"
+    );
+    assert!(
+        !target.join("incoming.txt").exists(),
+        "what the merge made goes"
+    );
+    let copy = in_trash(&target.join("incoming.txt")).ok_or("the copy in the Trash")?;
+    assert_eq!(fs::read(copy)?, b"new");
+    assert_eq!(
+        in_trash(&target.join("shared.txt"))
+            .map(fs::read)
+            .transpose()?,
+        Some(b"incoming wins".to_vec())
+    );
+    assert_eq!(fs::read(target.join("stays.txt"))?, b"keep me");
+    assert!(target.exists(), "the folder merged into stays");
+    Ok(())
+}
+
+#[test]
+fn undoing_a_merge_with_numbered_aliases_removes_only_its_items() -> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    let root = tempfile::tempdir()?;
+    let (source, destination) = (
+        root.path().join("sources/folder"),
+        root.path().join("destination"),
+    );
+    let folder = destination.join("folder");
+    fs::create_dir_all(&source)?;
+    fs::create_dir_all(&folder)?;
+    for name in ["Makefile", "makefile"] {
+        fs::write(source.join(name), name)?;
+    }
+    fs::write(folder.join("keep.txt"), b"keep me")?;
+    // Rules that do not fold case learn that a name is taken only when it is refused.
+    let _scope = FsQuirks::install(
+        &destination,
+        without_trash(Quirks {
+            mount_type: Some(("fuse.ciopfs", "rw")),
+            case_insensitive: true,
+            ..Quirks::default()
+        }),
+    );
+    let filed = merge_and_file(&source, &folder, false)?;
+    let mut made = names(&folder)?;
+    made.sort();
+    assert_eq!(made, ["Makefile", "keep.txt", "makefile (1)"]);
+
+    let outcome = filed.undo()?;
+
+    assert!(outcome.left.is_empty(), "{:?}", outcome.left);
+    assert_eq!(names(&folder)?, ["keep.txt"]);
+    Ok(())
+}
+
+#[test]
+fn merge_undo_keeps_the_incoming_copy_when_no_staged_original_exists() -> Result<(), Box<dyn Error>>
+{
+    let _serial = serial()?;
+    let root = tempfile::tempdir()?;
+    let (source, target) = (root.path().join("source"), root.path().join("target"));
+    write_files(&source, &[("shared.txt", "incoming wins")])?;
+    write_files(&target, &[("shared.txt", "old")])?;
+    let filed = merge_and_file(&source, &target, false)?;
+    // The original is gone from the Trash before the undo.
+    let entry = crate::trash::list()
+        .into_iter()
+        .find(|entry| entry.original == target.join("shared.txt"))
+        .ok_or("the original in the Trash")?;
+    crate::trash::delete(&entry)?;
+
+    let outcome = filed.undo()?;
+
+    assert_eq!(
+        outcome
+            .left
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>(),
+        [target.join("shared.txt")]
+    );
+    assert_eq!(
+        fs::read(target.join("shared.txt"))?,
+        b"incoming wins",
+        "the original is looked for before the incoming copy goes"
+    );
+    Ok(())
+}
+
+#[test]
+fn merge_undo_tolerates_created_paths_that_no_longer_exist() -> Result<(), Box<dyn Error>> {
+    let _serial = serial()?;
+    let root = tempfile::tempdir()?;
+    let (source, target) = (root.path().join("source"), root.path().join("target"));
+    write_files(
+        &source,
+        &[("already-removed.txt", "new"), ("kept.txt", "new too")],
+    )?;
+    fs::create_dir_all(&target)?;
+    let filed = merge_and_file(&source, &target, false)?;
+    fs::remove_file(target.join("already-removed.txt"))?;
+
+    let outcome = filed.undo()?;
+
+    // What is gone already needs no undoing; the rest is undone.
+    assert!(!target.join("kept.txt").exists());
+    assert!(outcome.left.is_empty(), "{:?}", outcome.left);
+    assert_eq!(outcome.done, 2);
+    Ok(())
+}
