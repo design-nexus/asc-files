@@ -4,6 +4,7 @@
 #include "app/Windows.h"
 #include "backend/BackendClient.h"
 #include "desktop/AppIcons.h"
+#include "desktop/DesktopBus.h"
 #include "desktop/DesktopApps.h"
 #include "models/ActionsModel.h"
 #include "models/Customizations.h"
@@ -88,6 +89,10 @@ int main(int argc, char *argv[]) {
                               {QStringLiteral("actions"), QVariant::fromValue(&actions)},
                               {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
 
+    // One Files per session: a later launch hands its folders to the one running.
+    if (!DesktopBus::claim(&windows, parser.positionalArguments())) {
+        return 0;
+    }
     backend.start();
     // Without folders to open, the tabs the last session left; else Home.
     if (!windows.open(parser.positionalArguments())) {

@@ -80,32 +80,38 @@ FocusScope {
             }
         }
         // An archive made or extracted here is selected once it shows up.
-        function onArchived(path) {
+        function onArchived(path) { view.reveal([path]) }
+    }
+    /// Selects the items at `paths` that are in this folder once they show up (an archive just
+    /// made, items another program asked to show).
+    function reveal(paths) {
+        const names = []
+        for (const path of paths) {
             const slash = path.lastIndexOf("/")
-            if (view.folderModel && path.substring(0, slash) === view.folderModel.folder) {
-                view.pendingSelect = path.substring(slash + 1)
-                selectWait.restart()
-            }
+            if (view.folderModel && path.substring(0, slash) === view.folderModel.folder) names.push(path.substring(slash + 1))
+        }
+        if (names.length > 0) {
+            pendingSelect = names
+            selectWait.restart()
         }
     }
-    property string pendingSelect
+    property var pendingSelect: []
     Timer {
         id: selectWait
         interval: 50
         repeat: true
         property int tries: 0
         onTriggered: {
-            const row = view.folderModel.rowOfName(view.pendingSelect)
-            if (row >= 0 || ++tries > 60) {
+            const rows = view.pendingSelect.map(name => view.folderModel.rowOfName(name)).filter(row => row >= 0)
+            if (rows.length === view.pendingSelect.length || ++tries > 60) {
                 stop()
                 tries = 0
-                if (row >= 0) {
-                    view.folderModel.clearSelection()
-                    view.folderModel.select(row)
-                    view.current.currentIndex = row
-                    view.current.positionViewAtIndex(row, ListView.Contain)
+                if (rows.length > 0) {
+                    view.folderModel.selectRows(rows, false)
+                    view.current.currentIndex = rows[0]
+                    view.current.positionViewAtIndex(rows[0], ListView.Contain)
                 }
-                view.pendingSelect = ""
+                view.pendingSelect = []
             }
         }
     }

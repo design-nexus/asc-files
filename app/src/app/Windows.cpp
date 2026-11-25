@@ -10,6 +10,7 @@
 #include "settings/AppSettings.h"
 
 #include <QDir>
+#include <QFile>
 #include <QGuiApplication>
 #include <QQmlComponent>
 #include <QQmlEngine>
@@ -111,4 +112,17 @@ void Windows::closed(QQuickWindow *window) {
     m_closed.removeIf([](const QPointer<QQuickWindow> &gone) { return gone.isNull(); });
     m_closed.append(window);
     window->deleteLater();
+}
+
+void Windows::reveal(const QByteArray &folder, const QList<QByteArray> &items, bool properties) {
+    QQuickWindow *window = open({QFile::decodeName(folder)});
+    if (!window) {
+        return;
+    }
+    QStringList paths;
+    for (const QByteArray &item : items) {
+        paths.append(QFile::decodeName(item));
+    }
+    QMetaObject::invokeMethod(window, "revealItems", Q_ARG(QVariant, paths), Q_ARG(QVariant, properties));
+    window->requestActivate();
 }

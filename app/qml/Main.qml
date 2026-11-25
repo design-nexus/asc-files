@@ -553,6 +553,13 @@ ApplicationWindow {
                     qsTr("They will not go to the Trash, and this cannot be undone."),
                     qsTr("Delete"), () => window.ops.deleteForever(window.folderModel))
     }
+    /// Selects `paths` once they show, with their Properties when asked: "Show in folder" from
+    /// another program (FileManager1).
+    function revealItems(paths, properties) {
+        folderView.reveal(paths)
+        if (properties && paths.length === 1) propertiesDialog.show(paths[0])
+    }
+
     function openRow(row) {
         if (window.folderModel.isFolder(row)) window.browser.goRow(row)
     }

@@ -452,3 +452,16 @@ does not list RAR, as legacy's didn't.
 Gaps the port found: the engine's locale had no `counts.bytes` plurals (a member's declared size
 showed as `counts.bytes.other`); the staging file's close is checked (a drive may report a failed
 write only then).
+
+## FileManager1 and the portal (B6)
+
+`org.freedesktop.FileManager1` is the app's (`app/src/desktop/DesktopBus.cpp`, QtDBus), as legacy's
+was its GTK app's: ShowFolders, ShowItems and ShowItemProperties open a window per folder with the
+items selected (and Properties). Files is one process per session: it owns
+`io.github.design_nexus.ascendant.Files`, and a later launch hands its folders to it.
+
+| Legacy tests | Ported | Not ported, why |
+|---|---|---|
+| `adapters/file_manager1/tests.rs` (7) | 6 (`tst_filemanager1`) | `a_remote_uri_reveals_its_parent_as_a_uri_location`: remote locations come with B7 |
+
+The bus activation file (start Files when FileManager1 is called) is installed with packaging (item 12).

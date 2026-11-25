@@ -26,6 +26,10 @@ public:
     /// back the last session's tabs when it isn't given folders.
     Q_INVOKABLE QQuickWindow *open(const QStringList &folders = {});
 
+    /// Shows `folder` in a new window with `items` (raw paths in it) selected, and with
+    /// `properties` their Properties: for another program's "Show in folder".
+    void reveal(const QByteArray &folder, const QList<QByteArray> &items, bool properties);
+
     QQuickWindow *current() const { return m_current; }
     int count() const { return int(m_windows.size()); }
 
