@@ -14,6 +14,7 @@
 #include "models/Transfers.h"
 #include "ops/Operations.h"
 #include "render/Preview.h"
+#include "render/Sandbox.h"
 #include "settings/AppSettings.h"
 #include "theme/SystemTheme.h"
 #include "thumbnails/Thumbnails.h"
@@ -36,6 +37,9 @@ class TestWindow : public QObject {
 private slots:
     void initTestCase() {
         TestSupport::requirePrivateHome();
+        // Whether previews can be sandboxed is found out once, saying so where they can't (as
+        // in a container): found out here, before warnings fail the tests (About shows it).
+        Sandbox::sandboxed();
         QQuickStyle::setStyle(QStringLiteral("Basic"));
         SystemTheme::registerType();
         AppSettings::registerType();

@@ -146,14 +146,17 @@ impl Exclusions {
         self.folders.iter().any(|folder| path.starts_with(folder))
             || (is_folder && self.names_folder(name))
             || (!self.names.is_empty()
-                && path
-                    .ancestors()
-                    .skip(1)
-                    .any(|parent| parent.file_name().is_some_and(|name| self.names_folder(&name.to_string_lossy()))))
+                && path.ancestors().skip(1).any(|parent| {
+                    parent
+                        .file_name()
+                        .is_some_and(|name| self.names_folder(&name.to_string_lossy()))
+                }))
     }
 
     fn names_folder(&self, name: &str) -> bool {
-        self.names.iter().any(|rule| name.eq_ignore_ascii_case(rule))
+        self.names
+            .iter()
+            .any(|rule| name.eq_ignore_ascii_case(rule))
     }
 }
 
@@ -596,7 +599,11 @@ mod tests {
         ] {
             let path = Path::new(path);
             let name = path.file_name().unwrap().to_str().unwrap();
-            assert_eq!(exclusions.is_excluded(path, name, folder), excluded, "{path:?}");
+            assert_eq!(
+                exclusions.is_excluded(path, name, folder),
+                excluded,
+                "{path:?}"
+            );
         }
     }
 
@@ -613,7 +620,11 @@ mod tests {
         ] {
             let path = home.join(below);
             let name = path.file_name().unwrap().to_str().unwrap().to_owned();
-            assert_eq!(exclusions.is_excluded(&path, &name, true), excluded, "{below}");
+            assert_eq!(
+                exclusions.is_excluded(&path, &name, true),
+                excluded,
+                "{below}"
+            );
         }
     }
 
@@ -638,10 +649,19 @@ mod tests {
             ],
             home,
         );
-        assert_eq!(exclusions, Exclusions::new(&["cache".into(), "~/Secret/nested".into()], home));
+        assert_eq!(
+            exclusions,
+            Exclusions::new(&["cache".into(), "~/Secret/nested".into()], home)
+        );
         assert!(!exclusions.is_excluded(Path::new("/var/other"), "other", true));
-        assert_eq!(Exclusions::normalize("~", home), Err("The whole computer or Home cannot be left out."));
-        assert_eq!(Exclusions::normalize(" Build/ ", home), Ok("Build".to_owned()));
+        assert_eq!(
+            Exclusions::normalize("~", home),
+            Err("The whole computer or Home cannot be left out.")
+        );
+        assert_eq!(
+            Exclusions::normalize(" Build/ ", home),
+            Ok("Build".to_owned())
+        );
     }
 
     #[test]
@@ -651,20 +671,42 @@ mod tests {
         for folder in ["work/Backups/old", "work/notes", "private"] {
             std::fs::create_dir_all(dir.join(folder)).unwrap();
         }
-        for file in ["work/Backups/old/plan.txt", "work/notes/plan.txt", "private/plan.txt", "work/backups"] {
+        for file in [
+            "work/Backups/old/plan.txt",
+            "work/notes/plan.txt",
+            "private/plan.txt",
+            "work/backups",
+        ] {
             std::fs::write(dir.join(file), b"x").unwrap();
         }
         let limits = Limits {
             exclusions: Exclusions::new(
-                &["backups".into(), dir.join("private").to_string_lossy().into_owned()],
+                &[
+                    "backups".into(),
+                    dir.join("private").to_string_lossy().into_owned(),
+                ],
                 Path::new("/home/someone"),
             ),
             ..Limits::default()
         };
-        let summary = search(&[dir.to_path_buf()], "plan", false, limits.clone(), &Cancel::new(), |_| {});
+        let summary = search(
+            &[dir.to_path_buf()],
+            "plan",
+            false,
+            limits.clone(),
+            &Cancel::new(),
+            |_| {},
+        );
         assert_eq!(names(&summary.best, dir), ["work/notes/plan.txt"]);
         // A file named as a folder rule stays.
-        let backups = search(&[dir.to_path_buf()], "backups", false, limits, &Cancel::new(), |_| {});
+        let backups = search(
+            &[dir.to_path_buf()],
+            "backups",
+            false,
+            limits,
+            &Cancel::new(),
+            |_| {},
+        );
         assert_eq!(names(&backups.best, dir), ["work/backups"]);
     }
 }

@@ -1013,25 +1013,48 @@ fn a_search_leaves_out_folders_and_stops_at_its_limits() {
     for folder in ["work/Archive", "work/live", "private"] {
         fs::create_dir_all(root.path().join(folder)).unwrap();
     }
-    for file in ["work/Archive/plan.txt", "work/live/plan.txt", "private/plan.txt"] {
+    for file in [
+        "work/Archive/plan.txt",
+        "work/live/plan.txt",
+        "private/plan.txt",
+    ] {
         fs::write(root.path().join(file), b"x").unwrap();
     }
     let finished = |backend: &mut Backend, notes: &mut Vec<Value>, params: Value| {
         notes.clear();
         let started = backend.call("search.start", params, notes);
         let search = started["result"]["search"].clone();
-        backend.until(notes, |n| n["method"] == "search.finished" && n["params"]["search"] == search);
-        notes.iter().find(|n| n["method"] == "search.finished").unwrap()["params"].clone()
+        backend.until(notes, |n| {
+            n["method"] == "search.finished" && n["params"]["search"] == search
+        });
+        notes
+            .iter()
+            .find(|n| n["method"] == "search.finished")
+            .unwrap()["params"]
+            .clone()
     };
     let left = finished(
         &mut backend,
         &mut notes,
         json!({"roots": [root.path()], "query": "plan", "exclude": ["archive", root.path().join("private")], "seconds": 0, "entries": 0}),
     );
-    let paths: Vec<_> = left["items"].as_array().unwrap().iter().map(|item| item["path"].clone()).collect();
-    assert_eq!(paths, [json!(root.path().join("work/live/plan.txt"))], "{left}");
+    let paths: Vec<_> = left["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["path"].clone())
+        .collect();
+    assert_eq!(
+        paths,
+        [json!(root.path().join("work/live/plan.txt"))],
+        "{left}"
+    );
     assert_eq!(left["truncated"], false);
-    let few = finished(&mut backend, &mut notes, json!({"roots": [root.path()], "query": "plan", "entries": 2}));
+    let few = finished(
+        &mut backend,
+        &mut notes,
+        json!({"roots": [root.path()], "query": "plan", "entries": 2}),
+    );
     assert_eq!(few["truncated"], true, "{few}");
 
     // A rule as it is kept, or why it can't be one.

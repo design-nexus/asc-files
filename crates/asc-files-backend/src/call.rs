@@ -257,7 +257,9 @@ fn call(method: &str, params: &Params) -> Result<Call, Fault> {
             limit: params.optional("limit", Params::u64_of)?,
             entries: params.optional("entries", Params::u64_of)?,
             seconds: params.optional("seconds", Params::u64_of)?,
-            exclude: params.optional("exclude", Params::strings_of)?.unwrap_or_default(),
+            exclude: params
+                .optional("exclude", Params::strings_of)?
+                .unwrap_or_default(),
         },
         "search.exclusion" => Call::SearchExclusion {
             rule: params.string("rule")?,
