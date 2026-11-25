@@ -41,7 +41,7 @@ jobs:
       - name: Tools
         run: >
           dnf install -y --setopt=install_weak_deps=False gcc gcc-c++ git rustup cmake ninja-build pkgconf
-          qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtsvg qt6-qtmultimedia-devel kf6-syntax-highlighting-devel python3 shared-mime-info bubblewrap poppler-utils
+          qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtsvg qt6-qtmultimedia-devel kf6-syntax-highlighting-devel python3 ffmpeg-free shared-mime-info bubblewrap poppler-utils
       - uses: actions/checkout@v5
       - name: Rust toolchain from rust-toolchain.toml
         run: |

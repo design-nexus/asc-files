@@ -108,7 +108,7 @@ target_link_libraries(asc_files_qml PRIVATE Qt6::Quick)
 
 # The helper that decodes images in the sandbox; installed beside the app.
 qt_add_executable(asc-files-render src/render/main.cpp)
-target_link_libraries(asc-files-render PRIVATE Qt6::Core Qt6::Gui)
+target_link_libraries(asc-files-render PRIVATE Qt6::Core Qt6::Gui Qt6::Multimedia)
 
 qt_add_executable(asc-files src/main.cpp)
 add_dependencies(asc-files asc-files-render)

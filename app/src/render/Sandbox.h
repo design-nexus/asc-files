@@ -35,4 +35,13 @@ void decodeImage(const QByteArray &file, int size, QObject *context,
 /// Decodes the image `file` synchronously (for worker threads), in the sandbox.
 QImage decodeImageNow(const QByteArray &file, int size);
 
+/// `run`, synchronously (for worker threads): what it wrote, or nothing when it failed.
+QByteArray runNow(const QString &program, const QStringList &args, const QByteArray &file);
+
+/// A frame of the video `file`, no larger than `size` per side, synchronously, in the sandbox.
+QImage videoFrameNow(const QByteArray &file, int size);
+
+/// The PDF `file`'s first page, no larger than `size` per side, synchronously, in the sandbox.
+QImage pdfPageNow(const QByteArray &file, int size);
+
 } // namespace Sandbox

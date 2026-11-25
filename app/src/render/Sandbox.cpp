@@ -173,12 +173,11 @@ void decodeImage(const QByteArray &file, int size, QObject *context, std::functi
         });
 }
 
-QImage decodeImageNow(const QByteArray &file, int size) {
-    const QString helper = renderer();
-    if (helper.isEmpty()) {
+QByteArray runNow(const QString &program, const QStringList &args, const QByteArray &file) {
+    if (program.isEmpty()) {
         return {};
     }
-    std::unique_ptr<QProcess> process(start(helper, {QStringLiteral("image"), QStringLiteral("{}"), QString::number(size)}, file));
+    std::unique_ptr<QProcess> process(start(program, args, file));
     if (!process->waitForFinished(WallMs)) {
         process->kill();
         process->waitForFinished(1000);
@@ -187,7 +186,23 @@ QImage decodeImageNow(const QByteArray &file, int size) {
     if (process->exitStatus() != QProcess::NormalExit || process->exitCode() != 0) {
         return {};
     }
-    return fromPng(process->readAllStandardOutput());
+    const QByteArray out = process->readAllStandardOutput();
+    return out.size() > MaxOutput ? QByteArray() : out;
+}
+
+QImage decodeImageNow(const QByteArray &file, int size) {
+    return fromPng(runNow(renderer(), {QStringLiteral("image"), QStringLiteral("{}"), QString::number(size)}, file));
+}
+
+QImage videoFrameNow(const QByteArray &file, int size) {
+    return fromPng(runNow(renderer(), {QStringLiteral("video"), QStringLiteral("{}"), QString::number(size)}, file));
+}
+
+QImage pdfPageNow(const QByteArray &file, int size) {
+    return fromPng(runNow(program(QStringLiteral("pdftoppm")),
+                          {QStringLiteral("-png"), QStringLiteral("-f"), QStringLiteral("1"), QStringLiteral("-l"), QStringLiteral("1"),
+                           QStringLiteral("-scale-to"), QString::number(size), QStringLiteral("-singlefile"), QStringLiteral("{}")},
+                          file));
 }
 
 } // namespace Sandbox

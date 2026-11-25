@@ -11,7 +11,7 @@ has_qt() {
 }
 if ! has_qt && [ -z "${ASC_FILES_IN_SHELL:-}" ]; then
     if command -v nix-shell >/dev/null; then
-        exec env ASC_FILES_IN_SHELL=1 nix-shell -p qt6.qtbase qt6.qtdeclarative qt6.qtwayland qt6.qtimageformats qt6.qtsvg qt6.qtmultimedia kdePackages.syntax-highlighting cmake ninja poppler-utils \
+        exec env ASC_FILES_IN_SHELL=1 nix-shell -p qt6.qtbase qt6.qtdeclarative qt6.qtwayland qt6.qtimageformats qt6.qtsvg qt6.qtmultimedia kdePackages.syntax-highlighting cmake ninja poppler-utils ffmpeg \
             --run "$(printf '%q ' "$0" "$@")"
     fi
     echo "Qt 6 not found: install qt6-qtbase-devel and qt6-qtdeclarative-devel" >&2

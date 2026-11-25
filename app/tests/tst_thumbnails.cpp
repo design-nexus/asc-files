@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "TestSupport.h"
+#include "render/Sandbox.h"
 #include "thumbnails/Thumbnails.h"
 
 #include <QDateTime>
@@ -7,6 +8,9 @@
 #include <QFileInfo>
 #include <QImage>
 #include <QImageReader>
+#include <QPainter>
+#include <QPdfWriter>
+#include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QUrl>
@@ -55,6 +59,40 @@ private slots:
         QCOMPARE(Thumbnails::thumbnail(path, 100).pixelColor(10, 10), QColor(Qt::blue));
     }
 
+    void videosAndPdfsHaveThumbnailsToo() {
+        QVERIFY(Thumbnails::canMake("clip.MP4"));
+        QVERIFY(Thumbnails::canMake("paper.pdf"));
+        QVERIFY(!Thumbnails::canMake("notes.txt"));
+        QTemporaryDir dir;
+        // A PDF: its first page.
+        if (!Sandbox::program("pdftoppm").isEmpty()) {
+            {
+                QPdfWriter pdf(dir.filePath("paper.pdf"));
+                QPainter painter(&pdf);
+                painter.fillRect(QRect(0, 0, 2000, 2000), Qt::blue);
+            }
+            const QImage page = Thumbnails::thumbnail(QFile::encodeName(dir.filePath("paper.pdf")), 128);
+            QVERIFY(!page.isNull());
+            QVERIFY(qMax(page.width(), page.height()) <= 128);
+        } else {
+            qInfo("pdftoppm is not installed: no PDF thumbnail");
+        }
+        // A video: a frame of it.
+        const QString ffmpeg = QStandardPaths::findExecutable("ffmpeg");
+        if (ffmpeg.isEmpty()) {
+            QSKIP("ffmpeg is not installed to make a video");
+        }
+        QProcess make;
+        make.start(ffmpeg, {"-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=green:size=320x180:rate=10", "-t", "2",
+                            "-c:v", "mjpeg", dir.filePath("clip.avi")});
+        QVERIFY(make.waitForFinished(30000) && make.exitCode() == 0);
+        const QImage frame = Thumbnails::thumbnail(QFile::encodeName(dir.filePath("clip.avi")), 128);
+        QVERIFY(!frame.isNull());
+        QCOMPARE(frame.size(), QSize(128, 72));
+        const QColor middle = frame.pixelColor(64, 36);
+        QVERIFY2(middle.green() > 100 && middle.red() < 60, qPrintable(middle.name()));
+    }
+
     void whatCannotBeReadIsNotTriedAgain() {
         QTemporaryDir dir;
         const QString broken = dir.filePath("broken.jpg");
@@ -83,5 +121,5 @@ private slots:
     }
 };
 
-QTEST_GUILESS_MAIN(TestThumbnails)
+QTEST_MAIN(TestThumbnails)
 #include "tst_thumbnails.moc"

@@ -74,16 +74,36 @@ QString cachePath(const QByteArray &path, int size) {
     return cacheRoot() + (size > 128 ? QStringLiteral("/large/") : QStringLiteral("/normal/")) + hashOf(path) + QStringLiteral(".png");
 }
 
-bool canMake(const QString &name) {
+namespace {
+
+enum class Source { None, Picture, Video, Pdf };
+
+Source sourceOf(const QString &name) {
     static const QList<QByteArray> formats = QImageReader::supportedImageFormats();
+    static const QList<QByteArray> videos{"mp4", "m4v", "mkv", "webm", "mov", "avi", "ogv", "mpg", "mpeg", "wmv", "flv", "3gp"};
     const QByteArray suffix = QFileInfo(name).suffix().toLower().toLatin1();
-    return !suffix.isEmpty() && formats.contains(suffix == "jpeg" ? QByteArray("jpg") : suffix);
+    if (suffix.isEmpty()) {
+        return Source::None;
+    }
+    if (formats.contains(suffix == "jpeg" ? QByteArray("jpg") : suffix)) {
+        return Source::Picture;
+    }
+    if (videos.contains(suffix)) {
+        return Source::Video;
+    }
+    return suffix == "pdf" ? Source::Pdf : Source::None;
 }
+
+} // namespace
+
+bool canMake(const QString &name) { return sourceOf(name) != Source::None; }
 
 QImage thumbnail(const QByteArray &path, int size) {
     struct stat st {};
-    // Regular local files only, never through a link or a device or pipe.
-    if (::lstat(path.constData(), &st) != 0 || !S_ISREG(st.st_mode) || st.st_size > MaxSourceBytes) {
+    const Source source = sourceOf(QFile::decodeName(path));
+    // Regular local files only, never through a link or a device or pipe. A video's frame is
+    // read without reading it all, so its size doesn't count.
+    if (::lstat(path.constData(), &st) != 0 || !S_ISREG(st.st_mode) || (source != Source::Video && st.st_size > MaxSourceBytes)) {
         return {};
     }
     const qint64 mtime = st.st_mtime;
@@ -96,8 +116,10 @@ QImage thumbnail(const QByteArray &path, int size) {
     if (!cached(failPath(path), mtime).isNull()) {
         return {};
     }
-    // Decoded in the sandbox, as every untrusted image is.
-    QImage image = Sandbox::decodeImageNow(path, wanted);
+    // Decoded in the sandbox, as every untrusted file is.
+    QImage image = source == Source::Video ? Sandbox::videoFrameNow(path, wanted)
+                   : source == Source::Pdf ? Sandbox::pdfPageNow(path, wanted)
+                                           : Sandbox::decodeImageNow(path, wanted);
     if (image.isNull()) {
         QImage marker(1, 1, QImage::Format_ARGB32);
         marker.fill(Qt::transparent);

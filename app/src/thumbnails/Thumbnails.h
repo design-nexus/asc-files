@@ -23,7 +23,8 @@ constexpr qint64 MaxSourceBytes = 64 * 1024 * 1024;
 int cacheSize(int pixels);
 /// Where the thumbnail of `path` (raw bytes) at `size` is kept.
 QString cachePath(const QByteArray &path, int size);
-/// Whether Files would try to make a thumbnail for `name` at all (an image Qt can read).
+/// Whether Files would try to make a thumbnail for `name` at all: a picture Qt can read, a
+/// video (a frame of it) or a PDF (its first page).
 bool canMake(const QString &name);
 /// The thumbnail of `path` no larger than `size`: from the cache when it matches the file, else
 /// made and kept. Null when there is none to make, or the file could not be read.
