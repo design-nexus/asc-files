@@ -4,13 +4,15 @@
 //! run in the app.
 //!
 //!     asc-files-render image <file> <max-pixels-per-side>
-//!     asc-files-render video <file> <max-pixels-per-side>   (a frame a tenth of the way in)
+//!     asc-files-render video <file> <max-pixels-per-side>   (a frame a tenth of the way in, or an
+//!                                                          audio file's cover)
 
 #include <QBuffer>
 #include <QGuiApplication>
 #include <QImage>
 #include <QImageReader>
 #include <QImageWriter>
+#include <QMediaMetaData>
 #include <QMediaPlayer>
 #include <QTimer>
 #include <QVideoFrame>
@@ -42,8 +44,17 @@ int writePng(QImage image, const QSize &full) {
     return 0;
 }
 
-/// A frame a tenth of the way into the video `file` (at most 30 s in), silently: no sound is
-/// played, only pictures decoded.
+/// `image`, at most `max` a side, written out as a PNG with its full size.
+int writeScaled(QImage image, int max) {
+    const QSize full = image.size();
+    if (image.width() > max || image.height() > max) {
+        image = image.scaled(max, max, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+    return writePng(image.convertToFormat(QImage::Format_RGB32), full);
+}
+
+/// A frame a tenth of the way into the video `file` (at most 30 s in), or for sound alone its
+/// cover, silently: no sound is played, only pictures decoded.
 int videoFrame(QGuiApplication &app, const QString &file, int max) {
     QMediaPlayer player;
     QVideoSink sink;
@@ -52,6 +63,15 @@ int videoFrame(QGuiApplication &app, const QString &file, int max) {
     int result = 1;
     QObject::connect(&player, &QMediaPlayer::mediaStatusChanged, &app, [&](QMediaPlayer::MediaStatus status) {
         if (status == QMediaPlayer::LoadedMedia) {
+            if (!player.hasVideo()) {
+                const QMediaMetaData tags = player.metaData();
+                QImage cover = tags.value(QMediaMetaData::CoverArtImage).value<QImage>();
+                if (cover.isNull()) {
+                    cover = tags.value(QMediaMetaData::ThumbnailImage).value<QImage>();
+                }
+                app.exit(cover.isNull() ? 1 : writeScaled(cover, max));
+                return;
+            }
             wanted = qMin(player.duration() / 10, qint64(30'000));
             if (wanted > 0) {
                 player.setPosition(wanted);
@@ -72,11 +92,7 @@ int videoFrame(QGuiApplication &app, const QString &file, int max) {
             return;
         }
         player.stop();
-        const QSize full = image.size();
-        if (image.width() > max || image.height() > max) {
-            image = image.scaled(max, max, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        }
-        result = writePng(image.convertToFormat(QImage::Format_RGB32), full);
+        result = writeScaled(image, max);
         app.exit(result);
     });
     QTimer::singleShot(10'000, &app, [&app] { app.exit(1); });

@@ -91,6 +91,21 @@ private slots:
         QCOMPARE(frame.size(), QSize(128, 72));
         const QColor middle = frame.pixelColor(64, 36);
         QVERIFY2(middle.green() > 100 && middle.red() < 60, qPrintable(middle.name()));
+
+        // Sound with a cover: the cover. Without one: none.
+        QImage red(200, 200, QImage::Format_RGB32);
+        red.fill(Qt::red);
+        QVERIFY(red.save(dir.filePath("cover.png")));
+        make.start(ffmpeg, {"-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-i", dir.filePath("cover.png"),
+                            "-map", "0:a", "-map", "1:v", "-c:a", "flac", "-c:v", "png", "-disposition:v", "attached_pic", dir.filePath("song.flac")});
+        QVERIFY(make.waitForFinished(30000) && make.exitCode() == 0);
+        const QImage cover = Thumbnails::thumbnail(QFile::encodeName(dir.filePath("song.flac")), 128);
+        QVERIFY(!cover.isNull());
+        QCOMPARE(cover.size(), QSize(128, 128));
+        QVERIFY2(cover.pixelColor(64, 64).red() > 200, qPrintable(cover.pixelColor(64, 64).name()));
+        make.start(ffmpeg, {"-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "flac", dir.filePath("plain.flac")});
+        QVERIFY(make.waitForFinished(30000) && make.exitCode() == 0);
+        QVERIFY(Thumbnails::thumbnail(QFile::encodeName(dir.filePath("plain.flac")), 128).isNull());
     }
 
     void whatCannotBeReadIsNotTriedAgain() {

@@ -80,7 +80,9 @@ enum class Source { None, Picture, Video, Pdf };
 
 Source sourceOf(const QString &name) {
     static const QList<QByteArray> formats = QImageReader::supportedImageFormats();
-    static const QList<QByteArray> videos{"mp4", "m4v", "mkv", "webm", "mov", "avi", "ogv", "mpg", "mpeg", "wmv", "flv", "3gp"};
+    // Videos, and sound that may carry a cover (FFmpeg reads no cover from Ogg, Opus or WAV tags).
+    static const QList<QByteArray> videos{"mp4", "m4v", "mkv", "webm", "mov", "avi", "ogv", "mpg", "mpeg", "wmv", "flv", "3gp",
+                                          "mp3", "flac", "m4a", "m4b", "mka", "aiff", "aif", "wma"};
     const QByteArray suffix = QFileInfo(name).suffix().toLower().toLatin1();
     if (suffix.isEmpty()) {
         return Source::None;
