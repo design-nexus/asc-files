@@ -5,9 +5,11 @@
 #include "../backend/Wire.h"
 #include "../settings/AppSettings.h"
 #include "../thumbnails/Thumbnails.h"
+#include "Customizations.h"
 
 #include <QDateTime>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLocale>
@@ -50,6 +52,15 @@ FolderModel::FolderModel(BackendClient *backend, QObject *parent) : QAbstractLis
     connect(&AppSettings::shared(), &AppSettings::dateFormatChanged, this, [this] {
         if (rowCount() > 0) {
             emit dataChanged(index(0), index(rowCount() - 1), {ModifiedTextRole});
+        }
+    });
+    // An item given a colour or icon shows it at once.
+    connect(&Customizations::shared(), &Customizations::changed, this, [this](const QStringList &paths) {
+        for (const QString &path : paths) {
+            const int row = QFileInfo(path).path() == QFile::decodeName(m_folder) ? rowOfName(QFileInfo(path).fileName()) : -1;
+            if (row >= 0) {
+                emit dataChanged(index(row), index(row), {CustomColorRole, CustomIconRole});
+            }
         }
     });
     // A new backend holds no listing: read the folder again from it.
@@ -368,6 +379,10 @@ QVariant FolderModel::data(const QModelIndex &index, int role) const {
         return true;
     case SelectedRole:
         return isSelected(index.row());
+    case CustomColorRole:
+        return Customizations::shared().colorOf(pathAt(index.row()));
+    case CustomIconRole:
+        return Customizations::shared().iconOf(pathAt(index.row()));
     case ThumbnailRole: {
         const QJsonValue name = row.value(QStringLiteral("name"));
         if (kind != QLatin1String("file") || !Thumbnails::canMake(Wire::display(name))) {
@@ -395,7 +410,9 @@ QHash<int, QByteArray> FolderModel::roleNames() const {
             {GoneRole, "gone"},
             {LoadedRole, "loaded"},
             {SelectedRole, "selected"},
-            {ThumbnailRole, "thumbnail"}};
+            {ThumbnailRole, "thumbnail"},
+            {CustomColorRole, "customColor"},
+            {CustomIconRole, "customIcon"}};
 }
 
 void FolderModel::request(int page) const {

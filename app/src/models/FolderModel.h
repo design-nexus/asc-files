@@ -54,6 +54,9 @@ public:
         SelectedRole,
         /// The `image://thumbnail/` id of an image Files can make a thumbnail of; empty otherwise.
         ThumbnailRole,
+        /// The item's own colour (`#rrggbb`) and icon (path data, or `emoji:…`), from Customize.
+        CustomColorRole,
+        CustomIconRole,
     };
     Q_ENUM(Role)
     static constexpr int PageSize = 200;

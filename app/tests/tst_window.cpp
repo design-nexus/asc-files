@@ -6,6 +6,7 @@
 #include "desktop/DesktopApps.h"
 #include "models/ActionsModel.h"
 #include "models/Browser.h"
+#include "models/Customizations.h"
 #include "models/FavoritesModel.h"
 #include "models/RecentModel.h"
 #include "models/SearchModel.h"
@@ -47,6 +48,7 @@ private slots:
         QQuickStyle::setStyle(QStringLiteral("Basic"));
         SystemTheme::registerType();
         AppSettings::registerType();
+        Customizations::registerType();
         qmlRegisterUncreatableType<Transfers>("AscFiles.System", 1, 0, "Transfers", QStringLiteral("The app makes the one Transfers."));
     }
 
@@ -171,6 +173,33 @@ private slots:
         QVERIFY2(properties.containsText().startsWith(QStringLiteral("2 files")), qPrintable(properties.containsText()));
         QMetaObject::invokeMethod(propertiesDialog, "close");
         QTRY_VERIFY(!propertiesDialog->property("visible").toBool());
+
+        // The view shortcuts switch views.
+        window->requestActivate();
+        QTest::keyClick(window, Qt::Key_2, Qt::ControlModifier);
+        QTRY_COMPARE(tabs.current()->view(), 1);
+        QTest::keyClick(window, Qt::Key_3, Qt::ControlModifier);
+        QTRY_COMPARE(tabs.current()->view(), 2);
+        QTest::keyClick(window, Qt::Key_1, Qt::ControlModifier);
+        QTRY_COMPARE(tabs.current()->view(), 0);
+
+        // Customize: a colour and an icon show in the list at once, and Reset takes them away.
+        auto *customize = window->findChild<QObject *>(QStringLiteral("customizeDialog"));
+        QVERIFY(customize);
+        const QString folderPath = dir.filePath("folder");
+        QMetaObject::invokeMethod(customize, "show", Q_ARG(QVariant, QStringList{folderPath}), Q_ARG(QVariant, "folder"), Q_ARG(QVariant, true));
+        QTRY_VERIFY(customize->property("opened").toBool());
+        QMetaObject::invokeMethod(customize, "setColor", Q_ARG(QVariant, "green"));
+        QMetaObject::invokeMethod(customize, "setIcon", Q_ARG(QVariant, "emoji:🎵"));
+        const int folderRow = folders.rowOfName("folder");
+        QCOMPARE(folders.data(folders.index(folderRow), FolderModel::CustomColorRole).toString(), QStringLiteral("#30a46c"));
+        QCOMPARE(folders.data(folders.index(folderRow), FolderModel::CustomIconRole).toString(), QStringLiteral("emoji:🎵"));
+        QMetaObject::invokeMethod(customize, "setIcon", Q_ARG(QVariant, "code"));
+        QVERIFY(folders.data(folders.index(folderRow), FolderModel::CustomIconRole).toString().startsWith('M'));
+        Customizations::shared().reset({folderPath});
+        QCOMPARE(folders.data(folders.index(folderRow), FolderModel::CustomColorRole).toString(), QString());
+        QMetaObject::invokeMethod(customize, "close");
+        QTRY_VERIFY(!customize->property("visible").toBool());
 
         // Settings opens, and every page shows without a warning.
         auto *settings = window->findChild<QObject *>(QStringLiteral("settingsDialog"));

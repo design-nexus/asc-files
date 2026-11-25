@@ -15,6 +15,10 @@ Rectangle {
     required property bool loaded
     required property bool selected
     required property string thumbnail
+    /// Its own colour and icon (path data, or `emoji:…`), from Customize; empty when none.
+    required property string customColor
+    required property string customIcon
+    readonly property color tint: customColor.length > 0 ? customColor : isFolder ? Theme.accent : Theme.folderIcon
     property int iconSize: 64
 
     property bool editing: false
@@ -48,21 +52,29 @@ Rectangle {
                 anchors.centerIn: parent
                 width: tile.iconSize + 16
                 height: tile.iconSize
-                visible: status === Image.Ready
+                // An icon given in Customize shows in its place.
+                visible: status === Image.Ready && tile.customIcon.length === 0
                 asynchronous: true
                 fillMode: Image.PreserveAspectFit
                 sourceSize: Qt.size(128, 128)
                 source: tile.thumbnail.length > 0 && AppSettings.showThumbnails ? "image://thumbnail/" + tile.thumbnail : ""
             }
             Icon {
-                visible: !picture.visible
+                visible: !picture.visible && !tile.customIcon.startsWith("emoji:")
                 anchors.centerIn: parent
                 size: tile.iconSize
                 strokeWidth: 0.9
-                color: tile.isFolder ? Theme.accent : Theme.folderIcon
-                fill: tile.isFolder ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18) : "transparent"
-                path: tile.isFolder ? "M1.5 4.2c0-.7.5-1.2 1.2-1.2h3.4l1.5 1.5h5.7c.7 0 1.2.5 1.2 1.2v6.6c0 .7-.5 1.2-1.2 1.2H2.7c-.7 0-1.2-.5-1.2-1.2z"
+                color: tile.tint
+                fill: tile.isFolder && tile.customIcon.length === 0 ? Qt.rgba(tile.tint.r, tile.tint.g, tile.tint.b, 0.18) : "transparent"
+                path: tile.customIcon.length > 0 ? tile.customIcon
+                    : tile.isFolder ? "M1.5 4.2c0-.7.5-1.2 1.2-1.2h3.4l1.5 1.5h5.7c.7 0 1.2.5 1.2 1.2v6.6c0 .7-.5 1.2-1.2 1.2H2.7c-.7 0-1.2-.5-1.2-1.2z"
                                     : "M4 2h5l3 3v9H4zM9 2v3h3"
+            }
+            Text {
+                visible: !picture.visible && tile.customIcon.startsWith("emoji:")
+                anchors.centerIn: parent
+                text: tile.customIcon.substring(6)
+                font.pixelSize: tile.iconSize * 0.8
             }
         }
         NameEditor {

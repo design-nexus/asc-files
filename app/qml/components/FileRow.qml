@@ -19,6 +19,9 @@ Rectangle {
     required property string modeSymbolic
     required property bool loaded
     required property bool selected
+    /// Its own colour and icon (path data, or `emoji:…`), from Customize; empty when none.
+    required property string customColor
+    required property string customIcon
     /// Mode, Size, a gap, Kind and Modified; the name takes the rest, up to 600 px.
     property var columns: [70, 91, 40, 119, 140]
     /// Columns that give way as the list narrows, so the name keeps its room.
@@ -63,11 +66,19 @@ Rectangle {
                 border.width: 1
                 border.color: Qt.rgba(Theme.textDim.r, Theme.textDim.g, Theme.textDim.b, 0.28)
                 Icon {
+                    visible: !row.customIcon.startsWith("emoji:")
                     anchors.centerIn: parent
                     size: 11
                     strokeWidth: 1.6
-                    color: Theme.folderIcon
-                    path: row.isFolder ? "M2 4.5h4l1.5 1.5H14v6.5H2z" : "M4 2h5l3 3v9H4zM9 2v3h3"
+                    color: row.customColor.length > 0 ? row.customColor : Theme.folderIcon
+                    path: row.customIcon.length > 0 ? row.customIcon
+                        : row.isFolder ? "M2 4.5h4l1.5 1.5H14v6.5H2z" : "M4 2h5l3 3v9H4zM9 2v3h3"
+                }
+                Text {
+                    visible: row.customIcon.startsWith("emoji:")
+                    anchors.centerIn: parent
+                    text: row.customIcon.substring(6)
+                    font.pixelSize: 12
                 }
             }
             NameEditor {

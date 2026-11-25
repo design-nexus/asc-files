@@ -6,6 +6,7 @@
 #include "desktop/AppIcons.h"
 #include "desktop/DesktopApps.h"
 #include "models/ActionsModel.h"
+#include "models/Customizations.h"
 #include "models/FavoritesModel.h"
 #include "models/FolderModel.h"
 #include "models/JobModel.h"
@@ -67,6 +68,7 @@ int main(int argc, char *argv[]) {
     // The Nyx theme, followed live; Theme.qml reads it.
     SystemTheme::registerType();
     AppSettings::registerType();
+    Customizations::registerType();
     qmlRegisterUncreatableType<Transfers>("AscFiles.System", 1, 0, "Transfers", QStringLiteral("The app makes the one Transfers."));
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);

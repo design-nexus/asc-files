@@ -43,6 +43,8 @@ Rectangle {
             required property bool isFolder
             required property bool loaded
             required property bool selected
+            required property string customColor
+            required property string customIcon
             readonly property bool open: column.openName.length > 0 && name === column.openName
             width: ListView.view.width
             height: 32
@@ -64,8 +66,15 @@ Rectangle {
                 anchors.rightMargin: 8
                 spacing: 9
                 Icon {
-                    path: entry.isFolder ? "M2 4.5h4l1.5 1.5H14v6.5H2z" : "M4 2h5l3 3v9H4zM9 2v3h3"
-                    color: entry.isFolder ? Theme.accent : Theme.folderIcon
+                    visible: !entry.customIcon.startsWith("emoji:")
+                    path: entry.customIcon.length > 0 ? entry.customIcon
+                        : entry.isFolder ? "M2 4.5h4l1.5 1.5H14v6.5H2z" : "M4 2h5l3 3v9H4zM9 2v3h3"
+                    color: entry.customColor.length > 0 ? entry.customColor : entry.isFolder ? Theme.accent : Theme.folderIcon
+                }
+                Text {
+                    visible: entry.customIcon.startsWith("emoji:")
+                    text: entry.customIcon.substring(6)
+                    font.pixelSize: 13
                 }
                 Text {
                     Layout.fillWidth: true
