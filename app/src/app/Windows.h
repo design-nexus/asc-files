@@ -19,6 +19,8 @@ class Windows : public QObject {
 public:
     /// `shared`: the app-wide objects each window is given, by the names Main.qml takes.
     Windows(QQmlEngine *engine, QVariantMap shared, QObject *parent = nullptr);
+    /// Deletes the windows still open or waiting to be deleted, while their engine lives.
+    ~Windows() override;
 
     /// Opens a window on `folders` (one tab each), else on the start folder; the first window brings
     /// back the last session's tabs when it isn't given folders.
@@ -39,6 +41,8 @@ private:
     QQmlEngine *m_engine;
     QVariantMap m_shared;
     QList<QQuickWindow *> m_windows;
+    /// Closed windows not deleted yet.
+    QList<QPointer<QQuickWindow>> m_closed;
     QPointer<QQuickWindow> m_current;
     bool m_sessionTaken = false;
 };

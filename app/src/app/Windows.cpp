@@ -26,6 +26,13 @@ Windows::Windows(QQmlEngine *engine, QVariantMap shared, QObject *parent)
     });
 }
 
+Windows::~Windows() {
+    for (const QPointer<QQuickWindow> &window : std::as_const(m_closed)) {
+        delete window.data();
+    }
+    qDeleteAll(m_windows);
+}
+
 QQuickWindow *Windows::open(const QStringList &asked) {
     // A page that isn't a folder (the Overview, Search) gives no folder: the window opens on the
     // start folder.
@@ -101,5 +108,7 @@ void Windows::closed(QQuickWindow *window) {
         emit currentChanged();
     }
     emit countChanged();
+    m_closed.removeIf([](const QPointer<QQuickWindow> &gone) { return gone.isNull(); });
+    m_closed.append(window);
     window->deleteLater();
 }
