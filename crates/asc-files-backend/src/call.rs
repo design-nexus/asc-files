@@ -6,10 +6,12 @@
 use std::{ffi::OsString, path::PathBuf};
 
 use asc_files_engine::{
-    jobs::{Action, Item, Request},
+    adapters::local_operations::archive::MAX_ARCHIVE_PASSWORD_BYTES,
+    jobs::{Action, Compress, Item, Password, Request},
     listing::{Options, Order, SortKey},
     merge::{Clash, MergePlan},
     ops::{Conflict, NameMode},
+    services::{ArchiveFormat, TransferConflict},
 };
 use serde_json::{Map, Value};
 
@@ -511,15 +513,64 @@ fn job_item(item: &Params) -> Result<Item, Fault> {
         "restore" => Action::Restore(item.optional("to", |at, value| {
             wire::absolute_path(value).ok_or_else(|| not_a_path(at))
         })?),
+        "extract" => Action::Extract(password(item)?),
+        "compress" => Action::Compress(Box::new(Compress {
+            sources: item.array("sources", |at, value| {
+                wire::absolute_path(value).ok_or_else(|| not_a_path(at))
+            })?,
+            name: item.string("archiveName")?,
+            format: match item.string("format")?.as_str() {
+                "zip" => ArchiveFormat::Zip,
+                "7z" => ArchiveFormat::SevenZ,
+                "tar" => ArchiveFormat::Tar,
+                "tar.gz" => ArchiveFormat::TarGz,
+                other => return Err(unknown_value(&item.at("format"), other)),
+            },
+            password: password(item)?,
+            conflict: match conflict {
+                None | Some("fail") => TransferConflict::FailIfExists,
+                Some("keepBoth") => TransferConflict::KeepBoth,
+                Some("replace") => TransferConflict::ReplaceExisting,
+                Some(other) => return Err(unknown_value(&item.at("conflict"), other)),
+            },
+        })),
         other => return Err(unknown_value(&item.at("action"), other)),
     };
+    // A compress item's source is the first of what goes in, unless it names one.
+    let source = match (
+        &action,
+        item.optional("source", |at, value| {
+            wire::absolute_path(value).ok_or_else(|| not_a_path(at))
+        })?,
+    ) {
+        (_, Some(source)) => source,
+        (Action::Compress(compress), None) if !compress.sources.is_empty() => {
+            compress.sources[0].clone()
+        }
+        _ => item.path("source")?,
+    };
     Ok(Item {
-        source: item.path("source")?,
+        source,
         action,
         name: item.optional("name", |at, value| {
             wire::plain_name(value).ok_or_else(|| not_a_name(at))
         })?,
     })
+}
+
+/// An archive's `password`, if given; bounded as legacy bounded it.
+fn password(item: &Params) -> Result<Option<Password>, Fault> {
+    let password = item.optional("password", Params::string_of)?;
+    if password
+        .as_ref()
+        .is_some_and(|password| password.len() > MAX_ARCHIVE_PASSWORD_BYTES)
+    {
+        return Err(Fault::invalid_params(format!(
+            "{} is too long",
+            item.at("password")
+        )));
+    }
+    Ok(password.map(Password))
 }
 
 /// `choices: {"<path in the folder>": "keepBoth"|"replace"|"skip"}` and `otherwise`.

@@ -71,7 +71,7 @@ hidden entries are listed, so a client can offer to put originals back.
 
 | Method | Params | Result |
 |---|---|---|
-| `jobs.start` | `into`, `names?: "fix"\|"keep"` (fix), `label?` (what undo calls it; default from the actions, e.g. "Move 2 items"), `durable?` (sync the drive before finishing; default: when it is removable), `items: [{source, action: "copy"\|"merge"\|"move"\|"replace"\|"trash"\|"delete"\|"restore", conflict?: "fail"\|"keepBoth"\|"merge", choices?, otherwise?}]` | `{job}` |
+| `jobs.start` | `into`, `names?: "fix"\|"keep"` (fix), `label?` (what undo calls it; default from the actions, e.g. "Move 2 items"), `durable?` (sync the drive before finishing; default: when it is removable), `items: [{source, action: "copy"\|"merge"\|"move"\|"replace"\|"trash"\|"delete"\|"restore"\|"extract"\|"compress", conflict?: "fail"\|"keepBoth"\|"merge", choices?, otherwise?}]` | `{job}` |
 | `jobs.cancel` | `job` | `null` |
 | `jobs.clashes` | `into`, `sources` | `{items: [{source, clashes: [{path, incoming, existing}]}]}`, each side `{isFolder, size, modified}`; or `{source, error}` |
 | `jobs.plan` | `into`, `sources` | `{items: [{source, name, renamed, incoming, existing, same, aliasOf}]}`, or `{source, error}` |
@@ -117,6 +117,18 @@ name, never off its drive or across a bind mount or subvolume boundary, and neve
 destination the user confirmed, it is refused if the record now says otherwise. Where no rename can place it, it
 is copied and the Trash copy deleted only once the copy is on the drive; entries left in the Trash (changed
 meanwhile, or undeletable) are its `kept`. Not filed for undo.
+
+An `extract` item's `source` is a ZIP, 7z, TAR or TAR.GZ archive, extracted into `into`: one top-level member
+lands as it is, several are bundled in a folder named after the archive. Its `password?` opens a locked one; a
+locked archive without one fails with `passwordRequired`, a wrong one with `passwordIncorrect`, leaving nothing.
+Members are counted as the item's `files`; renamed and left-out members are its `renamed` and `skipped`. Undo
+takes away what it made; redo extracts again (a password is never kept, so a locked archive is asked for again).
+
+A `compress` item makes `archiveName` plus the `format`'s extension (`format: "zip"\|"7z"\|"tar"\|"tar.gz"`) in
+`into` of `sources` (absolute paths; `source` defaults to the first), with `password?` (ZIP and 7z) and
+`conflict?: "fail"\|"keepBoth"\|"replace"` (fail). It is written privately, then named; a replaced file goes to the
+Trash (deleted once the archive is in place where there is none), a folder of the name is never replaced. Undo
+takes the archive away and puts back what it replaced.
 
 Before anything is written, a batch measures what its items hold, without following links: `totalBytes` and
 `totalFiles` (everything but folders) are `null` when an item could not be measured, and for a batch that only

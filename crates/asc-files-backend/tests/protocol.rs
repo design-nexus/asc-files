@@ -618,6 +618,71 @@ fn a_delete_removes_a_tree_for_good_and_files_nothing_for_undo() {
 }
 
 #[test]
+fn an_archive_is_made_and_extracted_with_its_password() {
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    let init = backend.call("initialize", json!({}), &mut notes);
+    assert!(
+        init["result"]["capabilities"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("jobs.archives")),
+        "{init}"
+    );
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    fs::write(root.path().join("a.txt"), "a").unwrap();
+    let out = root.path().join("out");
+    fs::create_dir(&out).unwrap();
+    fn run(backend: &mut Backend, notes: &mut Vec<Value>, params: Value) -> Value {
+        let start = backend.call("jobs.start", params, notes);
+        let job = start["result"]["job"].clone();
+        assert!(!job.is_null(), "{start}");
+        backend.until(notes, |n| {
+            n["method"] == "job.finished" && n["params"]["job"] == job
+        });
+        notes
+            .iter()
+            .find(|n| n["method"] == "job.itemDone" && n["params"]["job"] == job)
+            .unwrap()["params"]["outcome"]
+            .clone()
+    }
+
+    let made = run(
+        &mut backend,
+        &mut notes,
+        json!({"into": root.path(), "items": [{"action": "compress", "sources": [root.path().join("a.txt")],
+               "archiveName": "locked", "format": "zip", "password": "secret"}]}),
+    );
+    assert_eq!(made["status"], "done", "{made}");
+    let archive = root.path().join("locked.zip");
+    assert!(archive.exists());
+    let history = backend.call("undo.history", json!({}), &mut notes);
+    assert_eq!(history["result"]["undo"]["label"], "Compress", "{history}");
+
+    let locked = run(
+        &mut backend,
+        &mut notes,
+        json!({"into": out, "items": [{"source": archive, "action": "extract"}]}),
+    );
+    assert_eq!(locked["status"], "failed", "{locked}");
+    assert_eq!(locked["error"]["kind"], "passwordRequired", "{locked}");
+    let opened = run(
+        &mut backend,
+        &mut notes,
+        json!({"into": out, "items": [{"source": archive, "action": "extract", "password": "secret"}]}),
+    );
+    assert_eq!(opened["status"], "done", "{opened}");
+    assert_eq!(fs::read_to_string(out.join("a.txt")).unwrap(), "a");
+
+    let refused = backend.call(
+        "jobs.start",
+        json!({"into": out, "items": [{"action": "compress", "sources": [archive], "archiveName": "x", "format": "rar"}]}),
+        &mut notes,
+    );
+    assert!(refused["error"].is_object(), "{refused}");
+}
+
+#[test]
 fn a_trashed_item_is_restored_by_a_job_to_the_destination_confirmed() {
     let mut backend = Backend::start();
     let mut notes = Vec::new();

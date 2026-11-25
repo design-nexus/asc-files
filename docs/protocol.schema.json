@@ -563,9 +563,6 @@
     "item": {
       "type": "object",
       "properties": {
-        "source": {
-          "$ref": "#/$defs/path"
-        },
         "action": {
           "enum": [
             "copy",
@@ -574,8 +571,13 @@
             "replace",
             "trash",
             "delete",
-            "restore"
+            "restore",
+            "extract",
+            "compress"
           ]
+        },
+        "source": {
+          "$ref": "#/$defs/path"
         },
         "conflict": {
           "enum": [
@@ -590,6 +592,26 @@
         },
         "move": {
           "type": "boolean"
+        },
+        "password": {
+          "type": "string"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "archiveName": {
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "zip",
+            "7z",
+            "tar",
+            "tar.gz"
+          ]
         },
         "choices": {
           "type": "object",
@@ -613,8 +635,7 @@
         }
       },
       "required": [
-        "action",
-        "source"
+        "action"
       ],
       "additionalProperties": false
     },

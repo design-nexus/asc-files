@@ -652,6 +652,7 @@ fn capabilities(undo: bool) -> Vec<&'static str> {
         "jobs.restore",
         "jobs.merge",
         "jobs.durable",
+        "jobs.archives",
         "ops.rename",
         "ops.create",
         "search",

@@ -42,8 +42,9 @@ sort = obj({}, {"key": enum("name","size","modified","type"), "descending": BOOL
 row = obj({"name": N, "kind": enum("folder","file","link","special"), "linkToFolder": BOOL, "hidden": BOOL},
           {"size": INT, "modified": SINT, "modifiedNs": INT, "mode": INT, "gone": const(True)})
 clash_choice = enum("keepBoth","replace","skip")
-item = obj({"source": P, "action": enum("copy","merge","move","replace","trash","delete","restore")},
-           {"conflict": enum("fail","keepBoth","merge","replace"), "name": N, "move": BOOL,
+item = obj({"action": enum("copy","merge","move","replace","trash","delete","restore","extract","compress")},
+           {"source": P, "conflict": enum("fail","keepBoth","merge","replace"), "name": N, "move": BOOL,
+            "password": STR, "sources": arr(P), "archiveName": STR, "format": enum("zip","7z","tar","tar.gz"),
             "choices": {"type": "object", "additionalProperties": clash_choice}, "otherwise": clash_choice, "to": P})
 side = obj({"isFolder": BOOL, "size": INT, "modified": SINT})
 history_entry = nullable(obj({"id": INT, "label": STR}))
