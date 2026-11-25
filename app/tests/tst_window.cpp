@@ -56,8 +56,8 @@ private slots:
         TrashModel trash(&backend);
         FolderModel downloads(&backend);
         JobModel jobs(&backend);
-        Transfers transfers(&jobs);
         Operations ops(&backend, &jobs);
+        Transfers transfers(&ops);
         Preview preview;
         SearchModel search(&backend);
         tabs.openTab(dir.path());
@@ -188,8 +188,8 @@ private slots:
         TrashModel trash(&backend);
         FolderModel downloads(&backend);
         JobModel jobs(&backend);
-        Transfers transfers(&jobs);
         Operations ops(&backend, &jobs);
+        Transfers transfers(&ops);
         QQmlApplicationEngine engine;
         engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
         engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider);

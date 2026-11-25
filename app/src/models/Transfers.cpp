@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: MIT
 #include "Transfers.h"
 
-#include "../backend/BackendClient.h"
 #include "../backend/Wire.h"
 #include "FolderModel.h"
-#include "JobModel.h"
+#include "../ops/Operations.h"
 
 #include <QFile>
-#include <QFileInfo>
-#include <QJsonArray>
 #include <sys/stat.h>
 
 namespace {
@@ -23,7 +20,7 @@ QByteArray localPath(const QUrl &url) { return url.isLocalFile() ? QFile::encode
 
 } // namespace
 
-Transfers::Transfers(JobModel *jobs, QObject *parent) : QObject(parent), m_jobs(jobs) {}
+Transfers::Transfers(Operations *ops, QObject *parent) : QObject(parent), m_ops(ops) {}
 
 QString Transfers::dragUris(FolderModel *folder, int row) const {
     if (!folder) {
@@ -59,27 +56,18 @@ bool Transfers::dropHere(const QList<QUrl> &urls, FolderModel *folder) {
 }
 
 bool Transfers::dropRaw(const QList<QUrl> &urls, const QByteArray &into) {
-    const QString target = Wire::display(into);
-    const bool move = movesInto(urls, QFile::decodeName(into));
-    QJsonArray items;
+    QList<QByteArray> sources;
     for (const QUrl &url : urls) {
         const QByteArray path = localPath(url);
         // Already here, or the folder dropped into itself or into one below it.
         if (path.isEmpty() || Wire::parent(path) == into || into == path || into.startsWith(path + '/')) {
             continue;
         }
-        items.append(QJsonObject{{"source", Wire::encode(path)}, {"action", move ? "move" : "copy"}, {"conflict", "keepBoth"}});
+        sources.append(path);
     }
-    if (items.isEmpty()) {
+    if (sources.isEmpty()) {
         return false;
     }
-    const QString name = QFileInfo(target).fileName().isEmpty() ? target : QFileInfo(target).fileName();
-    const QString message = move ? tr("Moving %n items to %1", "", int(items.size())).arg(name)
-                                 : tr("Copying %n items to %1", "", int(items.size())).arg(name);
-    const QString label = move ? tr("Move %n items", "", int(items.size())) : tr("Copy %n items", "", int(items.size()));
-    m_jobs->start({{"into", Wire::encode(into)}, {"items", items}, {"label", label}}, label,
-                  [this, message](qint64, const BackendError &error) {
-                      emit started(error.isNull() ? message : error.message);
-                  });
+    m_ops->transfer(sources, into, movesInto(urls, QFile::decodeName(into)));
     return true;
 }

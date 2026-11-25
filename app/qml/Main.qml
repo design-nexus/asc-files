@@ -403,10 +403,6 @@ ApplicationWindow {
     }
 
     Connections {
-        target: window.transfers
-        function onStarted(message) { notice.show(message) }
-    }
-    Connections {
         target: window.jobModel
         function onFinished(job, summary) {
             if (summary.failed > 0)

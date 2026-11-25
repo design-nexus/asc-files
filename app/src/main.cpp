@@ -48,8 +48,8 @@ int main(int argc, char *argv[]) {
     downloads.setNewestFirst(true);
     downloads.openPath(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
     JobModel jobs(&backend);
-    Transfers transfers(&jobs);
     Operations ops(&backend, &jobs);
+    Transfers transfers(&ops);
     QObject::connect(&backend, &BackendClient::failed, &app, [](const QString &why) {
         qCritical().noquote() << why;
     });

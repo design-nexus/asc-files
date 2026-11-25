@@ -107,17 +107,21 @@ void Operations::paste(FolderModel *folder, int row) {
     if (row >= 0 && folder->isFolder(row)) {
         into = Wire::join(into, folder->rawName(row));
     }
+    transfer(sources, into, cut, true);
+}
+
+void Operations::transfer(const QList<QByteArray> &sources, const QByteArray &into, bool cut, bool fromClipboard) {
     QJsonArray wire;
     for (const QByteArray &source : sources) {
         wire.append(Wire::encode(source));
     }
     m_backend->call(QStringLiteral("jobs.plan"), {{"into", Wire::encode(into)}, {"sources", wire}}, this,
-                    [this, into, cut](const QJsonValue &result, const BackendError &error) {
+                    [this, into, cut, fromClipboard](const QJsonValue &result, const BackendError &error) {
                         if (!error.isNull()) {
                             emit notice(error.message);
                             return;
                         }
-                        Pending pending{into, cut, {}, {}};
+                        Pending pending{into, cut, fromClipboard, {}, {}, {}};
                         QVariantList conflicts;
                         const QJsonArray planned = result.toObject().value(QStringLiteral("items")).toArray();
                         // Items landing on the same stored name: as legacy did, one whose own
@@ -179,7 +183,7 @@ void Operations::paste(FolderModel *folder, int row) {
                             for (const QJsonValue &item : std::as_const(pending.numbered)) {
                                 items.append(item);
                             }
-                            startBatch(into, items, cut);
+                            startBatch(into, items, cut, fromClipboard);
                             return;
                         }
                         m_pending = pending;
@@ -220,10 +224,10 @@ void Operations::resolve(const QList<int> &choices) {
     for (const QJsonValue &item : std::as_const(pending.numbered)) {
         pending.items.append(item);
     }
-    startBatch(pending.into, pending.items, cut);
+    startBatch(pending.into, pending.items, cut, pending.fromClipboard);
 }
 
-void Operations::startBatch(const QByteArray &into, const QJsonArray &items, bool cut) {
+void Operations::startBatch(const QByteArray &into, const QJsonArray &items, bool cut, bool fromClipboard) {
     if (items.isEmpty()) {
         return;
     }
@@ -233,7 +237,7 @@ void Operations::startBatch(const QByteArray &into, const QJsonArray &items, boo
                   [this, label](qint64, const BackendError &error) {
                       emit notice(error.isNull() ? label : error.message);
                   });
-    if (cut) {
+    if (cut && fromClipboard) {
         // A cut is pasted once.
         QGuiApplication::clipboard()->clear();
     }

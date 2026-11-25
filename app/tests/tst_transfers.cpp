@@ -4,6 +4,7 @@
 #include "models/FolderModel.h"
 #include "models/JobModel.h"
 #include "models/Transfers.h"
+#include "ops/Operations.h"
 
 #include <QFile>
 #include <QSignalSpy>
@@ -34,7 +35,8 @@ private slots:
         backend.start();
         FolderModel folder(&backend);
         JobModel jobs(&backend);
-        Transfers transfers(&jobs);
+        Operations ops(&backend, &jobs);
+        Transfers transfers(&ops);
         QSignalSpy opened(&folder, &FolderModel::opened);
         folder.openPath(dir.path());
         QVERIFY(opened.wait(10000));
@@ -50,25 +52,51 @@ private slots:
         QCOMPARE(folder.selectionCount(), 1);
     }
 
-    void aDropOnTheSameDriveMovesAndKeepsBoth() {
+    void aDropOnTheSameDriveMovesAndAsksAboutAClash() {
         QTemporaryDir dir;
         QDir().mkdir(dir.filePath("into"));
         touch(dir.filePath("a.txt"), "moved");
+        touch(dir.filePath("b.txt"), "no clash");
         touch(dir.filePath("into/a.txt"), "already there");
         BackendClient backend(TestSupport::backend());
         backend.start();
         JobModel jobs(&backend);
-        Transfers transfers(&jobs);
-        const QList<QUrl> urls{QUrl::fromLocalFile(dir.filePath("a.txt"))};
+        Operations ops(&backend, &jobs);
+        Transfers transfers(&ops);
+        const QList<QUrl> urls{QUrl::fromLocalFile(dir.filePath("a.txt")), QUrl::fromLocalFile(dir.filePath("b.txt"))};
         QVERIFY(transfers.movesInto(urls, dir.filePath("into")));
-        QSignalSpy finished(&jobs, &JobModel::finished);
+        QSignalSpy asked(&ops, &Operations::conflictsChanged);
         QVERIFY(transfers.drop(urls, dir.filePath("into")));
+        QVERIFY(asked.wait(10000));
+        QCOMPARE(ops.conflicts().size(), 1);
+        QCOMPARE(ops.conflicts().first().toMap().value("name").toString(), QStringLiteral("a.txt"));
+        // Kept both: the dropped one numbered; the one without a clash simply moved.
+        QSignalSpy finished(&jobs, &JobModel::finished);
+        ops.resolve({Operations::KeepBoth});
         QVERIFY(finished.wait(20000));
         QVERIFY(!QFile::exists(dir.filePath("a.txt")));
+        QVERIFY(!QFile::exists(dir.filePath("b.txt")));
+        QVERIFY(QFile::exists(dir.filePath("into/b.txt")));
         QFile kept(dir.filePath("into/a.txt"));
         QVERIFY(kept.open(QIODevice::ReadOnly));
         QCOMPARE(kept.readAll(), QByteArray("already there"));
         QVERIFY(QFile::exists(dir.filePath("into/a (1).txt")));
+    }
+
+    void aDropWithoutClashesStartsAtOnce() {
+        QTemporaryDir dir;
+        QDir().mkdir(dir.filePath("into"));
+        touch(dir.filePath("a.txt"));
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        JobModel jobs(&backend);
+        Operations ops(&backend, &jobs);
+        Transfers transfers(&ops);
+        QSignalSpy finished(&jobs, &JobModel::finished);
+        QVERIFY(transfers.drop({QUrl::fromLocalFile(dir.filePath("a.txt"))}, dir.filePath("into")));
+        QVERIFY(finished.wait(20000));
+        QVERIFY(QFile::exists(dir.filePath("into/a.txt")));
+        QCOMPARE(ops.conflicts().size(), 0);
     }
 
     void dropsThatWouldDoNothingAreRefused() {
@@ -78,7 +106,8 @@ private slots:
         BackendClient backend(TestSupport::backend());
         backend.start();
         JobModel jobs(&backend);
-        Transfers transfers(&jobs);
+        Operations ops(&backend, &jobs);
+        Transfers transfers(&ops);
         // Into the folder it is already in, into itself, into a folder below it.
         QVERIFY(!transfers.drop({QUrl::fromLocalFile(dir.filePath("here.txt"))}, dir.path()));
         QVERIFY(!transfers.drop({QUrl::fromLocalFile(dir.filePath("folder"))}, dir.filePath("folder")));
@@ -88,5 +117,5 @@ private slots:
     }
 };
 
-QTEST_GUILESS_MAIN(TestTransfers)
+QTEST_MAIN(TestTransfers)
 #include "tst_transfers.moc"

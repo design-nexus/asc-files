@@ -38,6 +38,10 @@ public:
     /// Pastes the clipboard into the folder `folder` shows, or into its folder at `row` when
     /// `row` is a folder.
     Q_INVOKABLE void paste(FolderModel *folder, int row = -1);
+    /// Moves (else copies) `sources` into `into` as a paste does: planned by the names the
+    /// destination stores, a clash asked about. A drop comes this way too; only a paste of a
+    /// cut clears the clipboard.
+    void transfer(const QList<QByteArray> &sources, const QByteArray &into, bool move, bool fromClipboard = false);
     /// Answers the waiting paste's clashes, one choice per clash in `conflicts` order, and
     /// starts it. An empty list cancels it.
     Q_INVOKABLE void resolve(const QList<int> &choices);
@@ -94,13 +98,14 @@ private:
     struct Pending {
         QByteArray into;
         bool cut = false;
+        bool fromClipboard = false;
         QJsonArray items;
         /// Per clash: the plan's item for it.
         QList<QJsonObject> clashes;
         /// Items numbered beside a name another item keeps; started after the rest.
         QJsonArray numbered;
     };
-    void startBatch(const QByteArray &into, const QJsonArray &items, bool cut);
+    void startBatch(const QByteArray &into, const QJsonArray &items, bool cut, bool fromClipboard);
     void undoNow(bool overwrite);
     QList<QByteArray> selectedPaths(FolderModel *folder) const;
 

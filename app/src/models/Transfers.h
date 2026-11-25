@@ -6,16 +6,15 @@
 #include <QUrl>
 
 class FolderModel;
-class JobModel;
+class Operations;
 
 /// Drag and drop: what a drag from a folder carries, and what a drop does. A drop on the drive
-/// its items are on moves them; a drop on another drive copies them, as file managers do. Until
-/// the conflict prompt (B-ops), a drop never replaces anything: a name that is taken is kept
-/// both ways, the new one numbered.
+/// its items are on moves them; a drop on another drive copies them, as file managers do. It
+/// goes as a paste does (Operations::transfer): a name that is taken is asked about.
 class Transfers : public QObject {
     Q_OBJECT
 public:
-    explicit Transfers(JobModel *jobs, QObject *parent = nullptr);
+    explicit Transfers(Operations *ops, QObject *parent = nullptr);
 
     /// The `text/uri-list` a drag from `row` carries: the selection, or `row` alone (selected
     /// now) when it is not part of it.
@@ -31,11 +30,7 @@ public:
     /// Drops into the folder `folder` lists.
     Q_INVOKABLE bool dropHere(const QList<QUrl> &urls, FolderModel *folder);
 
-signals:
-    /// A drop started a job; `message` says what it does.
-    void started(const QString &message);
-
 private:
     bool dropRaw(const QList<QUrl> &urls, const QByteArray &into);
-    JobModel *m_jobs;
+    Operations *m_ops;
 };
