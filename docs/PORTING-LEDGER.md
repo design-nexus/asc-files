@@ -319,7 +319,7 @@ and `services/table.rs`, with their tests, which checked legacy's own document b
 
 | `sandbox_helper/document_media/tests.rs` (8) | 7 | `sniffed_svg_rejected_by_resvg_reaches_the_raster_loaders` (the helper draws only Mermaid and equations; pictures are Qt's) |
 
-| `sandbox_helper/archive_cover/tests.rs` (6) | 5 | `rar_disabled_comic_cover_reports_unsupported_build` (CBR covers wait for B9's RAR support) |
+| `sandbox_helper/archive_cover/tests.rs` (6) | 5 | `rar_disabled_comic_cover_reports_unsupported_build` (RAR is always built now; CBR covers come from the RAR reader, `tst_thumbnails`) |
 
 Covers for thumbnails (`src/cover.rs`) are legacy's `archive_cover.rs` (CBZ, EPUB) and the embedded
 thumbnails of `model/embedded.rs` (3MF, FreeCAD), decoded with the `image` crate instead of
@@ -393,7 +393,7 @@ that give back legacy's events, so they read as they did.
 | `compression/tests.rs` (25) | 8 encoding tests as they were, 7 on publication | see below |
 | `compression/tests/policy.rs` (3), `cancellation.rs` (2) | 5 | |
 | `services/preview/tests.rs`, archive tree and format (11) | 11 | `preview_request_debug_redacts_the_archive_password` (legacy's preview request) |
-| `decoders/rar/tests.rs` (4), `sandbox/archive` (7), `sandbox_helper/archive_rar` (11), `rar_extraction` (11) | — | step (f), the RAR helper |
+| `decoders/rar/tests.rs` (4), `sandbox/archive` (7), `sandbox_helper/archive_rar` (11), `rar_extraction` (11) | 33 | |
 | `app/browser/tests/archive_activation.rs` (3) | 1 | `tst_operations::anArchiveIsMadeAndOpenedWithItsPassword` (opening a local archive extracts it); the chooser-mode and remote-archive cases wait for B6 and B7 |
 
 Publication: legacy wrote the archive to a stage and published it with its own replace strategies
@@ -438,6 +438,16 @@ local archive extracts it beside itself, as legacy's activation did. A locked ar
 password, again when it was wrong; what was made is selected. Found on the way: Keep Both numbered
 even a free name (`move_numbered_as` yields only numbered names), and the item menu could not be
 opened from the keyboard (now Menu or Shift+F10).
+
+Step (f): RAR. Legacy's separately licensed helper is `crates/asc-files-rar` (UnRAR; no other
+Files code linked; the member stream's format is the engine's `archive/rar_wire.rs`, shared as
+source). The engine runs it in a bubblewrap sandbox of its own (`archive/rar_stream.rs`: no
+network, nothing of the user's but the archive, read-only; address space, CPU time and file writes
+limited; the password over stdin) and writes the members through the same extraction session as
+every other format. Legacy's command tests are rewritten for the new launcher (its `prlimit`
+wrapper became `setrlimit` before exec). The app extracts RAR and makes CBR thumbnails through the
+reader's `cover-rar`, the page decoded in a sandbox of its own; RAR is never made, and the preview
+does not list RAR, as legacy's didn't.
 
 Gaps the port found: the engine's locale had no `counts.bytes` plurals (a member's declared size
 showed as `counts.bytes.other`); the staging file's close is checked (a drive may report a failed

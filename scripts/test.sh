@@ -11,7 +11,10 @@ mkdir -p "$home"/{config,data,cache,state,run} "$tmp"
 chmod 700 "$home/run"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/asc-files-target}"
 export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+# The RAR helper is a program of its own, which the engine's RAR tests run.
+cargo build --locked -q -p asc-files-rar
 run=(env HOME="$home" XDG_CONFIG_HOME="$home/config" XDG_DATA_HOME="$home/data"
+     ASC_FILES_RAR="$CARGO_TARGET_DIR/debug/asc-files-rar"
      XDG_CACHE_HOME="$home/cache" XDG_STATE_HOME="$home/state" XDG_RUNTIME_DIR="$home/run"
      TMPDIR="$tmp" CARGO_TARGET_DIR="$CARGO_TARGET_DIR" CARGO_HOME="$CARGO_HOME" PATH="$PATH"
      cargo test --workspace --locked "$@")

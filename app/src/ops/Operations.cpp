@@ -448,7 +448,10 @@ QString Operations::archiveFormat(const QString &path) {
         return QStringLiteral("tar.gz");
     }
     const QString suffix = QFileInfo(name).suffix();
-    return suffix == QLatin1String("zip") || suffix == QLatin1String("7z") || suffix == QLatin1String("tar") ? suffix : QString();
+    // RAR is read only (by the separately licensed RAR reader), never made.
+    return suffix == QLatin1String("zip") || suffix == QLatin1String("7z") || suffix == QLatin1String("tar") || suffix == QLatin1String("rar")
+               ? suffix
+               : QString();
 }
 
 void Operations::extract(const QString &archive, const QString &folder, const QString &password) {

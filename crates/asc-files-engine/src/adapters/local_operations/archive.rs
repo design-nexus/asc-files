@@ -11,6 +11,8 @@ mod decoders;
 mod destination;
 mod extraction;
 mod listing;
+mod rar_stream;
+pub(crate) mod rar_wire;
 
 pub use listing::{
     ARCHIVE_PREVIEW_FAILED_MESSAGE, ARCHIVE_TOO_LARGE_MESSAGE, ARCHIVE_UNSUPPORTED_MESSAGE,
@@ -18,6 +20,7 @@ pub use listing::{
     archive_payload_valid, decode_archive_listing, encode_archive_result,
     list_archive_entries_direct,
 };
+pub use rar_stream::helper as rar_helper;
 
 #[cfg(test)]
 mod fixtures;
@@ -291,9 +294,15 @@ pub fn extract(
         Some(ArchiveFormat::Tar) => {
             extract_tar(archive, into, &display_name, false, done, cancelled, report)
         }
-        Some(ArchiveFormat::Rar) => Err(archive_failed(crate::i18n::tr(
-            "RAR support is disabled in this build.",
-        ))),
+        Some(ArchiveFormat::Rar) => decoders::extract_rar(
+            archive,
+            into,
+            &display_name,
+            password,
+            done,
+            cancelled,
+            report,
+        ),
         None => Err(archive_failed(rust_i18n::t!(
             "Unsupported archive format: %{name}",
             name = display_name

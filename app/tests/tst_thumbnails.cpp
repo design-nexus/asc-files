@@ -142,6 +142,14 @@ private slots:
                             dir.filePath("empty.cbz")});
         QVERIFY(make.waitForFinished(30000) && make.exitCode() == 0);
         QVERIFY(Thumbnails::thumbnail(QFile::encodeName(dir.filePath("empty.cbz")), 128).isNull());
+
+        // A RAR comic, through the RAR reader; one without pictures has none.
+        QVERIFY(Thumbnails::canMake("issue.cbr"));
+        if (Sandbox::rarReader().isEmpty()) {
+            QSKIP("no RAR reader (ASC_FILES_RAR)");
+        }
+        QVERIFY(QFile::copy(QStringLiteral(ASC_FILES_SOURCE "/crates/asc-files-rar/tests/fixtures/rar/version.rar"), dir.filePath("plain.cbr")));
+        QVERIFY(Thumbnails::thumbnail(QFile::encodeName(dir.filePath("plain.cbr")), 128).isNull());
     }
 
     void whatCannotBeReadIsNotTriedAgain() {

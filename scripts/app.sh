@@ -31,15 +31,17 @@ shift || true
 cache="${XDG_CACHE_HOME:-$HOME/.cache}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$cache/asc-files-target}"
 build="${ASC_FILES_APP_BUILD:-$cache/asc-files-app-build}"
-cargo build -p asc-files-backend -p asc-files-docs --locked --quiet
+cargo build -p asc-files-backend -p asc-files-docs -p asc-files-rar --locked --quiet
 backend="$CARGO_TARGET_DIR/debug/asc-files-backend"
 docs="$CARGO_TARGET_DIR/debug/asc-files-docs"
-cmake -S app -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DASC_FILES_BACKEND="$backend" -DASC_FILES_DOCS="$docs" >/dev/null
+# Beside the backend, where the engine looks for it; the app asks it for comic covers too.
+rar="$CARGO_TARGET_DIR/debug/asc-files-rar"
+cmake -S app -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DASC_FILES_BACKEND="$backend" -DASC_FILES_DOCS="$docs" -DASC_FILES_RAR="$rar" >/dev/null
 cmake --build "$build"
 case "$command" in
 build) ;;
 run)
-    exec env ASC_FILES_BACKEND="$backend" ASC_FILES_DOCS="$docs" "$build/asc-files" "$@"
+    exec env ASC_FILES_BACKEND="$backend" ASC_FILES_DOCS="$docs" ASC_FILES_RAR="$rar" "$build/asc-files" "$@"
     ;;
 test)
     home="$cache/asc-files-test-home"

@@ -76,7 +76,7 @@ QString cachePath(const QByteArray &path, int size) {
 
 namespace {
 
-enum class Source { None, Picture, Video, Pdf, Cover };
+enum class Source { None, Picture, Video, Pdf, Cover, RarCover };
 
 /// Files that carry their own cover, read by the document reader.
 const QList<QByteArray> covered{"cbz", "epub", "3mf", "fcstd"};
@@ -98,6 +98,9 @@ Source sourceOf(const QString &name) {
     }
     if (covered.contains(suffix)) {
         return Source::Cover;
+    }
+    if (suffix == "cbr") {
+        return Source::RarCover;
     }
     return suffix == "pdf" ? Source::Pdf : Source::None;
 }
@@ -128,6 +131,7 @@ QImage thumbnail(const QByteArray &path, int size) {
     QImage image = source == Source::Video   ? Sandbox::videoFrameNow(path, wanted)
                    : source == Source::Pdf   ? Sandbox::pdfPageNow(path, wanted)
                    : source == Source::Cover ? Sandbox::coverNow(path, QFileInfo(QFile::decodeName(path)).suffix().toLower(), wanted)
+                   : source == Source::RarCover ? Sandbox::rarCoverNow(path, wanted)
                                              : Sandbox::decodeImageNow(path, wanted);
     if (image.isNull()) {
         QImage marker(1, 1, QImage::Format_ARGB32);

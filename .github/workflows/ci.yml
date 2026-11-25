@@ -15,7 +15,7 @@ jobs:
       CARGO_TERM_COLOR: always
     steps:
       - name: Tools
-        run: dnf install -y --setopt=install_weak_deps=False gcc git rustup python3 fontconfig dejavu-sans-fonts dejavu-serif-fonts dejavu-sans-mono-fonts
+        run: dnf install -y --setopt=install_weak_deps=False gcc gcc-c++ git rustup python3 fontconfig dejavu-sans-fonts dejavu-serif-fonts dejavu-sans-mono-fonts
       - uses: actions/checkout@v5
       - name: Rust toolchain from rust-toolchain.toml
         run: |

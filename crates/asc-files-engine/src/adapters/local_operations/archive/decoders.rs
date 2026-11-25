@@ -28,6 +28,9 @@ use super::{
     },
 };
 
+mod rar;
+pub(super) use rar::extract_rar;
+
 #[cfg(test)]
 mod tests;
 

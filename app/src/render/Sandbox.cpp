@@ -8,6 +8,7 @@
 #include <QPointer>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QTemporaryFile>
 #include <QTimer>
 #include <memory>
 #include <sys/resource.h>
@@ -129,6 +130,15 @@ QString renderer() {
     return fromEnvironment.isEmpty() ? program(QStringLiteral("asc-files-render")) : fromEnvironment;
 }
 
+QString rarReader() {
+    const QString beside = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("asc-files-rar"));
+    if (QFileInfo(beside).isExecutable()) {
+        return QFileInfo(beside).canonicalFilePath();
+    }
+    const QString fromEnvironment = qEnvironmentVariable("ASC_FILES_RAR");
+    return fromEnvironment.isEmpty() ? program(QStringLiteral("asc-files-rar")) : fromEnvironment;
+}
+
 QString documentReader() {
     const QString beside = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("asc-files-docs"));
     if (QFileInfo(beside).isExecutable()) {
@@ -224,6 +234,19 @@ QImage pdfPageNow(const QByteArray &file, int size) {
 
 QImage coverNow(const QByteArray &file, const QString &format, int size) {
     return fromPng(runNow(documentReader(), {QStringLiteral("cover"), format, QStringLiteral("{}"), QString::number(size)}, file));
+}
+
+QImage rarCoverNow(const QByteArray &file, int size) {
+    const QByteArray page = runNow(rarReader(), {QStringLiteral("cover-rar"), QStringLiteral("{}")}, file);
+    if (page.isEmpty()) {
+        return {};
+    }
+    // The page as it was in the archive, decoded by the image decoder in a sandbox of its own.
+    QTemporaryFile staged(QDir::temp().filePath(QStringLiteral("asc-files-cover-XXXXXX")));
+    if (!staged.open() || staged.write(page) != page.size() || !staged.flush()) {
+        return {};
+    }
+    return decodeImageNow(QFile::encodeName(staged.fileName()), size);
 }
 
 } // namespace Sandbox

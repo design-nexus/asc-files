@@ -77,8 +77,8 @@ public:
     /// Opens a file in the program the desktop opens its kind with.
     /// Opens `path` with its program; an archive is extracted beside itself instead, as legacy did.
     Q_INVOKABLE void open(const QString &path);
-    /// `zip`, `7z`, `tar` or `tar.gz` for an archive Files extracts and compresses, by its name;
-    /// empty otherwise.
+    /// `zip`, `7z`, `tar`, `tar.gz` or `rar` (extracted, never made) for an archive Files
+    /// extracts, by its name; empty otherwise.
     Q_INVOKABLE static QString archiveFormat(const QString &path);
     /// Extracts `archive` into `folder` (its own folder when empty). A locked one asks for its
     /// password through `passwordWanted`.

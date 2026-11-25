@@ -305,3 +305,49 @@ fn an_archive_replaced_after_it_was_made_is_not_undone() {
     assert_eq!(fs::read(&archive).unwrap(), b"someone else's");
     assert!(fixture.in_trash().is_empty());
 }
+
+/// A RAR archive, read by the separately licensed helper in its sandbox (built and named by
+/// scripts/test.sh); skipped where the helper isn't installed.
+#[test]
+fn a_rar_archive_is_extracted_by_its_helper() {
+    if asc_files_engine::adapters::local_operations::archive::rar_helper().is_none() {
+        eprintln!("skipped: no RAR helper (ASC_FILES_RAR)");
+        return;
+    }
+    let fixture = Fixture::new();
+    let fixtures =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../asc-files-rar/tests/fixtures/rar");
+    fs::copy(
+        fixtures.join("version.rar"),
+        fixture.path("source/version.rar"),
+    )
+    .unwrap();
+    fs::copy(
+        fixtures.join("encrypted.rar"),
+        fixture.path("source/encrypted.rar"),
+    )
+    .unwrap();
+
+    let events = fixture.run(fixture.path("source/version.rar"), Action::Extract(None));
+    let Outcome::Done { name, .. } = outcome(&events) else {
+        panic!("{events:?}");
+    };
+    assert!(
+        name.starts_with(fixture.path("dest")) && name.exists(),
+        "{name:?}"
+    );
+
+    let events = fixture.run(fixture.path("source/encrypted.rar"), Action::Extract(None));
+    assert!(
+        matches!(outcome(&events), Outcome::Failed { error, .. } if error.kind() == ErrorKind::PasswordRequired),
+        "{events:?}"
+    );
+    let events = fixture.run(
+        fixture.path("source/encrypted.rar"),
+        Action::Extract(Some(Password("unrar".to_owned()))),
+    );
+    assert!(
+        matches!(outcome(&events), Outcome::Done { .. }),
+        "{events:?}"
+    );
+}
