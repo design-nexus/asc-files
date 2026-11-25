@@ -14,6 +14,7 @@
 #include "models/RecentModel.h"
 #include "models/Transfers.h"
 #include "ops/Operations.h"
+#include "render/CodeHighlighter.h"
 #include "render/Preview.h"
 #include "settings/AppSettings.h"
 #include "theme/SystemTheme.h"
@@ -69,6 +70,7 @@ int main(int argc, char *argv[]) {
     SystemTheme::registerType();
     AppSettings::registerType();
     Customizations::registerType();
+    qmlRegisterType<CodeHighlighter>("AscFiles.System", 1, 0, "CodeHighlighter");
     qmlRegisterUncreatableType<Transfers>("AscFiles.System", 1, 0, "Transfers", QStringLiteral("The app makes the one Transfers."));
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);

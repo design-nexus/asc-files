@@ -236,6 +236,9 @@ QString AppSettings::previewStyle() const {
 
 void AppSettings::setPreviewStyle(const QString &style) { set("preview/style", style == QLatin1String("panel") ? style : QStringLiteral("popup")); }
 
+int AppSettings::previewWidth() const { return qBound(260, value("preview/width", 380).toInt(), 900); }
+void AppSettings::setPreviewWidth(int width) { set("preview/width", qBound(260, width, 900)); }
+
 bool AppSettings::showThumbnails() const { return value("previews/thumbnails", true).toBool(); }
 void AppSettings::setShowThumbnails(bool shown) { set("previews/thumbnails", shown); }
 

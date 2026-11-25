@@ -18,6 +18,7 @@
 #include "models/TabModel.h"
 #include "models/Transfers.h"
 #include "ops/Operations.h"
+#include "render/CodeHighlighter.h"
 #include "render/Preview.h"
 #include "render/Sandbox.h"
 #include "settings/AppSettings.h"
@@ -49,6 +50,7 @@ private slots:
         SystemTheme::registerType();
         AppSettings::registerType();
         Customizations::registerType();
+        qmlRegisterType<CodeHighlighter>("AscFiles.System", 1, 0, "CodeHighlighter");
         qmlRegisterUncreatableType<Transfers>("AscFiles.System", 1, 0, "Transfers", QStringLiteral("The app makes the one Transfers."));
     }
 
@@ -346,6 +348,17 @@ private slots:
         tabsOf(two)->openTab(second.path());
         QTest::qWait(800);
         QCOMPARE(QSettings(QSettings::IniFormat, QSettings::UserScope, "asc-files", "asc-files").value("session/tabs").toStringList().size(), 2);
+
+        // A window opened takes the keyboard into its folder: the arrows select.
+        QFile file(second.filePath("first.txt"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.close();
+        tabsOf(two)->current()->folderModel()->refresh();
+        QTRY_COMPARE(tabsOf(two)->current()->folderModel()->rowCount(), 1);
+        two->requestActivate();
+        QVERIFY(QTest::qWaitForWindowActive(two));
+        QTest::keyClick(two, Qt::Key_Down);
+        QTRY_COMPARE(tabsOf(two)->current()->folderModel()->selectionCount(), 1);
 
         // A closed window goes, with its tabs.
         QPointer<TabModel> closedTabs = tabsOf(two);

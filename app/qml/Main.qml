@@ -370,6 +370,8 @@ ApplicationWindow {
                                 PaneBar { visible: window.dualPane; browser: window.tabBrowser; active: !window.rightActive }
                                 FolderView {
                                     id: folderView
+                                    // A focus scope: the folder takes the keyboard as the window opens.
+                                    focus: true
                                     Layout.fillWidth: true
                                     Layout.fillHeight: true
                                     browser: window.tabBrowser
@@ -467,11 +469,34 @@ ApplicationWindow {
                     }
                     Rectangle {
                         objectName: "previewPanel"
+                        id: previewPanel
                         visible: window.previewOpen && window.previewAsPanel
-                        Layout.preferredWidth: 380
+                        // Its width is the user's: drag its left edge (Settings keeps it).
+                        property int liveWidth: AppSettings.previewWidth
+                        Layout.preferredWidth: Math.min(panelSizing.active ? liveWidth : AppSettings.previewWidth, window.width * 0.6)
                         Layout.fillHeight: true
                         color: "transparent"
-                        Rectangle { width: 1; height: parent.height; color: Theme.rule }
+                        Rectangle { width: 1; height: parent.height; color: panelEdgeHover.hovered || panelSizing.active ? Theme.selectionEdge : Theme.rule }
+                        Item {
+                            objectName: "previewPanelEdge"
+                            width: 8
+                            height: parent.height
+                            x: -4
+                            z: 2
+                            property int startWidth
+                            HoverHandler { id: panelEdgeHover; cursorShape: Qt.SplitHCursor }
+                            DragHandler {
+                                id: panelSizing
+                                target: null
+                                yAxis.enabled: false
+                                onActiveChanged: {
+                                    if (active) parent.startWidth = previewPanel.width
+                                    else AppSettings.previewWidth = previewPanel.liveWidth
+                                }
+                                onTranslationChanged: if (active) previewPanel.liveWidth = Math.max(260, Math.min(900, parent.startWidth - translation.x))
+                            }
+                            TapHandler { onDoubleTapped: AppSettings.previewWidth = 380 }
+                        }
                         PreviewContent {
                             anchors.fill: parent
                             anchors.leftMargin: 1

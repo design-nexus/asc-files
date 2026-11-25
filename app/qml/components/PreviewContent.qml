@@ -4,6 +4,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
 import AscFiles
+import AscFiles.System
 
 // What the preview drawer shows, the same in its Popup and Panel styles: the item's name, then
 // its picture, page, text or rendered Markdown, then its details.
@@ -81,13 +82,21 @@ ColumnLayout {
             visible: content.preview.kind === "text" || (content.preview.kind === "markdown" && !content.rendered)
             clip: true
             TextArea {
+                id: code
                 readOnly: true
                 selectByMouse: true
                 text: content.preview.text
                 wrapMode: content.wrap ? TextEdit.WrapAnywhere : TextEdit.NoWrap
+                // Coloured as its language reads (Markdown's source as Markdown).
+                CodeHighlighter {
+                    id: highlighter
+                    document: code.textDocument
+                    fileName: content.preview.name
+                    dark: !Theme.light
+                }
                 color: Theme.text
                 selectionColor: Theme.selection
-                font.family: "JetBrains Mono"
+                font.family: Theme.monoFamily
                 font.pointSize: Theme.small
                 background: Rectangle { radius: Theme.radius; color: Theme.panel }
             }

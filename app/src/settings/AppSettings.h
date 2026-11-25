@@ -50,6 +50,8 @@ class AppSettings : public QObject {
     /// "popup" over the window or "panel" beside the list.
     Q_PROPERTY(QString previewStyle READ previewStyle WRITE setPreviewStyle NOTIFY changed)
     Q_PROPERTY(bool showThumbnails READ showThumbnails WRITE setShowThumbnails NOTIFY changed)
+    /// The preview panel's width (260–900 px).
+    Q_PROPERTY(int previewWidth READ previewWidth WRITE setPreviewWidth NOTIFY changed)
 public:
     /// The one the app shares.
     static AppSettings &shared();
@@ -111,6 +113,8 @@ public:
     QString previewStyle() const;
     void setPreviewStyle(const QString &style);
     bool showThumbnails() const;
+    int previewWidth() const;
+    void setPreviewWidth(int width);
     void setShowThumbnails(bool shown);
 
     /// A modified time in the chosen format, relative to `now`.

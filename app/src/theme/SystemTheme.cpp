@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFontDatabase>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
@@ -92,6 +93,17 @@ QColor SystemTheme::color(const QString &token, const QColor &fallback) const {
     return value.isValid() ? QColor(value.toString()) : fallback;
 }
 
+void SystemTheme::installedFonts() {
+    // A family the theme names but this computer lacks: the system's own (fixed-width for code),
+    // not whatever Qt would put in its place.
+    if (!QFontDatabase::hasFamily(m_family)) {
+        m_family = QFontDatabase::systemFont(QFontDatabase::GeneralFont).family();
+    }
+    if (!QFontDatabase::hasFamily(m_monoFamily)) {
+        m_monoFamily = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    }
+}
+
 void SystemTheme::loadFallback() {
     m_colors.clear();
     for (const auto &[token, value] : FallbackColors) {
@@ -104,6 +116,9 @@ void SystemTheme::loadFallback() {
     m_accents.clear();
     m_light = false;
     m_themeName = QStringLiteral("Nyx Dark");
+    m_family = QStringLiteral("Inter");
+    m_monoFamily = QStringLiteral("JetBrains Mono");
+    installedFonts();
 }
 
 bool SystemTheme::loadSnapshot() {
@@ -136,6 +151,7 @@ bool SystemTheme::loadSnapshot() {
     const QString mono = typography.value(QStringLiteral("mono")).toString().section(u',', 0, 0).trimmed();
     m_family = ui.isEmpty() ? QStringLiteral("Inter") : ui;
     m_monoFamily = mono.isEmpty() ? QStringLiteral("JetBrains Mono") : mono;
+    installedFonts();
     const QJsonObject geometry = tokens.value(QStringLiteral("geometry")).toObject();
     m_radiusSmall = geometry.value(QStringLiteral("radius_small")).toInt(7);
     m_radiusCard = geometry.value(QStringLiteral("radius_card")).toInt(11);

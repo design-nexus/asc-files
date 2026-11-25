@@ -8,6 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Test)
+# Previews' code colours (KDE's syntax definitions).
+find_package(KF6SyntaxHighlighting REQUIRED)
 qt_standard_project_setup(REQUIRES 6.8)
 
 # The models and the backend client, shared by the app and its tests.
@@ -31,6 +33,7 @@ qt_add_library(asc_files_core STATIC
     src/models/TabModel.cpp src/models/TabModel.h
     src/models/Transfers.cpp src/models/Transfers.h
     src/ops/Operations.cpp src/ops/Operations.h
+    src/render/CodeHighlighter.cpp src/render/CodeHighlighter.h
     src/render/Preview.cpp src/render/Preview.h
     src/render/Sandbox.cpp src/render/Sandbox.h
     src/app/Windows.cpp src/app/Windows.h
@@ -40,7 +43,7 @@ qt_add_library(asc_files_core STATIC
     src/theme/SystemTheme.cpp src/theme/SystemTheme.h
     src/thumbnails/Thumbnails.cpp src/thumbnails/Thumbnails.h)
 target_include_directories(asc_files_core PUBLIC src)
-target_link_libraries(asc_files_core PUBLIC Qt6::Core Qt6::Gui Qt6::Quick)
+target_link_libraries(asc_files_core PUBLIC Qt6::Core Qt6::Gui Qt6::Quick KF6::SyntaxHighlighting)
 # What About shows: the version, and the commit built (when built from a checkout).
 execute_process(COMMAND git rev-parse --short HEAD WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
                 OUTPUT_VARIABLE ASC_FILES_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
@@ -113,7 +116,7 @@ target_link_libraries(asc-files PRIVATE asc_files_core asc_files_qmlplugin Qt6::
 # Tests run against the real backend: ASC_FILES_BACKEND names it (scripts/app.sh builds it).
 enable_testing()
 set(ASC_FILES_BACKEND "" CACHE FILEPATH "The asc-files-backend binary the tests run")
-foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search systemtheme appsettings desktopapps properties actions customizations)
+foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search systemtheme appsettings desktopapps properties actions customizations codehighlighter)
     qt_add_executable(tst_${test} tests/tst_${test}.cpp)
     target_link_libraries(tst_${test} PRIVATE asc_files_core Qt6::Test)
     add_test(NAME ${test} COMMAND tst_${test})

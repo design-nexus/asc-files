@@ -4,6 +4,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFontDatabase>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
@@ -26,7 +27,7 @@ QByteArray snapshot(const char *name, const char *appearance, const char *surfac
                              {"generation", 7},
                              {"theme", QJsonObject{{"id", name}, {"name", name}, {"appearance", appearance}}},
                              {"tokens", QJsonObject{{"colors", colors},
-                                                    {"typography", QJsonObject{{"ui", "Noto Sans, Inter"}, {"mono", "Fira Mono"}}},
+                                                    {"typography", QJsonObject{{"ui", "No Such Font Sans, Inter"}, {"mono", "No Such Font Mono"}}},
                                                     {"geometry", QJsonObject{{"radius_small", 4}, {"radius_card", 8}, {"radius_dialog", 12}}}}},
                              {"swatches", QJsonObject{{"amber", "#aa8800"}, {"violet", "#7755cc"}, {"green", "#22aa44"}}},
                              {"accents", QJsonObject{{"files", filesAccent}}},
@@ -65,7 +66,9 @@ private slots:
         // Tokens the snapshot leaves out keep Nyx Dark's.
         QCOMPARE(theme.color("status.error"), QColor("#f2655f"));
         QCOMPARE(theme.accent(), QColor("#cc3355"));
-        QCOMPARE(theme.family(), QStringLiteral("Noto Sans"));
+        // Families the computer lacks: the system's own, fixed-width for code.
+        QCOMPARE(theme.family(), QFontDatabase::systemFont(QFontDatabase::GeneralFont).family());
+        QCOMPARE(theme.monoFamily(), QFontDatabase::systemFont(QFontDatabase::FixedFont).family());
         QCOMPARE(theme.radiusSmall(), 4);
 
         // Switched while running: followed.
@@ -123,5 +126,5 @@ private slots:
     }
 };
 
-QTEST_GUILESS_MAIN(TestSystemTheme)
+QTEST_MAIN(TestSystemTheme)
 #include "tst_systemtheme.moc"

@@ -75,6 +75,7 @@ signals:
 
 private:
     void loadFallback();
+    void installedFonts();
     bool loadSnapshot();
     void loadSuite();
     void watch();
