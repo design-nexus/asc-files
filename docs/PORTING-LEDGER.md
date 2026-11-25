@@ -304,6 +304,26 @@ ported with a reason. This list must be empty, or every entry justified, before 
   first, so nothing is lost. Without the confirmation, such a step is left as before.
 - **Open:** a bulk path for many small items; inner merge clashes by stored names.
 
+## Custom actions
+
+Legacy's custom actions (manifest, actions folder, catalog, runner, job queue) are in
+`asc-files-engine/src/actions`, ported with their tests; 88 pass.
+
+| Legacy | Engine | Legacy tests | Ported |
+|---|---|---|---|
+| `model/action.rs` (+ `examples.rs`) | `actions/model.rs` | 17 | 17 |
+| `adapters/local_actions.rs` | `actions/store.rs` | 16 | 15 |
+| `services/actions.rs` | `actions/catalog.rs` | 7 | 2 |
+| `services/jobs.rs` | `actions/jobs.rs` | 18 | 18 |
+| `adapters/local_jobs.rs` (+ `tests/{lifecycle,examples}`) | `actions/run.rs` | 33 | 33 |
+| `services/listeners.rs` | `actions/listeners.rs` | all | all |
+
+Not ported: the store's "a mount that stopped answering is not waited on" (legacy's mount lanes, which the engine
+doesn't have; the backend reads the actions folder in Files' own settings folder), and five catalog tests of
+`ActionRegistry`, legacy's GLib-loop cache of the catalog (the backend reads the catalog when asked). Changed:
+the two media recipe tests skip, saying so, when FFmpeg or ImageMagick isn't installed (as CI's container);
+they pass with them (`nix-shell -p ffmpeg imagemagick`). The actions folder is `$XDG_CONFIG_HOME/asc-files/actions`.
+
 ## Folder measuring (legacy: 9 tests)
 
 Legacy's `adapters/directory_summary/tests.rs` measured folders through GIO for Properties; the engine's
