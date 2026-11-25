@@ -24,20 +24,21 @@ const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_SCRIPT_BYTES: u64 = 1024 * 1024;
 const MAX_SHEBANG_PREFIX_BYTES: u64 = 4096;
 
-pub(crate) fn actions_directory() -> PathBuf {
+/// Where actions live: `$XDG_CONFIG_HOME/asc-files/actions`.
+pub fn actions_directory() -> PathBuf {
     config_directory().join("actions")
 }
 
-pub(crate) struct LocalActionStore {
+pub struct LocalActionStore {
     root: PathBuf,
 }
 
 impl LocalActionStore {
-    pub(crate) fn new() -> Arc<Self> {
+    pub fn new() -> Arc<Self> {
         Self::at(actions_directory())
     }
 
-    pub(crate) fn at(root: PathBuf) -> Arc<Self> {
+    pub fn at(root: PathBuf) -> Arc<Self> {
         Arc::new(Self { root })
     }
 

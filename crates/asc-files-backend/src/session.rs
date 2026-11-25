@@ -45,11 +45,17 @@ pub struct Session {
     /// Folder measurements by id, as searches.
     measures: HashMap<u64, Cancel>,
     next_measure: u64,
+    /// Custom actions: the folder, and the queue that runs them.
+    action_folder: crate::actions::Folder,
+    action_queue: crate::actions::Queue,
 }
 
 impl Session {
     pub fn new(out: Sender<Value>) -> Self {
+        let action_folder = crate::actions::Folder::new();
+        let action_queue = crate::actions::Queue::start(out.clone(), action_folder.store());
         Self {
+            action_queue,
             listings: listing::Listings::new(out.clone()),
             out,
             initialized: false,
@@ -66,6 +72,7 @@ impl Session {
             next_search: 0,
             measures: HashMap::new(),
             next_measure: 0,
+            action_folder,
         }
     }
 
@@ -336,6 +343,64 @@ impl Session {
                 }
                 now(Value::Null)
             }
+            Call::ActionsList { inputs } => now(self.action_folder.list(inputs.as_deref())),
+            Call::ActionsRead { id } => self
+                .action_folder
+                .read(&id)
+                .map(Answer::Now)
+                .map_err(|error| store_fault(&error)),
+            Call::ActionsWrite {
+                definition,
+                script,
+                create,
+            } => self
+                .action_folder
+                .write(&definition, script.as_ref(), create)
+                .map(|id| Answer::Now(json!({"id": id})))
+                .map_err(|error| store_fault(&error)),
+            Call::ActionsSetEnabled { id, enabled } => self
+                .action_folder
+                .set_enabled(&id, enabled)
+                .map(|()| Answer::Now(Value::Null))
+                .map_err(|error| store_fault(&error)),
+            Call::ActionsDelete { id } => self
+                .action_folder
+                .delete(&id)
+                .map(|()| Answer::Now(Value::Null))
+                .map_err(|error| store_fault(&error)),
+            Call::ActionsDuplicate { id } => self
+                .action_folder
+                .duplicate(&id)
+                .map(|id| Answer::Now(json!({"id": id})))
+                .map_err(|error| store_fault(&error)),
+            Call::ActionsImport { path } => self
+                .action_folder
+                .import(&path)
+                .map(|id| Answer::Now(json!({"id": id})))
+                .map_err(|error| store_fault(&error)),
+            Call::ActionsExport { id, into } => self
+                .action_folder
+                .export(&id, &into)
+                .map(|path| Answer::Now(json!({"path": wire::path(&path)})))
+                .map_err(|error| store_fault(&error)),
+            Call::ActionsExamples => now(crate::actions::examples()),
+            Call::ActionsRun {
+                id,
+                inputs,
+                parent,
+                background,
+            } => match self.action_queue.run(id, inputs, parent, background) {
+                Ok(job) => now(json!({"job": job})),
+                Err(why) => Err(Fault::operation(&Error::new(ErrorKind::Failed, &why))),
+            },
+            Call::ActionsCancel { job } => {
+                self.action_queue.cancel(job);
+                now(Value::Null)
+            }
+            Call::ActionsDismiss { job } => {
+                self.action_queue.dismiss(job);
+                now(Value::Null)
+            }
             Call::Chmod { path, bits } => {
                 let bits = u32::try_from(bits).unwrap_or(u32::MAX);
                 if bits > 0o777 {
@@ -478,6 +543,7 @@ impl Session {
         for cancel in self.searches.values().chain(self.measures.values()) {
             cancel.cancel();
         }
+        self.action_queue.finish();
         for handle in self.jobs.values() {
             handle.cancel();
         }
@@ -548,6 +614,18 @@ fn found_json(found: &asc_files_engine::search::Found) -> Value {
     })
 }
 
+/// An actions-folder error as a fault with the kind a client tells apart.
+fn store_fault(error: &asc_files_engine::actions::catalog::ActionStoreError) -> Fault {
+    use asc_files_engine::actions::catalog::ActionStoreError as Store;
+    let kind = match error {
+        Store::AlreadyExists(_) => ErrorKind::Exists,
+        Store::NotFound(_) => ErrorKind::NotFound,
+        Store::Invalid(_) | Store::IdMismatch { .. } => ErrorKind::InvalidArgument,
+        _ => ErrorKind::Failed,
+    };
+    Fault::operation(&Error::new(kind, &error.user_message()))
+}
+
 fn summary_json(summary: &asc_files_engine::info::Summary) -> Value {
     json!({
         "items": summary.items,
@@ -580,6 +658,7 @@ fn capabilities(undo: bool) -> Vec<&'static str> {
         "search.exclusions",
         "measure",
         "ops.chmod",
+        "actions",
         "list.filter",
         "trash",
         "leftovers",

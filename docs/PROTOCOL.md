@@ -130,6 +130,47 @@ Items may also take `name` (the name a conflict prompt offered; one plain name),
 `filter` lists only the entries whose names match the text typed over the folder, as a search matches names
 (below); an empty filter lists them all.
 
+## Custom actions
+
+| Method | Params | Result |
+|---|---|---|
+| `actions.list` | `inputs?` | `{actions, failures, matched?}` |
+| `actions.read` | `id` | `{definition, script}` |
+| `actions.write` | `definition`, `script?`, `create?` (false) | `{id}` |
+| `actions.setEnabled` | `id`, `enabled` | `null` |
+| `actions.delete` | `id` | `null` |
+| `actions.duplicate` | `id` | `{id}` |
+| `actions.import` | `path` | `{id}` |
+| `actions.export` | `id`, `into` | `{path}` |
+| `actions.examples` | | `[{name, category, description, requirements, inputs, extensions, folders, mode, runtime, script}]` |
+| `actions.run` | `id`, `inputs`, `parent`, `background?` (false) | `{job}` |
+| `actions.cancel` | `job` | `null` |
+| `actions.dismiss` | `job` | `null` |
+
+The user's own scripts and programs for the item menus, as legacy Files had them (its `docs/custom-actions.md`
+holds the contract scripts see: manifest, environment, progress file, Python helper). Actions live in
+`$XDG_CONFIG_HOME/asc-files/actions`, one folder each with `action.toml` and its script.
+
+`actions.list` gives every action `{id, name, description, icon, enabled, menu, runtime, mode, confirm, available,
+reason}` (`reason` says why one that can't run can't: a missing interpreter or program) and the folders that
+couldn't be read `{directory, reason}`. Given `inputs` (`[{path, folder?, type?}]`, the selection with each item's
+type as the client guessed it), `matched` holds the ids offered for them, top-level ones first: enabled actions
+whose `[when]` every input satisfies.
+
+`actions.read` gives an action's manifest as JSON (the same fields as `action.toml`) and its script; `actions.write`
+takes them back, checked as the manifest is: `create` makes a new action and never replaces one, otherwise the
+action is changed (a `null` script keeps the stored one). `actions.duplicate` copies an action, disabled, under the
+first free `<id>-copy…` id; `actions.import` copies an action folder in, disabled for review; `actions.export` writes
+a portable copy into a folder. `actions.examples` is the recipe library the editor offers.
+
+`actions.run` queues an action on `inputs`, read again first: an action changed, disabled or removed since it
+was listed, or that no longer takes the inputs, does not run. At most two run at once; a per-item action runs once
+per input in turn. `action.job {job, name, icon, mode, parent, status, completed, succeeded, failed, total,
+fraction, step, message, log, logTruncated, created, elapsed}` says how a run goes whenever it changes (at least each
+second while it runs); `status` is `queued`, `running`, `cancelling`, `succeeded`, `failed` or `cancelled`.
+`actions.cancel` stops a run (its whole process group); `actions.dismiss` forgets a finished one. Shutdown stops
+what is running and waits for it a few seconds.
+
 ## Properties
 
 | Method | Params | Result |

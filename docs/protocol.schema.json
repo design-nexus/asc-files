@@ -100,6 +100,82 @@
       ],
       "additionalProperties": false
     },
+    "action": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "menu": {
+          "enum": [
+            "submenu",
+            "top"
+          ]
+        },
+        "runtime": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "confirm": {
+          "type": "boolean"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "available",
+        "confirm",
+        "description",
+        "enabled",
+        "icon",
+        "id",
+        "menu",
+        "mode",
+        "name",
+        "reason",
+        "runtime"
+      ],
+      "additionalProperties": false
+    },
     "found": {
       "type": "object",
       "properties": {
@@ -670,6 +746,7 @@
             "list.unmounted",
             "search.found",
             "search.finished",
+            "action.job",
             "measure.progress",
             "measure.finished",
             "job.queued",
@@ -1477,6 +1554,453 @@
             "mode"
           ],
           "additionalProperties": false
+        }
+      },
+      "actions.list": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "inputs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "$ref": "#/$defs/path"
+                  },
+                  "folder": {
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "actions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/action"
+              }
+            },
+            "failures": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "directory": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "directory",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "matched": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "actions",
+            "failures"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "actions.read": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "definition": {
+              "type": "object"
+            },
+            "script": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "fileName": {
+                      "type": "string"
+                    },
+                    "contents": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "contents",
+                    "fileName"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "definition",
+            "script"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "actions.write": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "definition": {
+              "type": "object"
+            },
+            "script": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "fileName": {
+                      "type": "string"
+                    },
+                    "contents": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "contents",
+                    "fileName"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "create": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "definition"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "actions.setEnabled": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "null"
+        }
+      },
+      "actions.delete": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "null"
+        }
+      },
+      "actions.duplicate": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "actions.import": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/path"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "actions.export": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "into": {
+              "$ref": "#/$defs/path"
+            }
+          },
+          "required": [
+            "id",
+            "into"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/path"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "actions.examples": {
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "requirements": {
+                "type": "string"
+              },
+              "inputs": {
+                "type": "string"
+              },
+              "extensions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "folders": {
+                "type": "boolean"
+              },
+              "mode": {
+                "type": "string"
+              },
+              "runtime": {
+                "type": "string"
+              },
+              "script": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "category",
+              "description",
+              "extensions",
+              "folders",
+              "inputs",
+              "mode",
+              "name",
+              "requirements",
+              "runtime",
+              "script"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "actions.run": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "inputs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "$ref": "#/$defs/path"
+                  },
+                  "folder": {
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "parent": {
+              "$ref": "#/$defs/path"
+            },
+            "background": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "inputs",
+            "parent"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "job": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "job"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "actions.cancel": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "job": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "job"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "null"
+        }
+      },
+      "actions.dismiss": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "job": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "job"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "null"
         }
       },
       "search.cancel": {
@@ -2298,6 +2822,126 @@
           "matched",
           "search",
           "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "action.job": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "type": "string"
+          },
+          "parent": {
+            "$ref": "#/$defs/path"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "cancelling",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "completed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "succeeded": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "log": {
+            "type": "string"
+          },
+          "logTruncated": {
+            "type": "boolean"
+          },
+          "created": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/path"
+            }
+          },
+          "elapsed": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "completed",
+          "created",
+          "elapsed",
+          "failed",
+          "fraction",
+          "icon",
+          "job",
+          "log",
+          "logTruncated",
+          "message",
+          "mode",
+          "name",
+          "parent",
+          "status",
+          "step",
+          "succeeded",
+          "total"
         ],
         "additionalProperties": false
       },

@@ -92,7 +92,8 @@ impl ActionCatalog {
         Self { actions, failures }
     }
 
-    fn stored(stored: StoredActions) -> Self {
+    /// The catalog of what the store loaded (and located).
+    pub fn from_stored(stored: StoredActions) -> Self {
         Self::new(
             stored.actions.into_iter().map(Rc::new).collect(),
             stored.failures,

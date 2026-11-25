@@ -119,6 +119,48 @@ pub enum Call {
     MeasureCancel {
         measure: u64,
     },
+    /// Custom actions (`actions.*`): the folder, read and edited, and runs.
+    ActionsList {
+        inputs: Option<Vec<crate::actions::Input>>,
+    },
+    ActionsRead {
+        id: String,
+    },
+    ActionsWrite {
+        definition: Value,
+        script: Option<Value>,
+        create: bool,
+    },
+    ActionsSetEnabled {
+        id: String,
+        enabled: bool,
+    },
+    ActionsDelete {
+        id: String,
+    },
+    ActionsDuplicate {
+        id: String,
+    },
+    ActionsImport {
+        path: PathBuf,
+    },
+    ActionsExport {
+        id: String,
+        into: PathBuf,
+    },
+    ActionsExamples,
+    ActionsRun {
+        id: String,
+        inputs: Vec<crate::actions::Input>,
+        parent: PathBuf,
+        background: bool,
+    },
+    ActionsCancel {
+        job: u64,
+    },
+    ActionsDismiss {
+        job: u64,
+    },
     /// The read, write and run bits of `path` set to `bits`.
     Chmod {
         path: PathBuf,
@@ -284,6 +326,59 @@ fn call(method: &str, params: &Params) -> Result<Call, Fault> {
         },
         "measure.cancel" => Call::MeasureCancel {
             measure: params.u64("measure")?,
+        },
+        "actions.list" => Call::ActionsList {
+            inputs: params.optional("inputs", |at, value| inputs(&params, at, value))?,
+        },
+        "actions.read" => Call::ActionsRead {
+            id: params.string("id")?,
+        },
+        "actions.write" => Call::ActionsWrite {
+            definition: params.required("definition", |at, value| {
+                value
+                    .is_object()
+                    .then(|| value.clone())
+                    .ok_or_else(|| Fault::invalid_params(format!("{at} must be an object")))
+            })?,
+            script: params.optional("script", |at, value| {
+                value
+                    .is_object()
+                    .then(|| value.clone())
+                    .ok_or_else(|| Fault::invalid_params(format!("{at} must be an object")))
+            })?,
+            create: params.optional("create", Params::bool_of)?.unwrap_or(false),
+        },
+        "actions.setEnabled" => Call::ActionsSetEnabled {
+            id: params.string("id")?,
+            enabled: params.required("enabled", Params::bool_of)?,
+        },
+        "actions.delete" => Call::ActionsDelete {
+            id: params.string("id")?,
+        },
+        "actions.duplicate" => Call::ActionsDuplicate {
+            id: params.string("id")?,
+        },
+        "actions.import" => Call::ActionsImport {
+            path: params.path("path")?,
+        },
+        "actions.export" => Call::ActionsExport {
+            id: params.string("id")?,
+            into: params.path("into")?,
+        },
+        "actions.examples" => Call::ActionsExamples,
+        "actions.run" => Call::ActionsRun {
+            id: params.string("id")?,
+            inputs: params.required("inputs", |at, value| inputs(&params, at, value))?,
+            parent: params.path("parent")?,
+            background: params
+                .optional("background", Params::bool_of)?
+                .unwrap_or(false),
+        },
+        "actions.cancel" => Call::ActionsCancel {
+            job: params.u64("job")?,
+        },
+        "actions.dismiss" => Call::ActionsDismiss {
+            job: params.u64("job")?,
         },
         "ops.chmod" => Call::Chmod {
             path: params.path("path")?,
@@ -466,6 +561,33 @@ fn not_a_name(at: &str) -> Fault {
 
 fn unknown_value(at: &str, value: &str) -> Fault {
     Fault::invalid_params(format!("unknown {at} {value:?}"))
+}
+
+/// Selected items for an action: `[{path, folder?, type?}]`.
+fn inputs(
+    params: &Params<'_>,
+    at: &str,
+    value: &Value,
+) -> Result<Vec<crate::actions::Input>, Fault> {
+    let Value::Array(items) = value else {
+        return Err(Fault::invalid_params(format!("{at} must be an array")));
+    };
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let at = format!("{at}[{index}]");
+            let Value::Object(fields) = item else {
+                return Err(Fault::invalid_params(format!("{at} must be an object")));
+            };
+            let input = params.nested(&at, fields);
+            Ok(crate::actions::Input {
+                path: input.path("path")?,
+                folder: input.optional("folder", Params::bool_of)?.unwrap_or(false),
+                content_type: input.optional("type", Params::string_of)?,
+            })
+        })
+        .collect()
 }
 
 /// An object's fields, named in errors by their place in the request (`items[2].source`).

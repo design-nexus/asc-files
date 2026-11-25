@@ -1127,3 +1127,109 @@ fn a_folder_is_measured_and_permissions_change() {
     assert_eq!(refused["error"]["code"], -32602, "{refused}");
     backend.call("shutdown", json!({}), &mut notes);
 }
+
+#[test]
+fn an_action_is_written_offered_and_run() {
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    backend.call("initialize", json!({}), &mut notes);
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    let file = root.path().join("notes.txt");
+    fs::write(&file, b"one\ntwo\n").unwrap();
+    let written = backend.call(
+        "actions.write",
+        json!({
+            "definition": {
+                "schema_version": 1, "id": "count", "name": "Count lines", "enabled": true,
+                "when": {"kinds": ["file"], "extensions": ["txt"]},
+                "run": {"runtime": "bash", "entrypoint": "run.sh", "mode": "per-item"},
+            },
+            // Paths come in a file, NUL-separated, as legacy's contract has them.
+            "script": {"fileName": "run.sh", "contents": "#!/usr/bin/env bash\nwhile IFS= read -r -d '' path; do wc -l < \"$path\"; done < \"$NYX_FILES_ACTION_PATHS\"\n"},
+            "create": true,
+        }),
+        &mut notes,
+    );
+    assert_eq!(written["result"]["id"], "count", "{written}");
+    let again = backend.call("actions.write", written_again(), &mut notes);
+    assert_eq!(again["error"]["data"]["kind"], "exists", "{again}");
+    // Read as a manifest is: [when] is required there too.
+    let mut unsaid = written_again();
+    unsaid["definition"].as_object_mut().unwrap().remove("when");
+    let refused = backend.call("actions.write", unsaid, &mut notes);
+    assert_eq!(
+        refused["error"]["data"]["kind"], "invalidArgument",
+        "{refused}"
+    );
+
+    let listed = backend.call(
+        "actions.list",
+        json!({"inputs": [{"path": file, "type": "text/plain"}]}),
+        &mut notes,
+    );
+    assert_eq!(listed["result"]["matched"], json!(["count"]), "{listed}");
+    let photo = backend.call(
+        "actions.list",
+        json!({"inputs": [{"path": root.path().join("a.png")}]}),
+        &mut notes,
+    );
+    assert_eq!(photo["result"]["matched"], json!([]));
+    if listed["result"]["actions"][0]["available"] != true {
+        eprintln!("skipping the run: bash is not installed");
+        backend.call("shutdown", json!({}), &mut notes);
+        return;
+    }
+
+    let run = backend.call(
+        "actions.run",
+        json!({"id": "count", "inputs": [{"path": file}], "parent": root.path()}),
+        &mut notes,
+    );
+    let job = run["result"]["job"].clone();
+    backend.until(&mut notes, |n| {
+        n["method"] == "action.job"
+            && n["params"]["job"] == job
+            && ["succeeded", "failed", "cancelled"]
+                .contains(&n["params"]["status"].as_str().unwrap_or(""))
+    });
+    let done = notes
+        .iter()
+        .rev()
+        .find(|n| n["method"] == "action.job")
+        .unwrap()["params"]
+        .clone();
+    assert_eq!(done["status"], "succeeded", "{done}");
+    assert_eq!(done["succeeded"], 1, "{done}");
+    assert!(done["log"].as_str().unwrap().contains('2'), "{done}");
+
+    // Disabled: no longer run.
+    backend.call(
+        "actions.setEnabled",
+        json!({"id": "count", "enabled": false}),
+        &mut notes,
+    );
+    let refused = backend.call(
+        "actions.run",
+        json!({"id": "count", "inputs": [{"path": file}], "parent": root.path()}),
+        &mut notes,
+    );
+    assert!(refused["error"].is_object(), "{refused}");
+    let copied = backend.call("actions.duplicate", json!({"id": "count"}), &mut notes);
+    assert_eq!(copied["result"]["id"], "count-copy");
+    backend.call("actions.delete", json!({"id": "count"}), &mut notes);
+    let left = backend.call("actions.list", json!({}), &mut notes);
+    assert_eq!(
+        left["result"]["actions"].as_array().unwrap().len(),
+        1,
+        "{left}"
+    );
+    backend.call("shutdown", json!({}), &mut notes);
+}
+
+fn written_again() -> Value {
+    json!({
+        "definition": {"schema_version": 1, "id": "count", "name": "Count lines", "when": {}, "run": {"runtime": "bash", "entrypoint": "run.sh"}},
+        "script": {"fileName": "run.sh", "contents": "#!/usr/bin/env bash\n"},
+        "create": true,
+    })
+}
