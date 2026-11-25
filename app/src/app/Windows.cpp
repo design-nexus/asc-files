@@ -5,6 +5,7 @@
 #include "models/SearchModel.h"
 #include "models/TabModel.h"
 #include "render/Preview.h"
+#include "settings/AppSettings.h"
 
 #include <QDir>
 #include <QGuiApplication>
@@ -24,7 +25,8 @@ Windows::Windows(QQmlEngine *engine, QVariantMap shared, QObject *parent)
 }
 
 QQuickWindow *Windows::open(const QStringList &asked) {
-    // A page that isn't a folder (the Overview, Search) gives no folder: the window opens Home.
+    // A page that isn't a folder (the Overview, Search) gives no folder: the window opens on the
+    // start folder.
     QStringList folders = asked;
     folders.removeAll(QString());
     auto *backend = m_shared.value(QStringLiteral("backend")).value<BackendClient *>();
@@ -58,7 +60,7 @@ QQuickWindow *Windows::open(const QStringList &asked) {
     m_sessionTaken = true;
     tabs->setKeepsSession(keepsSession);
     if (folders.isEmpty() && !(keepsSession && tabs->restoreSession())) {
-        tabs->openTab(QDir::homePath());
+        tabs->openTab(AppSettings::shared().startFolderOrHome());
     }
     for (const QString &folder : folders) {
         tabs->openTab(QDir(folder).absolutePath());

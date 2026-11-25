@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Layouts
 
 import AscFiles
+import AscFiles.System
 
 // One entry in Icons view: a large icon (a thumbnail later) over its name in up to two lines.
 Rectangle {
@@ -51,7 +52,7 @@ Rectangle {
                 asynchronous: true
                 fillMode: Image.PreserveAspectFit
                 sourceSize: Qt.size(128, 128)
-                source: tile.thumbnail.length > 0 ? "image://thumbnail/" + tile.thumbnail : ""
+                source: tile.thumbnail.length > 0 && AppSettings.showThumbnails ? "image://thumbnail/" + tile.thumbnail : ""
             }
             Icon {
                 visible: !picture.visible

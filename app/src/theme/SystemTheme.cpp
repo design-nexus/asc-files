@@ -6,6 +6,8 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
+#include <QSaveFile>
 #include <QtQml/qqml.h>
 #include <QStandardPaths>
 #include <QTimer>
@@ -151,6 +153,73 @@ void SystemTheme::loadSuite() {
     m_density = density == QLatin1String("compact") || density == QLatin1String("relaxed") ? density : QStringLiteral("comfortable");
     // The accent chosen for Files in Settings, by swatch name; Nyx's apps read it under their id.
     m_accentChoice = tomlValue(text, QStringLiteral("app_accents"), QStringLiteral("files"));
+}
+
+QString SystemTheme::withFilesAccent(const QString &text, const QString &swatch) {
+    QStringList lines = text.split(u'\n');
+    if (!lines.isEmpty() && lines.last().isEmpty()) {
+        lines.removeLast();
+    }
+    const QString entry = QStringLiteral("files = \"%1\"").arg(swatch);
+    qsizetype table = -1;
+    for (qsizetype i = 0; i < lines.size(); ++i) {
+        const QString line = lines.at(i).trimmed();
+        if (line.startsWith(u'[')) {
+            if (table >= 0) {
+                break; // Past the table: no files key in it.
+            }
+            if (line.mid(1, line.indexOf(u']') - 1).trimmed() == QLatin1String("app_accents")) {
+                table = i;
+            }
+            continue;
+        }
+        const qsizetype equals = line.indexOf(u'=');
+        if (table >= 0 && equals > 0 && line.left(equals).trimmed() == QLatin1String("files")) {
+            if (swatch.isEmpty()) {
+                lines.removeAt(i);
+            } else {
+                lines[i] = entry;
+            }
+            return lines.join(u'\n') + u'\n';
+        }
+    }
+    if (swatch.isEmpty()) {
+        return text;
+    }
+    if (table >= 0) {
+        lines.insert(table + 1, entry);
+    } else {
+        if (!lines.isEmpty() && !lines.last().trimmed().isEmpty()) {
+            lines.append(QString());
+        }
+        lines.append(QStringLiteral("[app_accents]"));
+        lines.append(entry);
+    }
+    return lines.join(u'\n') + u'\n';
+}
+
+void SystemTheme::setAccentChoice(const QString &swatch) {
+    if (swatch == m_accentChoice || (!swatch.isEmpty() && !m_swatches.contains(swatch))) {
+        return;
+    }
+    QFile current(suitePath());
+    const QString text = current.open(QIODevice::ReadOnly) ? QString::fromUtf8(current.readAll()) : QString();
+    current.close();
+    QDir().mkpath(QFileInfo(suitePath()).path());
+    QSaveFile file(suitePath());
+    if (!file.open(QIODevice::WriteOnly)) {
+        return;
+    }
+    file.write(withFilesAccent(text, swatch).toUtf8());
+    if (file.commit()) {
+        reload();
+    }
+}
+
+bool SystemTheme::canOpenThemeSettings() const { return !QStandardPaths::findExecutable(QStringLiteral("nyx-settings")).isEmpty(); }
+
+void SystemTheme::openThemeSettings() const {
+    QProcess::startDetached(QStringLiteral("nyx-settings"), {QStringLiteral("--section"), QStringLiteral("appearance")});
 }
 
 void SystemTheme::reload() {

@@ -92,6 +92,35 @@ private slots:
         QFile::remove(SystemTheme::suitePath());
         QFile::remove(SystemTheme::runtimeDir() + "/system.json");
     }
+
+    void filesAccentIsKeptInItsOwnLine() {
+        const QString suite = "# my settings\nmode = \"theme\"\n\n[app_accents]\nmail = \"amber\" # kept\n\n[tokens]\n\"accent.primary\" = \"#ff8800\"\n";
+        // Added under the table that exists, the rest untouched.
+        const QString added = SystemTheme::withFilesAccent(suite, "violet");
+        QCOMPARE(added, QString("# my settings\nmode = \"theme\"\n\n[app_accents]\nfiles = \"violet\"\nmail = \"amber\" # kept\n\n[tokens]\n\"accent.primary\" = \"#ff8800\"\n"));
+        // Changed in place, then taken out.
+        QCOMPARE(SystemTheme::withFilesAccent(added, "green"), QString(added).replace("violet", "green"));
+        QCOMPARE(SystemTheme::withFilesAccent(added, ""), suite);
+        // A files key in another table is not ours.
+        QCOMPARE(SystemTheme::withFilesAccent("[applications]\nfiles = 1\n", "teal"), QString("[applications]\nfiles = 1\n\n[app_accents]\nfiles = \"teal\"\n"));
+        QCOMPARE(SystemTheme::withFilesAccent("", "teal"), QString("[app_accents]\nfiles = \"teal\"\n"));
+        QCOMPARE(SystemTheme::withFilesAccent("mode = \"theme\"\n", ""), QString("mode = \"theme\"\n"));
+
+        // Chosen in Files: written, and followed.
+        writeAtomically(SystemTheme::runtimeDir() + "/system.json", snapshot("Paper", "light", "#fafafa", "#202020", "#cc3355"));
+        writeAtomically(SystemTheme::suitePath(), suite.toUtf8());
+        SystemTheme theme;
+        theme.setAccentChoice("violet");
+        QCOMPARE(theme.accentChoice(), QStringLiteral("violet"));
+        QCOMPARE(theme.accent(), QColor("#7755cc"));
+        QFile file(SystemTheme::suitePath());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(QString::fromUtf8(file.readAll()), added);
+        theme.setAccentChoice("");
+        QCOMPARE(theme.accent(), QColor("#cc3355"));
+        QFile::remove(SystemTheme::suitePath());
+        QFile::remove(SystemTheme::runtimeDir() + "/system.json");
+    }
 };
 
 QTEST_GUILESS_MAIN(TestSystemTheme)

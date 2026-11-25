@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
-import QtCore
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import QtQuick.Window
 
 import AscFiles
+import AscFiles.System
 
 // The Files window in its current layout: header across the top, the sidebar of places, and the
 // rounded content panel holding the tab row and the folder.
@@ -46,15 +46,9 @@ ApplicationWindow {
     // The preview drawer: shown as a Popup over the window (as legacy's default) or a Panel beside
     // the folder, and following the item the keyboard is on.
     property bool previewOpen: false
-    readonly property bool previewAsPanel: previewSettings.style === "panel"
+    readonly property bool previewAsPanel: AppSettings.previewStyle === "panel"
     readonly property string previewPath: previewOpen && view ? view.currentPath : ""
     onPreviewPathChanged: preview.show(previewPath)
-    Settings {
-        id: previewSettings
-        location: StandardPaths.writableLocation(StandardPaths.ConfigLocation) + "/asc-files/asc-files.ini"
-        category: "preview"
-        property string style: "popup"
-    }
 
     // The sidebar as chosen, railed when the window is too narrow for it in full.
     readonly property int sidebarMode: places.mode === 2 ? 2 : places.mode === 0 && width < 900 ? 1 : places.mode
@@ -136,10 +130,23 @@ ApplicationWindow {
                 Row {
                     id: tools
                     IconButton { id: appearanceButton; label: qsTr("Appearance"); onClicked: appearanceMenu.popup(appearanceButton, 0, appearanceButton.height + 4); iconPath: "M8 2.5a5.5 5.5 0 0 0 0 11c.9 0 1.2-.6 1-1.3-.3-.9.2-1.7 1.2-1.7h1.3a2 2 0 0 0 2-2A5.8 5.8 0 0 0 8 2.5zM5.5 7h.01M8 5h.01" }
-                    IconButton { label: qsTr("Settings"); iconPath: "M2.5 5h7M12.5 5h1M2.5 11h1M6.5 11h7M11 3.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM5 9.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" }
+                    IconButton { label: qsTr("Settings (Ctrl+,)"); onClicked: settingsDialog.open(); iconPath: "M2.5 5h7M12.5 5h1M2.5 11h1M6.5 11h7M11 3.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM5 9.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" }
                 }
             }
-            IconButton { Layout.leftMargin: 6; label: qsTr("Close"); iconPath: "m4 4 8 8M12 4l-8 8"; onClicked: window.close() }
+            IconButton {
+                Layout.leftMargin: 6
+                visible: AppSettings.windowButtons
+                label: qsTr("Minimize")
+                iconPath: "M4 8h8"
+                onClicked: window.showMinimized()
+            }
+            IconButton {
+                visible: AppSettings.windowButtons
+                label: window.visibility === Window.Maximized ? qsTr("Restore") : qsTr("Maximize")
+                iconPath: window.visibility === Window.Maximized ? "M5.5 3.5h7v7M3.5 5.5h7v7h-7z" : "M3.5 3.5h9v9h-9z"
+                onClicked: window.visibility === Window.Maximized ? window.showNormal() : window.showMaximized()
+            }
+            IconButton { Layout.leftMargin: AppSettings.windowButtons ? 0 : 6; label: qsTr("Close"); iconPath: "m4 4 8 8M12 4l-8 8"; onClicked: window.close() }
         }
 
         RowLayout {
@@ -252,11 +259,7 @@ ApplicationWindow {
                         }
                     }
                 }
-                Text {
-                    visible: !sidebar.compact
-                    Layout.leftMargin: 26; Layout.bottomMargin: 18; Layout.topMargin: 8
-                    text: qsTr("F1 Shortcuts"); color: Theme.textSoft; font.family: Theme.family; font.pointSize: Theme.tiny; font.weight: Font.Bold
-                }
+                Item { Layout.preferredHeight: 18 }
             }
 
             // Content panel
@@ -445,6 +448,12 @@ ApplicationWindow {
     }
     ConflictDialog { ops: window.ops; listening: window.foremost }
     ConfirmDialog { id: confirm }
+    SettingsDialog {
+        id: settingsDialog
+        places: window.places
+        theme: SystemTheme
+        currentFolder: window.inFolder ? window.browser.location : ""
+    }
 
     // A right click on an item named by its path: in Recent, Favorites, search results, the
     // Overview, a crumb, a column other than the current folder's.
@@ -647,8 +656,8 @@ ApplicationWindow {
     // The header's Appearance menu.
     ContextMenu {
         id: appearanceMenu
-        MenuItem { text: qsTr("Preview as Popup"); checkable: true; checked: !window.previewAsPanel; onTriggered: previewSettings.style = "popup" }
-        MenuItem { text: qsTr("Preview as Panel"); checkable: true; checked: window.previewAsPanel; onTriggered: previewSettings.style = "panel" }
+        MenuItem { text: qsTr("Preview as Popup"); checkable: true; checked: !window.previewAsPanel; onTriggered: AppSettings.previewStyle = "popup" }
+        MenuItem { text: qsTr("Preview as Panel"); checkable: true; checked: window.previewAsPanel; onTriggered: AppSettings.previewStyle = "panel" }
         MenuSeparator {}
         MenuItem { text: qsTr("Show Hidden Files"); checkable: true; enabled: window.inFolder; checked: window.folderModel !== null && window.folderModel.showHidden; onTriggered: window.folderModel.showHidden = !window.folderModel.showHidden }
     }
@@ -782,6 +791,7 @@ ApplicationWindow {
     Shortcut { sequences: [StandardKey.Redo, "Ctrl+Shift+Z"]; onActivated: window.ops.redo() }
     Shortcut { sequence: "Ctrl+Shift+N"; enabled: window.inFolder; onActivated: window.ops.create(window.folderModel, true) }
     Shortcut { sequence: "Space"; enabled: !previewPopup.visible; onActivated: window.previewOpen = !window.previewOpen }
+    Shortcut { sequence: "Ctrl+,"; onActivated: settingsDialog.open() }
     Shortcut { sequence: "Ctrl+K"; onActivated: { searchField.forceActiveFocus(); searchField.selectAll() } }
     Shortcut { sequence: "Ctrl+1"; onActivated: window.browser.setView(0) }
     Shortcut { sequence: "Ctrl+2"; onActivated: window.browser.setView(1) }

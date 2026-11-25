@@ -3,6 +3,7 @@
 
 #include "../backend/BackendClient.h"
 #include "../backend/Wire.h"
+#include "../settings/AppSettings.h"
 #include "../thumbnails/Thumbnails.h"
 
 #include <QDateTime>
@@ -39,32 +40,18 @@ QString kindText(const QString &kind, const QString &name) {
     return type.isDefault() ? FolderModel::tr("File") : type.comment();
 }
 
-/// When an item changed, as Files words it: hours ago today, the weekday this week, else the date.
-QString modifiedText(const QDateTime &when) {
-    const QDateTime now = QDateTime::currentDateTime();
-    const qint64 seconds = when.secsTo(now);
-    if (seconds < 0) {
-        return QLocale().toString(when, QLocale::ShortFormat);
-    }
-    if (seconds < 60) {
-        return FolderModel::tr("Just now");
-    }
-    if (seconds < 3600) {
-        return FolderModel::tr("%1m ago").arg(seconds / 60);
-    }
-    if (seconds < 86400) {
-        return FolderModel::tr("%1h ago").arg(seconds / 3600);
-    }
-    if (when.date().daysTo(now.date()) < 7) {
-        return QLocale().dayName(when.date().dayOfWeek());
-    }
-    return QLocale().toString(when.date(), QStringLiteral("MMM d, yyyy"));
-}
+/// When an item changed, in the date format chosen in Settings.
+QString modifiedText(const QDateTime &when) { return AppSettings::shared().modifiedText(when, QDateTime::currentDateTime()); }
 
 } // namespace
 
 FolderModel::FolderModel(BackendClient *backend, QObject *parent) : QAbstractListModel(parent), m_backend(backend) {
     connect(m_backend, &BackendClient::notification, this, &FolderModel::notification);
+    connect(&AppSettings::shared(), &AppSettings::dateFormatChanged, this, [this] {
+        if (rowCount() > 0) {
+            emit dataChanged(index(0), index(rowCount() - 1), {ModifiedTextRole});
+        }
+    });
     // A new backend holds no listing: read the folder again from it.
     connect(m_backend, &BackendClient::restarted, this, [this] {
         m_listing = -1;

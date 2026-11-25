@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "FolderViews.h"
 
+#include "../settings/AppSettings.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -26,7 +28,6 @@ FolderViews::FolderViews() {
         return;
     }
     const QJsonObject saved = QJsonDocument::fromJson(file.readAll()).object();
-    m_defaultView = qBound(int(List), saved.value(QStringLiteral("defaultView")).toInt(List), int(Columns));
     for (const QJsonValue &value : saved.value(QStringLiteral("folders")).toArray()) {
         const QJsonObject folder = value.toObject();
         const QString path = folder.value(QStringLiteral("path")).toString();
@@ -45,9 +46,18 @@ FolderViews::Choice FolderViews::choice(const QString &folder) const {
     if (found != m_choices.cend()) {
         return *found;
     }
-    Choice fresh;
-    fresh.view = m_defaultView;
-    return fresh;
+    return defaults();
+}
+
+FolderViews::Choice FolderViews::defaults() {
+    const AppSettings &settings = AppSettings::shared();
+    return {settings.defaultView(), settings.defaultSort(), settings.defaultDescending()};
+}
+
+void FolderViews::forgetAll() {
+    m_choices.clear();
+    m_order.clear();
+    save();
 }
 
 void FolderViews::remember(const QString &folder, const Choice &choice) {
@@ -60,11 +70,6 @@ void FolderViews::remember(const QString &folder, const Choice &choice) {
     save();
 }
 
-void FolderViews::setDefaultView(int view) {
-    m_defaultView = qBound(int(List), view, int(Columns));
-    save();
-}
-
 void FolderViews::save() const {
     QJsonArray folders;
     for (const QString &path : m_order) {
@@ -74,7 +79,7 @@ void FolderViews::save() const {
     QDir().mkpath(QFileInfo(filePath()).path());
     QSaveFile file(filePath());
     if (file.open(QIODevice::WriteOnly)) {
-        file.write(QJsonDocument(QJsonObject{{"defaultView", m_defaultView}, {"folders", folders}}).toJson(QJsonDocument::Compact));
+        file.write(QJsonDocument(QJsonObject{{"folders", folders}}).toJson(QJsonDocument::Compact));
         file.commit();
     }
 }

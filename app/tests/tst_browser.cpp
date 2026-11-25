@@ -6,6 +6,7 @@
 #include "models/ColumnsModel.h"
 #include "models/FolderViews.h"
 #include "models/TabModel.h"
+#include "settings/AppSettings.h"
 
 #include <QFile>
 #include <QSignalSpy>
@@ -157,12 +158,12 @@ private slots:
         Browser browser(&backend);
         browser.goPath(dir.filePath("photos"));
         QVERIFY(openedAt(browser, dir.filePath("photos")));
-        QCOMPARE(browser.view(), FolderViews::shared().defaultView());
+        QCOMPARE(browser.view(), AppSettings::shared().defaultView());
         browser.setView(FolderViews::Icons);
         browser.sortBy(QStringLiteral("modified"));
         QCOMPARE(browser.folderModel()->sortKey(), QStringLiteral("modified"));
         QVERIFY(browser.folderModel()->sortDescending());
-        // A folder never set keeps the view it is opened in, and sorts by name.
+        // A folder never set keeps the view the tab is in, and takes the default sort.
         browser.goPath(dir.filePath("papers"));
         QVERIFY(openedAt(browser, dir.filePath("papers")));
         QCOMPARE(browser.view(), int(FolderViews::Icons));
@@ -178,6 +179,41 @@ private slots:
         QFile saved(FolderViews::filePath());
         QVERIFY(saved.open(QIODevice::ReadOnly));
         QVERIFY(saved.readAll().contains("photos"));
+    }
+
+    void theDefaultsAndForgettingComeFromSettings() {
+        QTemporaryDir dir;
+        QVERIFY(QDir().mkpath(dir.filePath("a")));
+        QVERIFY(QDir().mkpath(dir.filePath("b")));
+        AppSettings &settings = AppSettings::shared();
+        settings.setDefaultView(FolderViews::Columns);
+        settings.setDefaultSort(QStringLiteral("size"));
+        settings.setDefaultDescending(true);
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        Browser browser(&backend);
+        browser.goPath(dir.filePath("a"));
+        QVERIFY(openedAt(browser, dir.filePath("a")));
+        QCOMPARE(browser.view(), int(FolderViews::Columns));
+        QCOMPARE(browser.folderModel()->sortKey(), QStringLiteral("size"));
+        QVERIFY(browser.folderModel()->sortDescending());
+
+        // Not kept per folder: the tab's view goes along, and nothing is written.
+        settings.setRememberFolderViews(false);
+        browser.setView(FolderViews::Icons);
+        QVERIFY(!FolderViews::shared().has(dir.filePath("a")));
+        browser.goPath(dir.filePath("b"));
+        QVERIFY(openedAt(browser, dir.filePath("b")));
+        QCOMPARE(browser.view(), int(FolderViews::Icons));
+
+        settings.setRememberFolderViews(true);
+        browser.setView(FolderViews::List);
+        QVERIFY(settings.hasFolderViews());
+        settings.forgetFolderViews();
+        QVERIFY(!settings.hasFolderViews());
+        settings.setDefaultView(FolderViews::List);
+        settings.setDefaultSort(QStringLiteral("name"));
+        settings.setDefaultDescending(false);
     }
 
     void columnsRunFromHomeToTheFolder() {

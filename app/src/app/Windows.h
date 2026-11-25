@@ -20,7 +20,7 @@ public:
     /// `shared`: the app-wide objects each window is given, by the names Main.qml takes.
     Windows(QQmlEngine *engine, QVariantMap shared, QObject *parent = nullptr);
 
-    /// Opens a window on `folders` (one tab each), else on Home; the first window opened brings
+    /// Opens a window on `folders` (one tab each), else on the start folder; the first window brings
     /// back the last session's tabs when it isn't given folders.
     Q_INVOKABLE QQuickWindow *open(const QStringList &folders = {});
 

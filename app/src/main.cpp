@@ -11,6 +11,7 @@
 #include "models/Transfers.h"
 #include "ops/Operations.h"
 #include "render/Preview.h"
+#include "settings/AppSettings.h"
 #include "theme/SystemTheme.h"
 #include "thumbnails/Thumbnails.h"
 #include "models/TrashModel.h"
@@ -56,6 +57,7 @@ int main(int argc, char *argv[]) {
 
     // The Nyx theme, followed live; Theme.qml reads it.
     SystemTheme::registerType();
+    AppSettings::registerType();
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
     engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider);

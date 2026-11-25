@@ -2,6 +2,7 @@
 #include "TabModel.h"
 
 #include "Browser.h"
+#include "../settings/AppSettings.h"
 
 #include <QFile>
 #include <QSettings>
@@ -39,6 +40,9 @@ void TabModel::saveSession() const {
 }
 
 bool TabModel::restoreSession() {
+    if (!AppSettings::shared().restoreTabs()) {
+        return false;
+    }
     const QSettings session = settings();
     const QStringList saved = session.value(QStringLiteral("session/tabs")).toStringList();
     // As legacy Files: a single tab is not brought back; Files starts at Home.

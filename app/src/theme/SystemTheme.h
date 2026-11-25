@@ -29,6 +29,10 @@ class SystemTheme : public QObject {
     Q_PROPERTY(int radiusCard READ radiusCard NOTIFY changed)
     Q_PROPERTY(int radiusDialog READ radiusDialog NOTIFY changed)
     Q_PROPERTY(qint64 generation READ generation NOTIFY changed)
+    /// The swatch chosen for Files in Settings (`amber`, …); empty: the theme's own.
+    Q_PROPERTY(QString accentChoice READ accentChoice WRITE setAccentChoice NOTIFY changed)
+    /// Whether Nyx Settings is installed to change the theme, text size and density.
+    Q_PROPERTY(bool canOpenThemeSettings READ canOpenThemeSettings CONSTANT)
 public:
     explicit SystemTheme(QObject *parent = nullptr);
 
@@ -42,6 +46,8 @@ public:
     /// A colour token (`surface.primary`), or `fallback` where the theme has none.
     Q_INVOKABLE QColor color(const QString &token, const QColor &fallback = QColor()) const;
     Q_INVOKABLE void reload();
+    /// Opens Nyx Settings on its Appearance page.
+    Q_INVOKABLE void openThemeSettings() const;
 
     QVariantMap colors() const { return m_colors; }
     QVariantMap swatches() const { return m_swatches; }
@@ -56,6 +62,13 @@ public:
     int radiusCard() const { return m_radiusCard; }
     int radiusDialog() const { return m_radiusDialog; }
     qint64 generation() const { return m_generation; }
+    QString accentChoice() const { return m_accentChoice; }
+    /// Keeps the choice in the suite's settings, as Nyx's own apps do (`[app_accents] files`),
+    /// changing that one line only.
+    void setAccentChoice(const QString &swatch);
+    bool canOpenThemeSettings() const;
+    /// `text` with `[app_accents] files` set to `swatch`, or taken out when it is empty.
+    static QString withFilesAccent(const QString &text, const QString &swatch);
 
 signals:
     void changed();

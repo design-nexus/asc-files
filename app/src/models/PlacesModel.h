@@ -63,6 +63,8 @@ public:
     Q_INVOKABLE void setSectionColor(int section, const QString &swatch);
     /// Hides or shows a default place (a page, a standard folder, the Trash) by its key.
     Q_INVOKABLE void setHidden(const QString &key, bool hidden);
+    /// Every default place, as `[{key, name, section, hidden}]`, for Settings.
+    Q_INVOKABLE QVariantList defaultPlaces() const;
     /// The default places hidden now, as `[{key, name}]`, for a menu that shows them again.
     QVariantList hiddenPlaces() const;
     /// Moves the folder `key` to where `before` is, among the Folders.

@@ -204,6 +204,18 @@ void PlacesModel::setHidden(const QString &key, bool hidden) {
     emit hiddenChanged();
 }
 
+QVariantList PlacesModel::defaultPlaces() const {
+    const QStringList hidden = settings().value(QStringLiteral("sidebar/hidden")).toStringList();
+    QVariantList result;
+    for (const Place &place : defaults()) {
+        result.append(QVariantMap{{QStringLiteral("key"), place.key},
+                                  {QStringLiteral("name"), place.name},
+                                  {QStringLiteral("section"), int(place.section)},
+                                  {QStringLiteral("hidden"), hidden.contains(place.key)}});
+    }
+    return result;
+}
+
 QVariantList PlacesModel::hiddenPlaces() const {
     const QStringList hidden = settings().value(QStringLiteral("sidebar/hidden")).toStringList();
     QVariantList result;

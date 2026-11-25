@@ -17,6 +17,7 @@ Rectangle {
 
     signal openRow(int row)
     signal clickRow(int row, int modifiers)
+    signal doubleClickRow(int row)
     signal menuRow(int row)
 
     width: 250
@@ -54,12 +55,8 @@ Rectangle {
             }
             TapHandler {
                 id: tap
-                onTapped: {
-                    if (entry.isFolder && !(tap.point.modifiers & (Qt.ControlModifier | Qt.ShiftModifier)))
-                        column.openRow(entry.index)
-                    else
-                        column.clickRow(entry.index, tap.point.modifiers)
-                }
+                onTapped: column.clickRow(entry.index, tap.point.modifiers)
+                onDoubleTapped: column.doubleClickRow(entry.index)
             }
             RowLayout {
                 anchors.fill: parent

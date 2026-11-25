@@ -4,6 +4,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
 import AscFiles
+import AscFiles.System
 
 // A folder, in the view the tab has chosen for it: List (columns you can sort by), Icons, or
 // Columns. Clicks select (Ctrl adds or removes, Shift extends), a box dragged from empty space
@@ -106,6 +107,21 @@ Item {
 
     function focusList() {
         (mode === 1 ? grid : mode === 2 ? columnsView : list).forceActiveFocus()
+    }
+    // A click on a row: it selects, and opens what Settings says opens with one click (files or
+    // folders, in each view). A double click opens the rest.
+    function rowClicked(model, row, modifiers) {
+        click(model, row, modifiers)
+        if (modifiers & (Qt.ControlModifier | Qt.ShiftModifier)) return
+        if (AppSettings.clicks(mode, !model.isFolder(row)) === 1) open(model, row)
+    }
+    function rowDoubleClicked(model, row) {
+        if (AppSettings.clicks(mode, !model.isFolder(row)) === 2) open(model, row)
+    }
+    function open(model, row) {
+        if (!model.isFolder(row)) fileActivated(model.pathAt(row))
+        else if (mode === 2) browser.goColumnRow(model, row)
+        else browser.goRow(row)
     }
     // What a click does to the selection.
     function click(model, row, modifiers) {
@@ -333,8 +349,8 @@ Item {
                 }
                 onRenameAccepted: (name) => view.finishRename(name)
                 onRenameCancelled: { view.renamingRow = -1; view.focusList() }
-                onClicked: (modifiers) => { list.currentIndex = index; view.click(view.folderModel, index, modifiers); list.forceActiveFocus() }
-                onActivated: view.activate(index)
+                onClicked: (modifiers) => { list.currentIndex = index; view.rowClicked(view.folderModel, index, modifiers); list.forceActiveFocus() }
+                onActivated: view.rowDoubleClicked(view.folderModel, index)
             }
             Keys.onUpPressed: (event) => view.moveBy(list, -1, event.modifiers)
             Keys.onDownPressed: (event) => view.moveBy(list, 1, event.modifiers)
@@ -406,8 +422,8 @@ Item {
             }
             onRenameAccepted: (name) => view.finishRename(name)
             onRenameCancelled: { view.renamingRow = -1; view.focusList() }
-            onClicked: (modifiers) => { grid.currentIndex = index; view.click(view.folderModel, index, modifiers); grid.forceActiveFocus() }
-            onActivated: view.activate(index)
+            onClicked: (modifiers) => { grid.currentIndex = index; view.rowClicked(view.folderModel, index, modifiers); grid.forceActiveFocus() }
+            onActivated: view.rowDoubleClicked(view.folderModel, index)
         }
         Keys.onLeftPressed: (event) => view.moveBy(grid, -1, event.modifiers)
         Keys.onRightPressed: (event) => view.moveBy(grid, 1, event.modifiers)
@@ -456,7 +472,8 @@ Item {
             height: ListView.view.height
             last: index === ListView.view.count - 1
             onOpenRow: (row) => view.browser.goColumnRow(folderModel, row)
-            onClickRow: (row, modifiers) => view.click(folderModel, row, modifiers)
+            onClickRow: (row, modifiers) => view.rowClicked(folderModel, row, modifiers)
+            onDoubleClickRow: (row) => view.rowDoubleClicked(folderModel, row)
             onMenuRow: (row) => {
                 if (folderModel === view.folderModel) {
                     view.requestContext(row)

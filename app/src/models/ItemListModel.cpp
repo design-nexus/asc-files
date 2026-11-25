@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "ItemListModel.h"
 
+#include "../settings/AppSettings.h"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QLocale>
@@ -25,30 +27,18 @@ Stat statOf(const QString &path) {
     return {true, info.isDir(), info.isDir() ? 0 : info.size(), info.lastModified()};
 }
 
-QString whenText(const QDateTime &when) {
-    if (!when.isValid()) {
-        return {};
-    }
-    const QDateTime now = QDateTime::currentDateTime();
-    const qint64 seconds = when.secsTo(now);
-    if (seconds >= 0 && seconds < 60) {
-        return ItemListModel::tr("Just now");
-    }
-    if (seconds >= 0 && seconds < 3600) {
-        return ItemListModel::tr("%1m ago").arg(seconds / 60);
-    }
-    if (seconds >= 0 && seconds < 86400) {
-        return ItemListModel::tr("%1h ago").arg(seconds / 3600);
-    }
-    if (seconds >= 0 && when.date().daysTo(now.date()) < 7) {
-        return QLocale().dayName(when.date().dayOfWeek());
-    }
-    return QLocale().toString(when.date(), QStringLiteral("MMM d, yyyy"));
-}
+QString whenText(const QDateTime &when) { return AppSettings::shared().modifiedText(when, QDateTime::currentDateTime()); }
 
 } // namespace
 
-ItemListModel::ItemListModel(QObject *parent) : QAbstractListModel(parent) {}
+ItemListModel::ItemListModel(QObject *parent) : QAbstractListModel(parent) {
+    // Dates read differently: word them again.
+    connect(&AppSettings::shared(), &AppSettings::dateFormatChanged, this, [this] {
+        if (!m_rows.isEmpty()) {
+            emit dataChanged(index(0), index(int(m_rows.size()) - 1), {WhenTextRole});
+        }
+    });
+}
 
 void ItemListModel::setItems(const QList<Item> &items) {
     QHash<QString, Row> known;

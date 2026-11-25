@@ -4,6 +4,7 @@
 #include "../backend/Wire.h"
 #include "FolderModel.h"
 #include "FolderViews.h"
+#include "../settings/AppSettings.h"
 
 #include <QDir>
 #include <QFile>
@@ -93,11 +94,21 @@ void Browser::go(const Place &place) {
 void Browser::show(const Place &place) {
     m_here = place;
     if (place.page == Folder) {
-        // The folder opens as it was last shown; one never set keeps the view it is opened in.
+        // The folder opens as it was last shown there. One never set takes the default sort, and
+        // keeps the view the tab is in (a new tab: the default view), so browsing doesn't switch
+        // views. When folders don't keep their own, the tab's view and sort go along.
         const QString folder = QFile::decodeName(place.path);
-        FolderViews::Choice choice = FolderViews::shared().choice(folder);
-        if (!FolderViews::shared().has(folder) && !m_folders->rawFolder().isEmpty()) {
-            choice.view = m_view;
+        const bool first = m_folders->rawFolder().isEmpty();
+        FolderViews::Choice choice;
+        if (AppSettings::shared().rememberFolderViews()) {
+            choice = FolderViews::shared().choice(folder);
+            if (!FolderViews::shared().has(folder) && !first) {
+                choice.view = m_view;
+            }
+        } else if (first) {
+            choice = FolderViews::defaults();
+        } else {
+            choice = {m_view, m_folders->sortKey(), m_folders->sortDescending()};
         }
         m_folders->open(place.path, choice.sortKey, choice.descending);
         if (m_view != choice.view) {
@@ -124,7 +135,7 @@ void Browser::sortBy(const QString &key) {
 }
 
 void Browser::rememberChoice() {
-    if (m_here.page == Folder && !m_here.path.isEmpty()) {
+    if (m_here.page == Folder && !m_here.path.isEmpty() && AppSettings::shared().rememberFolderViews()) {
         FolderViews::shared().remember(QFile::decodeName(m_here.path),
                                        {m_view, m_folders->sortKey(), m_folders->sortDescending()});
     }

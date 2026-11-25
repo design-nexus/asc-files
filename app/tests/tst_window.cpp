@@ -14,6 +14,7 @@
 #include "models/Transfers.h"
 #include "ops/Operations.h"
 #include "render/Preview.h"
+#include "settings/AppSettings.h"
 #include "theme/SystemTheme.h"
 #include "thumbnails/Thumbnails.h"
 
@@ -36,6 +37,7 @@ private slots:
         TestSupport::requirePrivateHome();
         QQuickStyle::setStyle(QStringLiteral("Basic"));
         SystemTheme::registerType();
+        AppSettings::registerType();
     }
 
     void theWindowShowsAFolderWithoutWarnings() {
@@ -142,6 +144,18 @@ private slots:
         tabs.current()->back();
         tabs.current()->back();
         QTRY_COMPARE(tabs.current()->page(), Browser::Folder);
+
+        // Settings opens, and every page shows without a warning.
+        auto *settings = window->findChild<QObject *>(QStringLiteral("settingsDialog"));
+        QVERIFY(settings);
+        QMetaObject::invokeMethod(settings, "open");
+        QTRY_VERIFY(settings->property("opened").toBool());
+        for (int page = 0; page < settings->property("pages").toList().size(); ++page) {
+            settings->setProperty("page", page);
+            QTest::qWait(50);
+        }
+        QMetaObject::invokeMethod(settings, "close");
+        QTRY_VERIFY(!settings->property("visible").toBool());
 
         // Typing in the search field searches, in the Search page.
         auto *field = window->findChild<QQuickItem *>(QStringLiteral("searchField"));

@@ -31,10 +31,18 @@ qt_add_library(asc_files_core STATIC
     src/render/Preview.cpp src/render/Preview.h
     src/render/Sandbox.cpp src/render/Sandbox.h
     src/app/Windows.cpp src/app/Windows.h
+    src/settings/AppSettings.cpp src/settings/AppSettings.h
     src/theme/SystemTheme.cpp src/theme/SystemTheme.h
     src/thumbnails/Thumbnails.cpp src/thumbnails/Thumbnails.h)
 target_include_directories(asc_files_core PUBLIC src)
 target_link_libraries(asc_files_core PUBLIC Qt6::Core Qt6::Gui Qt6::Quick)
+# What About shows: the version, and the commit built (when built from a checkout).
+execute_process(COMMAND git rev-parse --short HEAD WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                OUTPUT_VARIABLE ASC_FILES_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT ASC_FILES_COMMIT)
+    set(ASC_FILES_COMMIT "unknown")
+endif()
+target_compile_definitions(asc_files_core PRIVATE ASC_FILES_VERSION="${PROJECT_VERSION}" ASC_FILES_COMMIT="${ASC_FILES_COMMIT}")
 target_compile_options(asc_files_core PRIVATE -Wall -Wextra -Werror=return-type)
 
 # The QML module (window, tokens, components), a static plugin the app and the window test link.
@@ -72,7 +80,13 @@ qt_add_qml_module(asc_files_qml
         qml/components/RubberBand.qml
         qml/components/SearchField.qml
         qml/components/SectionHeading.qml
+        qml/components/Segmented.qml
+        qml/components/SettingRow.qml
+        qml/components/SettingsDialog.qml
+        qml/components/SettingsGroup.qml
+        qml/components/SwatchPicker.qml
         qml/components/TabChip.qml
+        qml/components/ToggleSwitch.qml
         qml/components/ToolTipText.qml)
 target_link_libraries(asc_files_qml PRIVATE Qt6::Quick)
 
@@ -87,7 +101,7 @@ target_link_libraries(asc-files PRIVATE asc_files_core asc_files_qmlplugin Qt6::
 # Tests run against the real backend: ASC_FILES_BACKEND names it (scripts/app.sh builds it).
 enable_testing()
 set(ASC_FILES_BACKEND "" CACHE FILEPATH "The asc-files-backend binary the tests run")
-foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search systemtheme)
+foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search systemtheme appsettings)
     qt_add_executable(tst_${test} tests/tst_${test}.cpp)
     target_link_libraries(tst_${test} PRIVATE asc_files_core Qt6::Test)
     add_test(NAME ${test} COMMAND tst_${test})

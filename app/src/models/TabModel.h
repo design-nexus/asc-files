@@ -43,7 +43,8 @@ public:
     Q_INVOKABLE void next();
     Q_INVOKABLE void previous();
 
-    /// Opens the tabs the last session left, where they were; false when it left fewer than two.
+    /// Opens the tabs the last session left, where they were; false when it left fewer than two,
+    /// or Settings says not to.
     bool restoreSession();
     /// Whether this window's tabs are the session kept for next time (the first window's are).
     void setKeepsSession(bool keeps) { m_keepsSession = keeps; }
