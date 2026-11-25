@@ -163,6 +163,8 @@ pub const ERROR_KINDS: &[&str] = &[
     "brokenPipe",
     "noSuchDevice",
     "symlinkUnheld",
+    "passwordRequired",
+    "passwordIncorrect",
 ];
 
 /// The wire name of an error kind; spelled out so renaming a variant cannot change the protocol.
@@ -194,6 +196,8 @@ pub fn kind_name(kind: ErrorKind) -> &'static str {
         ErrorKind::BrokenPipe => "brokenPipe",
         ErrorKind::NoSuchDevice => "noSuchDevice",
         ErrorKind::SymlinkUnheld => "symlinkUnheld",
+        ErrorKind::PasswordRequired => "passwordRequired",
+        ErrorKind::PasswordIncorrect => "passwordIncorrect",
     }
 }
 
@@ -259,6 +263,8 @@ mod tests {
             BrokenPipe,
             NoSuchDevice,
             SymlinkUnheld,
+            PasswordRequired,
+            PasswordIncorrect,
         ];
         let names: Vec<_> = kinds.into_iter().map(kind_name).collect();
         assert_eq!(names, ERROR_KINDS);

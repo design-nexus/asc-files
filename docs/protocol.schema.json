@@ -81,7 +81,9 @@
         "invalidData",
         "brokenPipe",
         "noSuchDevice",
-        "symlinkUnheld"
+        "symlinkUnheld",
+        "passwordRequired",
+        "passwordIncorrect"
       ]
     },
     "error": {

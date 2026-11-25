@@ -24,7 +24,8 @@ and `data.kind` one of the kinds below, for code to branch on. Errors inside res
 `failed`, `notFound`, `exists`, `isDirectory`, `notDirectory`, `notEmpty`, `notRegularFile`, `notSymbolicLink`,
 `filenameTooLong`, `invalidFilename`, `tooManyLinks`, `noSpace`, `invalidArgument`, `permissionDenied`,
 `notSupported`, `notMounted`, `cancelled`, `readOnly`, `timedOut`, `busy`, `wouldBlock`, `tooManyOpenFiles`,
-`invalidData`, `brokenPipe`, `noSuchDevice`, `symlinkUnheld`.
+`invalidData`, `brokenPipe`, `noSuchDevice`, `symlinkUnheld`, `passwordRequired`,
+`passwordIncorrect`.
 
 **Changes from version 1.** Non-UTF-8 paths and names travel as bytes instead of being mangled; a refusal's kind
 is in `data.kind` (camelCase), not JSON inside `message`; `jsonrpc: "2.0"` is required; relative paths and

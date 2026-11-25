@@ -418,7 +418,14 @@ leaving the same (the original, no stage). Covered by the engine's placement ins
 `an_archive_replaces_only_the_item_its_mount_still_knows`,
 `archives_are_created_without_noreplace_or_usable_links`. Not applicable:
 `cancelling_staged_compression_waits_for_worker_exit_before_cleanup` (nothing runs apart from the
-caller now). Waits for step (b), undo: `an_archive_replaced_immediately_after_publication_is_not_owned_for_undo`.
+caller now). `an_archive_replaced_immediately_after_publication_is_not_owned_for_undo` is
+`tests/archives.rs::an_archive_replaced_after_it_was_made_is_not_undone`, through jobs and undo.
+
+Step (b): extract and compress are job actions (`Action::Extract`, `Action::Compress`), their
+members counted as the item's files, filed for undo as `Step::Extracted` and `Step::Compressed`
+(undo takes away what was made, putting back an archive's replaced original; redo runs it again,
+asking again for a locked archive's password, which is never kept). Password failures are error
+kinds of their own (`passwordRequired`, `passwordIncorrect`). Tests: `tests/archives.rs`.
 
 Gaps the port found: the engine's locale had no `counts.bytes` plurals (a member's declared size
 showed as `counts.bytes.other`); the staging file's close is checked (a drive may report a failed

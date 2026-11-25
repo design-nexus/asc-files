@@ -687,6 +687,8 @@ fn default_label(items: &[Item]) -> String {
         Action::Trash => "Move to Trash",
         Action::Delete => "Delete",
         Action::Restore(_) => "Restore",
+        Action::Extract(_) => "Extract",
+        Action::Compress(_) => "Compress",
     };
     let first = items.first().map_or("Operation", |item| verb(&item.action));
     let same = items.iter().all(|item| verb(&item.action) == first);

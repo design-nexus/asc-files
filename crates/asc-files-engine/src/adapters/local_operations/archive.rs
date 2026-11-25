@@ -60,7 +60,7 @@ use std::{
 /// How far an archive operation is: members done, of how many (0 while they are counted).
 #[derive(Debug, Default)]
 pub struct Counters {
-    pub done: AtomicUsize,
+    pub done: Arc<AtomicUsize>,
     pub total: AtomicUsize,
 }
 
@@ -131,25 +131,22 @@ pub fn compress(
     let written = (|| {
         let sources_seen = inspect_archive_sources(sources, cancelled)?;
         counters.total.store(sources_seen.files, Ordering::Relaxed);
-        let done = Arc::new(AtomicUsize::new(0));
+        let done = &counters.done;
         // The encoder writes through its own handle; the stage's own is closed last, checked.
         let file = std::fs::File::from(fs().dup(fd.as_fd()).map_err(errno)?);
         let encoded = match format {
-            ArchiveFormat::Zip => compress_zip(file, sources, password, &done, cancelled),
-            ArchiveFormat::SevenZ => compress_7z(file, sources, password, &done, cancelled),
+            ArchiveFormat::Zip => compress_zip(file, sources, password, done, cancelled),
+            ArchiveFormat::SevenZ => compress_7z(file, sources, password, done, cancelled),
             ArchiveFormat::TarGz => compress_tar(
                 file,
                 sources,
                 Some(sources_seen.gzip_level()),
-                &done,
+                done,
                 cancelled,
             ),
-            ArchiveFormat::Tar => compress_tar(file, sources, None, &done, cancelled),
+            ArchiveFormat::Tar => compress_tar(file, sources, None, done, cancelled),
             ArchiveFormat::Rar => unreachable!("refused above"),
         };
-        counters
-            .done
-            .store(done.load(Ordering::Relaxed), Ordering::Relaxed);
         encoded?;
         check_archive_cancelled(cancelled)?;
         // On the drive before it takes the name, so a crash never leaves a short archive there.
@@ -263,21 +260,19 @@ pub fn extract(
         ));
     }
     let mut created = CreatedFolder(created.then_some(into));
-    let done = Arc::new(AtomicUsize::new(0));
-    let total = Arc::new(AtomicUsize::new(0));
+    let done = &counters.done;
     let extracted = (|| match ArchiveFormat::from_extension(&display_name) {
         Some(ArchiveFormat::Zip) => {
             let file = std::fs::File::open(archive)
                 .map_err(|error| crate::services::io_error_message(&error))?;
             let mut zip = zip::ZipArchive::new(file).map_err(decoders::zip_error)?;
-            total.store(zip.len(), Ordering::Relaxed);
             counters.total.store(zip.len(), Ordering::Relaxed);
             extract_zip_from_archive(
                 &mut zip,
                 into,
                 &display_name,
                 password,
-                &done,
+                done,
                 cancelled,
                 report,
             )
@@ -288,28 +283,14 @@ pub fn extract(
                 .unwrap_or_default();
             let file = std::fs::File::open(archive)
                 .map_err(|error| crate::services::io_error_message(&error))?;
-            extract_7z_from_reader(
-                file,
-                into,
-                &display_name,
-                password,
-                &done,
-                cancelled,
-                report,
-            )
+            extract_7z_from_reader(file, into, &display_name, password, done, cancelled, report)
         }
         Some(ArchiveFormat::TarGz) => {
-            extract_tar(archive, into, &display_name, true, &done, cancelled, report)
+            extract_tar(archive, into, &display_name, true, done, cancelled, report)
         }
-        Some(ArchiveFormat::Tar) => extract_tar(
-            archive,
-            into,
-            &display_name,
-            false,
-            &done,
-            cancelled,
-            report,
-        ),
+        Some(ArchiveFormat::Tar) => {
+            extract_tar(archive, into, &display_name, false, done, cancelled, report)
+        }
         Some(ArchiveFormat::Rar) => Err(archive_failed(crate::i18n::tr(
             "RAR support is disabled in this build.",
         ))),
@@ -318,9 +299,6 @@ pub fn extract(
             name = display_name
         ))),
     })();
-    counters
-        .done
-        .store(done.load(Ordering::Relaxed), Ordering::Relaxed);
     match extracted? {
         ArchiveOutcome::Completed(first_name) => {
             created.0 = None;
@@ -413,6 +391,19 @@ impl std::fmt::Display for ArchiveError {
 }
 
 impl std::error::Error for ArchiveError {}
+
+impl From<ArchiveError> for crate::error::Error {
+    fn from(error: ArchiveError) -> Self {
+        use crate::error::ErrorKind;
+        let kind = match &error {
+            ArchiveError::Cancelled => ErrorKind::Cancelled,
+            ArchiveError::PasswordRequired(_) => ErrorKind::PasswordRequired,
+            ArchiveError::IncorrectPassword(_) => ErrorKind::PasswordIncorrect,
+            ArchiveError::Failed(_) => ErrorKind::Failed,
+        };
+        Self::new(kind, &error.user_message())
+    }
+}
 
 impl From<String> for ArchiveError {
     fn from(message: String) -> Self {

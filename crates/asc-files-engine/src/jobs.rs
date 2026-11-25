@@ -23,11 +23,15 @@ use std::{
 };
 
 use crate::{
-    adapters::local_operations::case_variants::{self, CaseVariants, Saved},
+    adapters::local_operations::{
+        archive,
+        case_variants::{self, CaseVariants, Saved},
+    },
     drives,
     error::Error,
     merge::{self, MergePlan},
     ops::{self, Cancel, Changes, Conflict, NameMode, Progress, ProgressSnapshot},
+    services::{ArchiveFormat, TransferConflict, TransferReport},
     undo::{Journal, Step},
 };
 
@@ -56,6 +60,33 @@ pub enum Action {
     /// [`crate::trash::restore_reporting`]. With a path, the destination the user confirmed: the
     /// restore is refused if the record now says otherwise. Not filed for undo.
     Restore(Option<PathBuf>),
+    /// Extract the archive `source` into the batch's folder; see [`archive::extract`]. Undo
+    /// takes away what it made.
+    Extract(Option<Password>),
+    /// Make an archive in the batch's folder; see [`Compress`] and [`archive::compress`]. The
+    /// item's `source` is the first of what goes in it.
+    Compress(Box<Compress>),
+}
+
+/// An archive to make of `sources`, called `name` plus the format's extension.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Compress {
+    pub sources: Vec<PathBuf>,
+    pub name: String,
+    pub format: ArchiveFormat,
+    pub password: Option<Password>,
+    /// Where the name is taken: refuse, number, or replace (the original to the Trash).
+    pub conflict: TransferConflict,
+}
+
+/// An archive's password, never shown in logs.
+#[derive(Clone, Eq, PartialEq)]
+pub struct Password(pub String);
+
+impl std::fmt::Debug for Password {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Password(…)")
+    }
 }
 
 impl Action {
@@ -222,6 +253,23 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
         .map(|item| {
             if item.action.removes() {
                 return Ok(None);
+            }
+            match &item.action {
+                // An archive's members are known only once it is opened.
+                Action::Extract(_) => return Ok(None),
+                Action::Compress(compress) => {
+                    return compress.sources.iter().try_fold(
+                        Some(ops::Measured::default()),
+                        |sum, source| {
+                            let one = ops::measure(source, None, cancel)?;
+                            Ok(sum.zip(one).map(|(sum, one)| ops::Measured {
+                                bytes: sum.bytes.saturating_add(one.bytes),
+                                files: sum.files.saturating_add(one.files),
+                            }))
+                        },
+                    );
+                }
+                _ => {}
             }
             // Only data that reaches the destination's drive can be too large for it.
             let crossing = !crate::adapters::local_operations::mount_profile::on_mount_of(
@@ -416,12 +464,18 @@ fn run_item(
 ) -> (Outcome, Vec<Step>) {
     let progress = Progress::new();
     let running = Arc::new(AtomicBool::new(true));
+    // An archive counts its members; they are shown as the item's files.
+    let members = archive::Counters::default();
+    let counts_members = matches!(item.action, Action::Extract(_) | Action::Compress(_));
     let result = thread::scope(|scope| {
-        let (progress_ref, running_ref) = (&progress, &running);
+        let (progress_ref, running_ref, members_ref) = (&progress, &running, &members);
         scope.spawn(move || {
             let mut last = ProgressSnapshot::default();
             while running_ref.load(Ordering::Acquire) {
                 thread::sleep(PROGRESS_EVERY);
+                if counts_members {
+                    progress_ref.set_files(members_ref.done.load(Ordering::Relaxed));
+                }
                 let now = progress_ref.snapshot();
                 if now != last {
                     send(Event::Progress {
@@ -433,6 +487,9 @@ fn run_item(
                 }
             }
             // What changed since the last reading, a flush included, is reported before the item ends.
+            if counts_members {
+                progress_ref.set_files(members_ref.done.load(Ordering::Relaxed));
+            }
             let now = progress_ref.snapshot();
             if now != last {
                 send(Event::Progress {
@@ -579,6 +636,10 @@ fn run_item(
             Action::Delete => ops::delete_within(source, cancel, deadline)
                 .map(|()| (source.to_path_buf(), Changes::default(), Vec::new()))
                 .map_err(plain),
+            Action::Extract(password) => {
+                extracted(source, into, password.as_ref(), &members, cancel)
+            }
+            Action::Compress(compress) => compressed(compress, into, &members, cancel),
         };
         running.store(false, Ordering::Release);
         result
@@ -587,6 +648,115 @@ fn run_item(
         Ok((name, changes, steps)) => (Outcome::Done { name, changes }, steps),
         // A merge that failed part way still files what it did.
         Err((error, changes, steps)) => (Outcome::Failed { error, changes }, steps),
+    }
+}
+
+/// An extraction as one item: done with the top-level item it made (or the folder, for an empty
+/// archive), what it renamed or left out reported either way.
+#[allow(clippy::type_complexity)]
+fn extracted(
+    archive: &Path,
+    into: &Path,
+    password: Option<&Password>,
+    members: &archive::Counters,
+    cancel: &Cancel,
+) -> Result<(PathBuf, Changes, Vec<Step>), (Error, Changes, Vec<Step>)> {
+    let mut report = TransferReport::default();
+    let result = archive::extract(
+        archive,
+        into,
+        false,
+        password.map(|password| password.0.as_str()),
+        members,
+        &cancel.flag(),
+        &mut report,
+    );
+    let changes = changes_of(report, into);
+    match result {
+        Ok(archive::Extracted::Completed {
+            first_name: Some(name),
+        }) => {
+            let item = into.join(name);
+            let step = Step::extracted(archive, &item);
+            Ok((item, changes, Vec::from_iter(step)))
+        }
+        Ok(archive::Extracted::Completed { first_name: None }) => {
+            Ok((into.to_path_buf(), changes, Vec::new()))
+        }
+        Ok(archive::Extracted::Cancelled { .. }) => {
+            Err((archive::ArchiveError::Cancelled.into(), changes, Vec::new()))
+        }
+        Err(error) => Err((error.into(), changes, Vec::new())),
+    }
+}
+
+/// An archive made as one item; the original it replaced, if any, goes to the Trash.
+#[allow(clippy::type_complexity)]
+fn compressed(
+    compress: &Compress,
+    into: &Path,
+    members: &archive::Counters,
+    cancel: &Cancel,
+) -> Result<(PathBuf, Changes, Vec<Step>), (Error, Changes, Vec<Step>)> {
+    let made = archive::compress(
+        &compress.sources,
+        into,
+        &compress.name,
+        compress.format,
+        compress
+            .password
+            .as_ref()
+            .map(|password| password.0.as_str()),
+        compress.conflict,
+        members,
+        &cancel.flag(),
+    )
+    .map_err(|error| (error.into(), Changes::default(), Vec::new()))?;
+    let step = Step::compressed(&compress.sources, &made);
+    let changes = Changes {
+        original_deleted: made.original_deleted,
+        ..made.changes.clone()
+    };
+    Ok((made.archive, changes, Vec::from_iter(step)))
+}
+
+/// What an archive's report says, as a job's changes: names relative to `into`.
+fn changes_of(report: TransferReport, into: &Path) -> Changes {
+    let relative = |location: &crate::model::Location| {
+        let path = location.native_path().unwrap_or(Path::new(""));
+        path.strip_prefix(into).unwrap_or(path).to_path_buf()
+    };
+    Changes {
+        renamed: report
+            .renamed
+            .iter()
+            .map(|renamed| ops::Renamed {
+                requested: relative(&renamed.requested),
+                saved_as: relative(&renamed.saved_as),
+                cause: renamed.cause,
+            })
+            .collect(),
+        skipped: report
+            .skipped
+            .iter()
+            .map(|skipped| ops::Skipped {
+                path: relative(&skipped.location),
+                kind: skipped.kind,
+            })
+            .collect(),
+        kept: report
+            .kept
+            .into_iter()
+            .map(|kept| ops::Kept {
+                path: kept
+                    .location
+                    .native_path()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_default(),
+                cause: kept.cause,
+            })
+            .collect(),
+        ..Changes::default()
     }
 }
 

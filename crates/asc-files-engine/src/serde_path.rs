@@ -41,6 +41,27 @@ pub(crate) fn deserialize<'de, D: serde::Deserializer<'de>>(from: D) -> Result<P
     Stored::deserialize(from).map(loaded)
 }
 
+pub(crate) mod list {
+    use super::{Stored, *};
+
+    pub(crate) fn serialize<S: serde::Serializer>(
+        paths: &[PathBuf],
+        to: S,
+    ) -> Result<S::Ok, S::Error> {
+        paths
+            .iter()
+            .map(|path| super::stored(path))
+            .collect::<Vec<_>>()
+            .serialize(to)
+    }
+
+    pub(crate) fn deserialize<'de, D: serde::Deserializer<'de>>(
+        from: D,
+    ) -> Result<Vec<PathBuf>, D::Error> {
+        Vec::<Stored>::deserialize(from).map(|paths| paths.into_iter().map(super::loaded).collect())
+    }
+}
+
 pub(crate) mod pairs {
     use super::{Stored, *};
 

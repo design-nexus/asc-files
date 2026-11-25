@@ -94,6 +94,10 @@ impl SharedProgress {
         self.flushes.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub(super) fn set_files(&self, files: usize) {
+        self.files.store(files, Ordering::Relaxed);
+    }
+
     pub(super) fn flushes(&self) -> usize {
         self.flushes.load(Ordering::Relaxed)
     }

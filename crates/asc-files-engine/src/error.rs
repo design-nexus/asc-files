@@ -34,6 +34,10 @@ pub enum ErrorKind {
     NoSuchDevice,
     /// The destination cannot hold a symbolic link the copy met.
     SymlinkUnheld,
+    /// An archive is locked and no password was given.
+    PasswordRequired,
+    /// The password given does not open the archive.
+    PasswordIncorrect,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -41,6 +41,11 @@ impl Cancel {
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }
+
+    /// The flag itself, for work that takes one.
+    pub(crate) fn flag(&self) -> Arc<AtomicBool> {
+        self.0.clone()
+    }
 }
 
 /// Counters a running copy updates and any thread may read.
@@ -59,6 +64,11 @@ pub struct ProgressSnapshot {
 impl Progress {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Sets the files done, for work that counts its own (an archive's members).
+    pub(crate) fn set_files(&self, files: usize) {
+        self.0.set_files(files);
     }
 
     pub fn snapshot(&self) -> ProgressSnapshot {

@@ -20,7 +20,7 @@ def arr(s): return {"type": "array", "items": s}
 def const(v): return {"const": v}
 def enum(*v): return {"enum": list(v)}
 P, N, E = ref("path"), ref("name"), ref("error")
-KINDS = ["failed","notFound","exists","isDirectory","notDirectory","notEmpty","notRegularFile","notSymbolicLink","filenameTooLong","invalidFilename","tooManyLinks","noSpace","invalidArgument","permissionDenied","notSupported","notMounted","cancelled","readOnly","timedOut","busy","wouldBlock","tooManyOpenFiles","invalidData","brokenPipe","noSuchDevice","symlinkUnheld"]
+KINDS = ["failed","notFound","exists","isDirectory","notDirectory","notEmpty","notRegularFile","notSymbolicLink","filenameTooLong","invalidFilename","tooManyLinks","noSpace","invalidArgument","permissionDenied","notSupported","notMounted","cancelled","readOnly","timedOut","busy","wouldBlock","tooManyOpenFiles","invalidData","brokenPipe","noSuchDevice","symlinkUnheld","passwordRequired","passwordIncorrect"]
 special = enum("pipe","socket","device","symlink")
 renamed = obj({"requested": P, "savedAs": P, "cause": enum("alias","taken","invalid","tooLong")})
 kept_cause = {"oneOf": [

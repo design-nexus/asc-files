@@ -148,6 +148,23 @@ pub enum Step {
         path: PathBuf,
         identity: Identity,
     },
+    /// `item` was extracted from the archive `archive`.
+    Extracted {
+        #[serde(with = "crate::serde_path")]
+        archive: PathBuf,
+        #[serde(with = "crate::serde_path")]
+        item: PathBuf,
+        identity: Identity,
+    },
+    /// The archive `archive` was made of `sources`; what held its name went to the Trash.
+    Compressed {
+        #[serde(with = "crate::serde_path::list")]
+        sources: Vec<PathBuf>,
+        #[serde(with = "crate::serde_path")]
+        archive: PathBuf,
+        identity: Identity,
+        original: Option<TrashedOriginal>,
+    },
     /// A copy of `source` took the place of `target`; what held it went to the Trash.
     Replaced {
         #[serde(with = "crate::serde_path")]
@@ -207,6 +224,21 @@ pub enum Redo {
         path: PathBuf,
         folder: bool,
     },
+    /// Extracted again into `into`. A password is never kept, so a locked archive asks again.
+    Extract {
+        #[serde(with = "crate::serde_path")]
+        archive: PathBuf,
+        #[serde(with = "crate::serde_path")]
+        into: PathBuf,
+    },
+    /// `original` is what undo put back at `archive`, or None when it left the name empty.
+    Compress {
+        #[serde(with = "crate::serde_path::list")]
+        sources: Vec<PathBuf>,
+        #[serde(with = "crate::serde_path")]
+        archive: PathBuf,
+        original: Option<Identity>,
+    },
     /// `original` is what undo put back at `target`, or None when it left the name empty.
     Replace {
         #[serde(with = "crate::serde_path")]
@@ -263,6 +295,38 @@ impl Step {
         Some(Self::Created {
             path: path.to_path_buf(),
             identity: Identity::of(path)?,
+        })
+    }
+
+    /// The step for `item`, the top-level item an extraction of `archive` made.
+    pub fn extracted(archive: &Path, item: &Path) -> Option<Self> {
+        Some(Self::Extracted {
+            archive: archive.to_path_buf(),
+            item: item.to_path_buf(),
+            identity: Identity::of(item)?,
+        })
+    }
+
+    /// The step for an archive of `sources`; None where an original it replaced was deleted or
+    /// kept aside for want of a Trash, as for [`Self::replaced`].
+    pub fn compressed(
+        sources: &[PathBuf],
+        compressed: &crate::adapters::local_operations::archive::Compressed,
+    ) -> Option<Self> {
+        let kept = compressed.changes.kept.iter().any(|kept| {
+            matches!(
+                kept.cause,
+                crate::services::KeptCause::OriginalNotRemoved(_)
+            )
+        });
+        if compressed.original_deleted || kept {
+            return None;
+        }
+        Some(Self::Compressed {
+            sources: sources.to_vec(),
+            archive: compressed.archive.clone(),
+            identity: Identity::of(&compressed.archive)?,
+            original: trashed_original(compressed.replaced.as_ref())?,
         })
     }
 
@@ -366,6 +430,8 @@ impl Step {
             Self::MovedOver { to, .. } => to,
             Self::RemovedFolder { path, .. } => path,
             Self::Created { path, .. } => path,
+            Self::Extracted { item, .. } => item,
+            Self::Compressed { archive, .. } => archive,
             Self::Replaced { target, .. } => target,
         }
     }
@@ -403,6 +469,8 @@ impl Redo {
             Self::MoveOver { from, .. } => from,
             Self::RemoveFolder { path } => path,
             Self::Create { path, .. } => path,
+            Self::Extract { archive, .. } => archive,
+            Self::Compress { archive, .. } => archive,
             Self::Replace { target, .. } => target,
         }
     }
@@ -795,6 +863,8 @@ fn blocked_by(step: &Step) -> Option<PathBuf> {
         // These take away what was made, or put the original back once the copy is gone.
         Step::Copied { .. }
         | Step::Created { .. }
+        | Step::Extracted { .. }
+        | Step::Compressed { .. }
         | Step::RemovedFolder { .. }
         | Step::Replaced { .. } => return None,
     };
@@ -909,6 +979,40 @@ fn reverse(
                 ops::Changes::default(),
             ))
         }
+        Step::Extracted {
+            archive,
+            item,
+            identity,
+        } => {
+            discard(item, identity)?;
+            let (into, _) = parent_and_name(item)?;
+            Ok((
+                Redo::Extract {
+                    archive: archive.clone(),
+                    into: into.to_path_buf(),
+                },
+                ops::Changes::default(),
+            ))
+        }
+        Step::Compressed {
+            sources,
+            archive,
+            identity,
+            original,
+        } => {
+            match original {
+                Some(original) => put_back_original(archive, identity, original)?,
+                None => discard(archive, identity)?,
+            }
+            Ok((
+                Redo::Compress {
+                    sources: sources.clone(),
+                    archive: archive.clone(),
+                    original: original.as_ref().and_then(|_| Identity::of(archive)),
+                },
+                ops::Changes::default(),
+            ))
+        }
         Step::Replaced {
             source,
             target,
@@ -926,25 +1030,7 @@ fn reverse(
                     ops::Changes::default(),
                 ));
             };
-            let entry = trash_entry(&original.info, &original.identity)?;
-            still(target, identity)?;
-            let copy = trash::put(target)?;
-            if let Err(error) = trash::restore(&entry) {
-                // Put the copy back, so the name is not left empty.
-                let back = trash::list()
-                    .into_iter()
-                    .find(|listed| listed.info == copy.info)
-                    .map(|listed| trash::restore(&listed));
-                return Err(match back {
-                    Some(Ok(_)) => error,
-                    _ => crate::error::after_cleanup(
-                        error,
-                        Err(translated_io_error(
-                            "The copy that replaced it is in the Trash",
-                        )),
-                    ),
-                });
-            }
+            put_back_original(target, identity, original)?;
             Ok((
                 Redo::Replace {
                     source: source.clone(),
@@ -955,6 +1041,35 @@ fn reverse(
             ))
         }
     }
+}
+
+/// Trashes `target` (what an operation made) and puts `original`, which it replaced, back from
+/// the Trash; if that fails, `target` comes back too, so the name is not left empty.
+fn put_back_original(
+    target: &Path,
+    identity: &Identity,
+    original: &TrashedOriginal,
+) -> Result<(), Error> {
+    let entry = trash_entry(&original.info, &original.identity)?;
+    still(target, identity)?;
+    let copy = trash::put(target)?;
+    if let Err(error) = trash::restore(&entry) {
+        // Put the copy back, so the name is not left empty.
+        let back = trash::list()
+            .into_iter()
+            .find(|listed| listed.info == copy.info)
+            .map(|listed| trash::restore(&listed));
+        return Err(match back {
+            Some(Ok(_)) => error,
+            _ => crate::error::after_cleanup(
+                error,
+                Err(translated_io_error(
+                    "The copy that replaced it is in the Trash",
+                )),
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Renames, deepest first, the names a move into a stricter drive changed, now that the item is
@@ -1112,6 +1227,68 @@ fn replay(redo: &Redo, cancel: &Cancel, progress: &Progress) -> Result<Option<St
                 .ok_or_else(|| translated_io_error("The item has no name"))?;
             let made = ops::create(into, name, *folder, false)?;
             Ok(Step::created(&made))
+        }
+        Redo::Extract { archive, into } => {
+            use crate::adapters::local_operations::archive::{self, Counters, Extracted};
+            let mut report = crate::services::TransferReport::default();
+            let cancelled =
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cancel.is_cancelled()));
+            match archive::extract(
+                archive,
+                into,
+                false,
+                None,
+                &Counters::default(),
+                &cancelled,
+                &mut report,
+            )? {
+                Extracted::Completed {
+                    first_name: Some(name),
+                } => Ok(Step::extracted(archive, &into.join(name))),
+                Extracted::Completed { first_name: None } => Ok(None),
+                Extracted::Cancelled { .. } => Err(Error::new(
+                    ErrorKind::Cancelled,
+                    &crate::i18n::tr("Operation cancelled"),
+                )),
+            }
+        }
+        Redo::Compress {
+            sources,
+            archive,
+            original,
+        } => {
+            use crate::adapters::local_operations::archive::{self, Counters};
+            use crate::services::{ArchiveFormat, TransferConflict};
+            match (original, Identity::of(archive)) {
+                (None, None) => {}
+                (Some(was), Some(now)) if now.same_item(was) => {}
+                _ => return Err(changed()),
+            }
+            let (into, name) = parent_and_name(archive)?;
+            let name = name
+                .to_str()
+                .ok_or_else(|| translated_io_error("The item has no name"))?;
+            let format = ArchiveFormat::from_extension(name)
+                .ok_or_else(|| translated_io_error("Not an archive"))?;
+            let stem = &name[..name.len() - format.extension().len() - 1];
+            let conflict = if original.is_some() {
+                TransferConflict::ReplaceExisting
+            } else {
+                TransferConflict::FailIfExists
+            };
+            let cancelled =
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cancel.is_cancelled()));
+            let compressed = archive::compress(
+                sources,
+                into,
+                stem,
+                format,
+                None,
+                conflict,
+                &Counters::default(),
+                &cancelled,
+            )?;
+            Ok(Step::compressed(sources, &compressed))
         }
         Redo::Replace {
             source,
