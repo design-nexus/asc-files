@@ -377,4 +377,49 @@ shared; the engine keeps no cache of walks, so it checks that equal rules compar
 
 ## Archives (legacy: 225 tests)
 
-Out of scope for Phase A.
+B9, step (a): legacy's `adapters/local_operations/archive` is the engine's, where it was, with its
+tests (`archive/**/tests.rs`). GLib is gone: `compress` and `extract` are synchronous (a job's worker
+runs them) and report progress through `Counters`; local time is `libc`'s; the archive listing's
+preview tree is `services::archive_tree`. The tests drive `compress` and `extract` through stand-ins
+that give back legacy's events, so they read as they did.
+
+| Legacy tests | Ported | Not ported, why |
+|---|---|---|
+| `archive/tests.rs` (25) | 25 | |
+| `listing/tests.rs` (60) | 60 (1 ignored, a benchmark, as in legacy) | |
+| `decoders/tests.rs` (49) | 49 | |
+| `destination/tests.rs` (22) | 22 | |
+| `extraction/tests.rs` (37) | 37 | |
+| `compression/tests.rs` (25) | 8 encoding tests as they were, 7 on publication | see below |
+| `compression/tests/policy.rs` (3), `cancellation.rs` (2) | 5 | |
+| `services/preview/tests.rs`, archive tree and format (11) | 11 | `preview_request_debug_redacts_the_archive_password` (legacy's preview request) |
+| `decoders/rar/tests.rs` (4), `sandbox/archive` (7), `sandbox_helper/archive_rar` (11), `rar_extraction` (11) | — | step (f), the RAR helper |
+| `app/browser/tests/archive_activation.rs` (3) | — | step (e), the app |
+
+Publication: legacy wrote the archive to a stage and published it with its own replace strategies
+(exchange, set aside, Trash, delete) and the async `owed`/`release` machinery the engine dropped.
+The engine publishes through its own placement instead: `ops::move_as`, `move_numbered_as` and
+`move_replacing_as`, whose behaviour A8's ported tests cover. New tests against `compress`:
+`compression_staging_stays_private_until_publish` (0600 while written, its final mode before it
+closes; replaces legacy's two staging tests), `a_taken_name_is_refused_kept_or_numbered_as_asked`
+(replaces the four Keep Both numbering tests, whose numbering is the engine's),
+`a_replaced_archive_goes_to_the_trash_and_keeps_its_mode`, and as legacy wrote them
+`an_archive_replaced_without_trash_deletes_its_original`,
+`compression_replacement_preserves_directory_destinations` (a gap: the engine's replace would take
+a folder of the name, so `compress` refuses one first) and
+`staged_archives_are_not_published_after_cancellation_or_close_failure` (boundaries: encoding,
+close, close error; legacy's evicted and SMB-stamp boundaries tested its own identity rechecks).
+`replacement_fails_before_encoding_when_no_strategy_is_safe` became
+`replacement_fails_when_no_strategy_is_safe`: the refusal now comes at publication, after encoding,
+leaving the same (the original, no stage). Covered by the engine's placement instead:
+`an_unplug_after_an_exchange_leaves_no_original_at_a_stage`,
+`an_archive_replaced_without_trash_is_on_disk_before_its_original_is_deleted`,
+`a_name_taken_during_replacement_keeps_the_original_aside`,
+`an_archive_replaces_only_the_item_its_mount_still_knows`,
+`archives_are_created_without_noreplace_or_usable_links`. Not applicable:
+`cancelling_staged_compression_waits_for_worker_exit_before_cleanup` (nothing runs apart from the
+caller now). Waits for step (b), undo: `an_archive_replaced_immediately_after_publication_is_not_owned_for_undo`.
+
+Gaps the port found: the engine's locale had no `counts.bytes` plurals (a member's declared size
+showed as `counts.bytes.other`); the staging file's close is checked (a drive may report a failed
+write only then).

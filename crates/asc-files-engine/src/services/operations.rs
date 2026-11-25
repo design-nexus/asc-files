@@ -246,6 +246,23 @@ pub enum LeftoverInside {
     Unreadable(String),
 }
 
+/// One member of an archive, as a listing gives it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArchiveFileEntry {
+    pub name: String,
+    pub directory: bool,
+    pub size: u64,
+}
+
+/// A member's name, split into its folders and name.
+pub(crate) fn split_archive_name(name: &str) -> Vec<&str> {
+    name.split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect()
+}
+
+pub(crate) const INCORRECT_ARCHIVE_PASSWORD: &str = "The password is incorrect.";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ArchiveFormat {
     Zip,

@@ -10,3 +10,5 @@ pub use item_identity::*;
 pub use load_handle::LoadHandle;
 pub(crate) use native_fs::*;
 pub use operations::*;
+mod archive_tree;
+pub use archive_tree::*;

@@ -25,6 +25,36 @@ fn join_sentences_in(locale: &str, first: &str, second: &str) -> String {
     }
 }
 
+const SIZE_UNITS: [&str; 5] = [
+    "%{size} B",
+    "%{size} kB",
+    "%{size} MB",
+    "%{size} GB",
+    "%{size} TB",
+];
+
+/// A size in decimal units, as "1.5 MB", rounded to one decimal; legacy's.
+pub(crate) fn file_size(bytes: u64) -> String {
+    let (mut value, mut unit) = (bytes as f64, 0);
+    if bytes >= 1_000 {
+        while value >= 1_000.0 && unit + 1 < SIZE_UNITS.len() {
+            value /= 1_000.0;
+            unit += 1;
+        }
+        value = (value * 10.0).round() / 10.0;
+        if value >= 1_000.0 && unit + 1 < SIZE_UNITS.len() {
+            value /= 1_000.0;
+            unit += 1;
+        }
+    }
+    let size = if value.fract() == 0.0 {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.1}")
+    };
+    rust_i18n::t!(SIZE_UNITS[unit], size = size).into_owned()
+}
+
 pub(crate) fn quoted(name: &str) -> String {
     rust_i18n::t!("“%{name}”", name = name).into_owned()
 }

@@ -984,5 +984,7 @@
   "No folder “%{path}”": "No folder “%{path}”",
   "Search files and folders (%{keys})": "Search files and folders (%{keys})",
   "Sidebar (%{keys})": "Sidebar (%{keys})",
-  "“%{name}” is protected by a password.": "“%{name}” is protected by a password."
+  "“%{name}” is protected by a password.": "“%{name}” is protected by a password.",
+  "counts.bytes.one": "%{count} byte",
+  "counts.bytes.other": "%{count} bytes"
 }

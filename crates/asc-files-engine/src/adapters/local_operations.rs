@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! The engine's modules; the GLib orchestration that drove them stays in nyx-files-core.
 
+pub mod archive;
 pub(crate) mod case_variants;
 pub mod copy_engine;
 pub(crate) mod deferred_close;
