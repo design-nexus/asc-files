@@ -670,6 +670,8 @@
             "list.unmounted",
             "search.found",
             "search.finished",
+            "measure.progress",
+            "measure.finished",
             "job.queued",
             "job.started",
             "job.progress",
@@ -1396,6 +1398,83 @@
           },
           "required": [
             "rule"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "measure.start": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/path"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "measure": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "measure"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "measure.cancel": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "measure": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "measure"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "null"
+        }
+      },
+      "ops.chmod": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/path"
+            },
+            "bits": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "bits",
+            "path"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "mode"
           ],
           "additionalProperties": false
         }
@@ -2221,6 +2300,109 @@
           "truncated"
         ],
         "additionalProperties": false
+      },
+      "measure.progress": {
+        "type": "object",
+        "properties": {
+          "measure": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "files": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "folders": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "files",
+          "folders",
+          "items",
+          "measure",
+          "size"
+        ],
+        "additionalProperties": false
+      },
+      "measure.finished": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "measure": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "files": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "folders": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "unreadable": {
+                "type": "boolean"
+              },
+              "timedOut": {
+                "type": "boolean"
+              },
+              "depthLimited": {
+                "type": "boolean"
+              },
+              "cancelled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "cancelled",
+              "depthLimited",
+              "files",
+              "folders",
+              "items",
+              "measure",
+              "size",
+              "timedOut",
+              "unreadable"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "measure": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "error": {
+                "$ref": "#/$defs/error"
+              }
+            },
+            "required": [
+              "error",
+              "measure"
+            ],
+            "additionalProperties": false
+          }
+        ]
       },
       "job.queued": {
         "type": "object",

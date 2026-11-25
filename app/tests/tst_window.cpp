@@ -12,6 +12,7 @@
 #include "models/FolderModel.h"
 #include "models/JobModel.h"
 #include "models/PlacesModel.h"
+#include "models/Properties.h"
 #include "models/TabModel.h"
 #include "models/Transfers.h"
 #include "ops/Operations.h"
@@ -69,6 +70,7 @@ private slots:
         Operations ops(&backend, &jobs);
         Transfers transfers(&ops);
         DesktopApps apps;
+        Properties properties(&backend, &apps);
         Preview preview;
         SearchModel search(&backend);
         tabs.openTab(dir.path());
@@ -88,6 +90,7 @@ private slots:
                                      {"transfers", QVariant::fromValue(&transfers)},
                                      {"ops", QVariant::fromValue(&ops)},
                                      {"apps", QVariant::fromValue(&apps)},
+                                     {"properties", QVariant::fromValue(&properties)},
                                      {"preview", QVariant::fromValue(&preview)},
                                      {"search", QVariant::fromValue(&search)},
                                      {"backend", QVariant::fromValue(&backend)}});
@@ -155,6 +158,16 @@ private slots:
         tabs.current()->back();
         tabs.current()->back();
         QTRY_COMPARE(tabs.current()->page(), Browser::Folder);
+
+        // Properties of a folder: measured, without a warning.
+        auto *propertiesDialog = window->findChild<QObject *>(QStringLiteral("propertiesDialog"));
+        QVERIFY(propertiesDialog);
+        QMetaObject::invokeMethod(propertiesDialog, "show", Q_ARG(QVariant, dir.path()));
+        QTRY_VERIFY(propertiesDialog->property("opened").toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(!properties.measuring(), 10000);
+        QVERIFY2(properties.containsText().startsWith(QStringLiteral("2 files")), qPrintable(properties.containsText()));
+        QMetaObject::invokeMethod(propertiesDialog, "close");
+        QTRY_VERIFY(!propertiesDialog->property("visible").toBool());
 
         // Settings opens, and every page shows without a warning.
         auto *settings = window->findChild<QObject *>(QStringLiteral("settingsDialog"));

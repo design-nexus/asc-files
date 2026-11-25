@@ -1064,3 +1064,66 @@ fn a_search_leaves_out_folders_and_stops_at_its_limits() {
     assert_eq!(home["error"]["code"], -32602, "{home}");
     backend.call("shutdown", json!({}), &mut notes);
 }
+
+#[test]
+fn a_folder_is_measured_and_permissions_change() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    backend.call("initialize", json!({}), &mut notes);
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    fs::create_dir_all(root.path().join("a/.cache")).unwrap();
+    fs::write(root.path().join("a/one"), b"12345").unwrap();
+    fs::write(root.path().join("a/.cache/two"), b"12").unwrap();
+    let started = backend.call("measure.start", json!({"path": root.path()}), &mut notes);
+    let measure = started["result"]["measure"].clone();
+    backend.until(&mut notes, |n| {
+        n["method"] == "measure.finished" && n["params"]["measure"] == measure
+    });
+    let finished = notes
+        .iter()
+        .find(|n| n["method"] == "measure.finished")
+        .unwrap()["params"]
+        .clone();
+    assert_eq!(finished["items"], 4, "{finished}");
+    assert_eq!(finished["size"], 7);
+    assert_eq!(finished["files"], 1);
+    assert_eq!(finished["folders"], 1);
+    assert_eq!(finished["unreadable"], false);
+    // Not a folder: said so.
+    notes.clear();
+    let started = backend.call(
+        "measure.start",
+        json!({"path": root.path().join("a/one")}),
+        &mut notes,
+    );
+    let measure = started["result"]["measure"].clone();
+    backend.until(&mut notes, |n| {
+        n["method"] == "measure.finished" && n["params"]["measure"] == measure
+    });
+    let failed = notes
+        .iter()
+        .find(|n| n["method"] == "measure.finished")
+        .unwrap()["params"]
+        .clone();
+    assert_eq!(failed["error"]["kind"], "notDirectory", "{failed}");
+
+    let file = root.path().join("a/one");
+    let changed = backend.call(
+        "ops.chmod",
+        json!({"path": file, "bits": 0o750}),
+        &mut notes,
+    );
+    assert_eq!(changed["result"]["mode"], 0o750, "{changed}");
+    assert_eq!(
+        fs::metadata(&file).unwrap().permissions().mode() & 0o7777,
+        0o750
+    );
+    let refused = backend.call(
+        "ops.chmod",
+        json!({"path": file, "bits": 0o4755}),
+        &mut notes,
+    );
+    assert_eq!(refused["error"]["code"], -32602, "{refused}");
+    backend.call("shutdown", json!({}), &mut notes);
+}

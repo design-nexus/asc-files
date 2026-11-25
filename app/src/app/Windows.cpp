@@ -2,6 +2,8 @@
 #include "Windows.h"
 
 #include "backend/BackendClient.h"
+#include "desktop/DesktopApps.h"
+#include "models/Properties.h"
 #include "models/SearchModel.h"
 #include "models/TabModel.h"
 #include "render/Preview.h"
@@ -34,13 +36,15 @@ QQuickWindow *Windows::open(const QStringList &asked) {
     auto *tabs = new TabModel(backend);
     auto *search = new SearchModel(backend);
     auto *preview = new Preview;
-    QVariantMap properties = m_shared;
-    properties.insert(QStringLiteral("tabs"), QVariant::fromValue(tabs));
-    properties.insert(QStringLiteral("search"), QVariant::fromValue(search));
-    properties.insert(QStringLiteral("preview"), QVariant::fromValue(preview));
+    auto *properties = new Properties(backend, m_shared.value(QStringLiteral("apps")).value<DesktopApps *>());
+    QVariantMap initial = m_shared;
+    initial.insert(QStringLiteral("tabs"), QVariant::fromValue(tabs));
+    initial.insert(QStringLiteral("search"), QVariant::fromValue(search));
+    initial.insert(QStringLiteral("preview"), QVariant::fromValue(preview));
+    initial.insert(QStringLiteral("properties"), QVariant::fromValue(properties));
 
     QQmlComponent component(m_engine, QStringLiteral("AscFiles"), QStringLiteral("Main"));
-    QObject *made = component.createWithInitialProperties(properties);
+    QObject *made = component.createWithInitialProperties(initial);
     auto *window = qobject_cast<QQuickWindow *>(made);
     if (!window) {
         qWarning().noquote() << component.errorString();
@@ -48,11 +52,13 @@ QQuickWindow *Windows::open(const QStringList &asked) {
         delete tabs;
         delete search;
         delete preview;
+        delete properties;
         emit failed();
         return nullptr;
     }
     QQmlEngine::setObjectOwnership(window, QQmlEngine::CppOwnership);
-    for (QObject *own : {static_cast<QObject *>(tabs), static_cast<QObject *>(search), static_cast<QObject *>(preview)}) {
+    for (QObject *own : {static_cast<QObject *>(tabs), static_cast<QObject *>(search), static_cast<QObject *>(preview),
+                         static_cast<QObject *>(properties)}) {
         own->setParent(window);
     }
 

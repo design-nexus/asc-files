@@ -26,6 +26,8 @@ ApplicationWindow {
     required property var backend
     /// The desktop's programs, for Open With.
     required property var apps
+    /// What Properties shows, the window's own.
+    required property var properties
     /// The app's windows (absent in a test of one window).
     property var windows: null
     /// Whether operations answer here: the window used last does (their notices, clashes and
@@ -454,6 +456,12 @@ ApplicationWindow {
     }
     ConflictDialog { ops: window.ops; listening: window.foremost }
     ConfirmDialog { id: confirm }
+    PropertiesDialog {
+        id: propertiesDialog
+        properties: window.properties
+        favorites: window.favorites
+        onFailed: (message) => notice.show(message)
+    }
     OpenWithDialog {
         id: openWithDialog
         apps: window.apps
@@ -558,6 +566,8 @@ ApplicationWindow {
             height: visible ? implicitHeight : 0
             onTriggered: window.ops.trashPaths([pathMenu.path])
         }
+        MenuSeparator {}
+        MenuItem { text: qsTr("Properties"); onTriggered: propertiesDialog.show(pathMenu.path) }
     }
 
     // A right click on an item in the Trash.
@@ -664,6 +674,13 @@ ApplicationWindow {
         MenuSeparator {}
         MenuItem { text: qsTr("Move to Trash"); onTriggered: window.ops.trash(window.folderModel) }
         MenuItem { text: qsTr("Delete for Good…"); onTriggered: window.deleteSelection() }
+        MenuSeparator { visible: itemMenu.single; height: visible ? implicitHeight : 0 }
+        MenuItem {
+            text: qsTr("Properties")
+            visible: itemMenu.single
+            height: visible ? implicitHeight : 0
+            onTriggered: propertiesDialog.show(itemMenu.path)
+        }
     }
 
     // A right click on empty space in a folder.
@@ -857,6 +874,11 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Shift+N"; enabled: window.inFolder; onActivated: window.ops.create(window.folderModel, true) }
     Shortcut { sequence: "Space"; enabled: !previewPopup.visible; onActivated: window.previewOpen = !window.previewOpen }
     Shortcut { sequence: "Ctrl+,"; onActivated: settingsDialog.open() }
+    Shortcut {
+        sequence: "Alt+Return"
+        enabled: window.inFolder && window.selectionCount === 1
+        onActivated: propertiesDialog.show(window.folderModel.selectedPaths()[0])
+    }
     Shortcut { sequence: "Ctrl+K"; onActivated: { searchField.forceActiveFocus(); searchField.selectAll() } }
     Shortcut { sequence: "Ctrl+1"; onActivated: window.browser.setView(0) }
     Shortcut { sequence: "Ctrl+2"; onActivated: window.browser.setView(1) }

@@ -42,6 +42,9 @@ pub struct Session {
     /// Searches by id, each with its cancel; a search ended stays until shutdown.
     searches: HashMap<u64, Cancel>,
     next_search: u64,
+    /// Folder measurements by id, as searches.
+    measures: HashMap<u64, Cancel>,
+    next_measure: u64,
 }
 
 impl Session {
@@ -61,6 +64,8 @@ impl Session {
             workers: Vec::new(),
             searches: HashMap::new(),
             next_search: 0,
+            measures: HashMap::new(),
+            next_measure: 0,
         }
     }
 
@@ -87,6 +92,16 @@ impl Session {
 
     fn send(&self, message: Value) {
         let _ = self.out.send(message);
+    }
+
+    /// Answers `id` now, before work started after it sends notifications naming what the
+    /// answer gives (a search's or a measurement's id): a client knows the id first.
+    fn answer_first(&self, id: &Value, result: Value) -> Result<Answer, Fault> {
+        if id.is_null() {
+            return Ok(Answer::Now(result));
+        }
+        self.send(wire::result(id.clone(), result));
+        Ok(Answer::Later)
     }
 
     /// Runs `work` on a thread of its own, which answers `id`.
@@ -242,6 +257,7 @@ impl Session {
                     exclusions: asc_files_engine::search::Exclusions::new(&exclude, &home()),
                     ..Default::default()
                 };
+                let answer = self.answer_first(&id, json!({"search": search}));
                 self.workers.push(thread::spawn(move || {
                     let summary = asc_files_engine::search::search(&roots, &query, hidden, limits, &cancel, |batch| {
                         let _ = out.send(wire::notification(
@@ -261,7 +277,7 @@ impl Session {
                         }),
                     ));
                 }));
-                now(json!({"search": search}))
+                answer
             }
             Call::SearchExclusion { rule } => {
                 match asc_files_engine::search::Exclusions::normalize(&rule, &home()) {
@@ -274,6 +290,61 @@ impl Session {
                     cancel.cancel();
                 }
                 now(Value::Null)
+            }
+            Call::MeasureStart { path } => {
+                self.next_measure += 1;
+                let measure = self.next_measure;
+                let cancel = Cancel::new();
+                self.measures.insert(measure, cancel.clone());
+                let out = self.out.clone();
+                let answer = self.answer_first(&id, json!({"measure": measure}));
+                self.workers.push(thread::spawn(move || {
+                    // The totals so far, every 150 ms at most.
+                    let mut sent = std::time::Instant::now();
+                    let result = asc_files_engine::info::measure(
+                        &path,
+                        Default::default(),
+                        &cancel,
+                        |so_far| {
+                            if sent.elapsed() >= Duration::from_millis(150) {
+                                sent = std::time::Instant::now();
+                                let mut params = summary_json(so_far);
+                                params["measure"] = json!(measure);
+                                let _ = out.send(wire::notification("measure.progress", params));
+                            }
+                        },
+                    );
+                    let params = match result {
+                        Ok(summary) => {
+                            let mut params = summary_json(&summary);
+                            params["unreadable"] = json!(summary.issues.unreadable);
+                            params["timedOut"] = json!(summary.issues.timed_out);
+                            params["depthLimited"] = json!(summary.issues.depth_limited);
+                            params["cancelled"] = json!(summary.cancelled);
+                            params["measure"] = json!(measure);
+                            params
+                        }
+                        Err(error) => json!({"measure": measure, "error": wire::error(&error)}),
+                    };
+                    let _ = out.send(wire::notification("measure.finished", params));
+                }));
+                answer
+            }
+            Call::MeasureCancel { measure } => {
+                if let Some(cancel) = self.measures.get(&measure) {
+                    cancel.cancel();
+                }
+                now(Value::Null)
+            }
+            Call::Chmod { path, bits } => {
+                let bits = u32::try_from(bits).unwrap_or(u32::MAX);
+                if bits > 0o777 {
+                    return Err(Fault::invalid_params("bits must be at most 0o777 (511)"));
+                }
+                match asc_files_engine::info::set_mode(&path, bits) {
+                    Ok(mode) => now(json!({"mode": mode})),
+                    Err(error) => Err(Fault::operation(&error)),
+                }
             }
             // A rename on a share may wait for a file below it to close.
             Call::Rename { path, name, label } => {
@@ -404,7 +475,7 @@ impl Session {
     /// Stops what is still running and waits until every job has sent its last event.
     pub fn finish(&mut self) {
         self.listings.close_all();
-        for cancel in self.searches.values() {
+        for cancel in self.searches.values().chain(self.measures.values()) {
             cancel.cancel();
         }
         for handle in self.jobs.values() {
@@ -477,6 +548,15 @@ fn found_json(found: &asc_files_engine::search::Found) -> Value {
     })
 }
 
+fn summary_json(summary: &asc_files_engine::info::Summary) -> Value {
+    json!({
+        "items": summary.items,
+        "size": summary.size,
+        "files": summary.files,
+        "folders": summary.folders,
+    })
+}
+
 /// Home, for search rules written from `~/`.
 fn home() -> PathBuf {
     std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
@@ -498,6 +578,8 @@ fn capabilities(undo: bool) -> Vec<&'static str> {
         "ops.create",
         "search",
         "search.exclusions",
+        "measure",
+        "ops.chmod",
         "list.filter",
         "trash",
         "leftovers",

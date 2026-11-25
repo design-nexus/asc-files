@@ -8,6 +8,7 @@ pub mod adapters;
 pub mod drives;
 pub mod error;
 pub mod i18n;
+pub mod info;
 pub mod jobs;
 pub mod listing;
 pub mod merge;

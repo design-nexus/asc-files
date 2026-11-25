@@ -112,6 +112,18 @@ pub enum Call {
     SearchCancel {
         search: u64,
     },
+    /// What a folder holds, measured as `measure.progress` and `measure.finished` say.
+    MeasureStart {
+        path: PathBuf,
+    },
+    MeasureCancel {
+        measure: u64,
+    },
+    /// The read, write and run bits of `path` set to `bits`.
+    Chmod {
+        path: PathBuf,
+        bits: u64,
+    },
     Rename {
         path: PathBuf,
         name: String,
@@ -266,6 +278,16 @@ fn call(method: &str, params: &Params) -> Result<Call, Fault> {
         },
         "search.cancel" => Call::SearchCancel {
             search: params.u64("search")?,
+        },
+        "measure.start" => Call::MeasureStart {
+            path: params.path("path")?,
+        },
+        "measure.cancel" => Call::MeasureCancel {
+            measure: params.u64("measure")?,
+        },
+        "ops.chmod" => Call::Chmod {
+            path: params.path("path")?,
+            bits: params.u64("bits")?,
         },
         "ops.rename" => Call::Rename {
             path: params.path("path")?,

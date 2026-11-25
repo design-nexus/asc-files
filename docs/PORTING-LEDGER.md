@@ -304,6 +304,19 @@ ported with a reason. This list must be empty, or every entry justified, before 
   first, so nothing is lost. Without the confirmation, such a step is left as before.
 - **Open:** a bulk path for many small items; inner merge clashes by stored names.
 
+## Folder measuring (legacy: 9 tests)
+
+Legacy's `adapters/directory_summary/tests.rs` measured folders through GIO for Properties; the engine's
+`info::measure` does it with no GLib. Ported, in `asc-files-engine/src/info.rs`: the time budget, the depth
+budget (with siblings still counted, legacy's two depth tests in one), an unreadable folder, a folder removed
+before it is read, and a cancel mid-flight (5 tests covering 6 of legacy's). Not ported: "stops enumerating the
+root once the budget is reached" (the engine checks the budget at every entry, root included; the time-budget
+test covers it), "reads no unset optional attributes" (a GIO attribute check; there are no attributes), and "a
+file operation ends the measurement of a folder it changes" (legacy paused measuring for its own jobs through
+`file_activity`; the engine's jobs and measurements don't share that, and a measurement of a folder being
+changed gives totals as they were when read). Also new: what is counted (`a_folder_is_measured_as_legacy_measured_it`)
+and permission changes (`permissions_change_without_following_links_or_losing_special_bits`).
+
 ## Search exclusions (legacy: 3 tests)
 
 Legacy's `services/search/exclusions/tests.rs` (3 tests) is ported to `asc-files-engine/src/search.rs` as

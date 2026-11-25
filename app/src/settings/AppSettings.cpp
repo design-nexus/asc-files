@@ -34,7 +34,7 @@ const QStringList SortKeys{QStringLiteral("name"), QStringLiteral("size"), QStri
 
 QString absolute(const QDateTime &when, const QString &format) {
     if (format == QLatin1String("long")) {
-        return QLocale().toString(when, QLocale::LongFormat);
+        return AppSettings::fullDate(when);
     }
     return when.toString(QStringLiteral("yyyy-MM-dd HH:mm"));
 }
@@ -218,6 +218,11 @@ QString AppSettings::modifiedText(const QDateTime &when, const QDateTime &now) c
         return QLocale().dayName(when.date().dayOfWeek());
     }
     return QLocale().toString(when.date(), QStringLiteral("MMM d, yyyy"));
+}
+
+QString AppSettings::fullDate(const QDateTime &when) {
+    const QLocale locale;
+    return tr("%1, %2").arg(locale.toString(when.date(), QLocale::LongFormat), locale.toString(when.time(), QLocale::ShortFormat));
 }
 
 QVariantMap AppSettings::about() const {

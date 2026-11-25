@@ -130,6 +130,23 @@ Items may also take `name` (the name a conflict prompt offered; one plain name),
 `filter` lists only the entries whose names match the text typed over the folder, as a search matches names
 (below); an empty filter lists them all.
 
+## Properties
+
+| Method | Params | Result |
+|---|---|---|
+| `measure.start` | `path` | `{measure}` |
+| `measure.cancel` | `measure` | `null` |
+| `ops.chmod` | `path`, `bits` | `{mode}` |
+
+A measurement walks the folder `path` as legacy Files measured one: depth first, no link followed, every entry
+an item, regular files' sizes added up, files and folders counted unless hidden (a dot name) or inside a hidden
+folder. `measure.progress {measure, items, size, files, folders}` gives the totals so far (every 150 ms at most);
+`measure.finished` the last ones, with `unreadable`, `timedOut` (five minutes) and `depthLimited` (64 deep)
+saying why they are incomplete, and `cancelled`; or `{measure, error}` when `path` itself can't be looked at.
+
+`ops.chmod` sets the read, write and run bits (`bits`, up to `0o777`) for owner, group and others; setuid,
+setgid and sticky stay. A link is refused, not followed. The result is the whole mode now.
+
 ## Search
 
 | Method | Params | Result |

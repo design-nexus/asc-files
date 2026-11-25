@@ -106,6 +106,9 @@ public:
 
     /// A modified time in the chosen format, relative to `now`.
     QString modifiedText(const QDateTime &when, const QDateTime &now) const;
+    /// A date in full ("Tuesday, 24 November 2026, 14:05"): the long date and the short time,
+    /// without a time zone's name (which would ask the system for it).
+    static QString fullDate(const QDateTime &when);
     /// What each date format looks like, for the setting: a time five minutes ago.
     Q_INVOKABLE QString dateExample(const QString &format) const;
     /// For About and bug reports: `{version, commit, qt, sandbox, settingsFile}`.
