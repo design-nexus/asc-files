@@ -5,29 +5,37 @@ import QtQuick.Layouts
 
 import AscFiles
 
-// Running operations, in the footer: a small bar while any runs, and on a click the list of
-// them, each with its progress and a way to stop it, and how finished ones ended.
+// Running operations and the user's actions, in the footer: a small bar while any runs, and on
+// a click the list of them, each with its progress and a way to stop it, and how finished ones
+// ended (an action's output, and what it made).
 Item {
     id: indicator
 
     required property var jobs
+    /// The actions model: its runs.
+    property var actions: null
+    readonly property int running: jobs.running + (actions ? actions.running : 0)
+    /// An action made `path`: the window shows it.
+    signal showRequested(string path)
+
+    function openList() { popup.open() }
 
     implicitWidth: row.implicitWidth
     implicitHeight: 24
-    visible: list.count > 0
+    visible: list.count > 0 || runs.count > 0
 
     RowLayout {
         id: row
         anchors.verticalCenter: parent.verticalCenter
         spacing: 8
         Text {
-            text: indicator.jobs.running > 0 ? qsTr("%n operations running", "", indicator.jobs.running) : qsTr("Operations done")
+            text: indicator.running > 0 ? qsTr("%n operations running", "", indicator.running) : qsTr("Operations done")
             color: Theme.textDim
             font.family: Theme.family
             font.pointSize: Theme.small
         }
         Rectangle {
-            visible: indicator.jobs.running > 0
+            visible: indicator.running > 0
             width: 80; height: 4; radius: 2
             color: Theme.rule
             Rectangle {
@@ -35,7 +43,7 @@ Item {
                 height: 4; radius: 2
                 color: Theme.accent
                 SequentialAnimation on x {
-                    running: list.overall < 0 && indicator.jobs.running > 0
+                    running: list.overall < 0 && indicator.running > 0
                     loops: Animation.Infinite
                     NumberAnimation { from: 0; to: 56; duration: 900 }
                     NumberAnimation { from: 56; to: 0; duration: 900 }
@@ -118,14 +126,128 @@ Item {
                     }
                 }
             }
+            // The user's actions.
+            ListView {
+                id: runs
+                objectName: "actionRuns"
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(contentHeight, 360)
+                visible: count > 0
+                clip: true
+                spacing: 8
+                model: indicator.actions
+                delegate: ColumnLayout {
+                    id: run
+                    required property real job
+                    required property string name
+                    required property string status
+                    required property bool active
+                    required property real fraction
+                    required property string step
+                    required property string message
+                    required property string log
+                    required property var created
+                    property bool details: false
+                    width: ListView.view.width
+                    spacing: 4
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            Layout.fillWidth: true
+                            text: run.name
+                            elide: Text.ElideRight
+                            color: Theme.text
+                            font.family: Theme.family
+                            font.pointSize: Theme.body
+                        }
+                        Text {
+                            text: run.status === "queued" ? qsTr("Waiting")
+                                : run.status === "cancelling" ? qsTr("Stopping")
+                                : run.status === "succeeded" ? qsTr("Done")
+                                : run.status === "failed" ? qsTr("Failed")
+                                : run.status === "cancelled" ? qsTr("Stopped")
+                                : run.fraction >= 0 ? Math.round(run.fraction * 100) + "%" : qsTr("Running")
+                            color: run.status === "failed" ? Theme.danger : Theme.textMute
+                            font.family: Theme.family
+                            font.pointSize: Theme.small
+                        }
+                        IconButton {
+                            visible: run.active
+                            width: 24; height: 24
+                            label: qsTr("Stop")
+                            iconPath: "m4.5 4.5 7 7M11.5 4.5l-7 7"
+                            onClicked: indicator.actions.cancel(run.job)
+                        }
+                    }
+                    Rectangle {
+                        visible: run.active
+                        Layout.fillWidth: true
+                        height: 4; radius: 2
+                        color: Theme.rule
+                        Rectangle { width: parent.width * Math.max(0, run.fraction); height: 4; radius: 2; color: Theme.accent }
+                    }
+                    Text {
+                        visible: text.length > 0
+                        Layout.fillWidth: true
+                        text: run.active ? run.step : run.message
+                        wrapMode: Text.Wrap
+                        color: run.status === "failed" ? Theme.danger : Theme.textMute
+                        font.family: Theme.family
+                        font.pointSize: Theme.small
+                    }
+                    RowLayout {
+                        visible: !run.active && (run.log.length > 0 || run.created.length > 0)
+                        spacing: 12
+                        Text {
+                            visible: run.log.length > 0
+                            text: run.details ? qsTr("Hide output") : qsTr("Output")
+                            color: Theme.accentText
+                            font.family: Theme.family
+                            font.pointSize: Theme.small
+                            TapHandler { onTapped: run.details = !run.details }
+                        }
+                        Text {
+                            visible: run.created.length > 0
+                            text: qsTr("Show what it made")
+                            color: Theme.accentText
+                            font.family: Theme.family
+                            font.pointSize: Theme.small
+                            TapHandler { onTapped: { indicator.showRequested(run.created[0]); popup.close() } }
+                        }
+                    }
+                    ScrollView {
+                        visible: run.details
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.min(160, output.implicitHeight + 8)
+                        TextArea {
+                            id: output
+                            text: run.log
+                            readOnly: true
+                            selectByMouse: true
+                            wrapMode: TextEdit.WrapAnywhere
+                            textFormat: TextEdit.PlainText
+                            color: Theme.textDim
+                            font.family: Theme.monoFamily
+                            font.pointSize: Theme.small
+                            background: Rectangle { radius: Theme.radius; color: Theme.field }
+                        }
+                    }
+                }
+            }
             Text {
-                visible: indicator.jobs.running === 0
+                visible: indicator.running === 0
                 Layout.alignment: Qt.AlignRight
                 text: qsTr("Clear")
                 color: Theme.accentText
                 font.family: Theme.family
                 font.pointSize: Theme.small
-                TapHandler { onTapped: { indicator.jobs.clearFinished(); popup.close() } }
+                TapHandler {
+                    onTapped: {
+                        indicator.jobs.clearFinished()
+                        if (indicator.actions) indicator.actions.clearFinished()
+                        popup.close()
+                    }
+                }
             }
         }
     }

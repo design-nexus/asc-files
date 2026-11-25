@@ -8,6 +8,13 @@ import AscFiles
 Menu {
     id: menu
 
+    /// Where `item` is among the menu's entries (the end when it isn't one).
+    function indexOf(item) {
+        for (let i = 0; i < count; ++i)
+            if (itemAt(i) === item) return i
+        return count
+    }
+
     padding: 4
     background: Rectangle {
         implicitWidth: 220

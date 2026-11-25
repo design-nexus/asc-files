@@ -28,6 +28,21 @@ ApplicationWindow {
     required property var apps
     /// What Properties shows, the window's own.
     required property var properties
+    /// The user's custom actions and their runs (the app's).
+    required property var actions
+    /// Actions offered for what was right-clicked last, by placement.
+    readonly property var topActions: actions.offered.filter(action => action.menu === "top")
+    readonly property var submenuActions: actions.offered.filter(action => action.menu !== "top")
+
+    // Runs an action, asking first when it says to.
+    function runAction(action, paths, parent, background) {
+        const go = () => window.actions.run(action.id, paths, parent, background)
+        if (action.confirm)
+            confirm.ask(qsTr("Run “%1”?").arg(action.name),
+                        qsTr("It runs on %n items, with your permissions.", "", paths.length), qsTr("Run"), go)
+        else
+            go()
+    }
     /// The app's windows (absent in a test of one window).
     property var windows: null
     /// Whether operations answer here: the window used last does (their notices, clashes and
@@ -330,7 +345,7 @@ ApplicationWindow {
                             transfers: window.transfers
                             ops: window.ops
                             onNotice: (message) => notice.show(message)
-                            onContextRequested: (row) => row >= 0 ? itemMenu.show(row) : spaceMenu.popup()
+                            onContextRequested: (row) => row >= 0 ? itemMenu.show(row) : spaceMenu.show()
                             onFileActivated: (path) => window.ops.open(path)
                             onPathMenuRequested: (path, isFolder) => pathMenu.show(path, isFolder)
                             onDropped: (result, target) => window.dropped(result, target)
@@ -402,6 +417,9 @@ ApplicationWindow {
                     }
                     }
                     JobsIndicator {
+                        id: jobsIndicator
+                        actions: window.actions
+                        onShowRequested: (path) => window.browser.goPath(path.substring(0, path.lastIndexOf("/")) || "/")
                         Layout.leftMargin: 18
                         Layout.topMargin: 6
                         Layout.bottomMargin: -26
@@ -455,6 +473,13 @@ ApplicationWindow {
         }
     }
     ConflictDialog { ops: window.ops; listening: window.foremost }
+    // An action queued here opens the jobs list, as legacy's did; one refused says why.
+    Connections {
+        target: window.actions
+        enabled: window.foremost
+        function onStarted(job) { jobsIndicator.openList() }
+        function onFailed(message) { notice.show(message) }
+    }
     ConfirmDialog { id: confirm }
     PropertiesDialog {
         id: propertiesDialog
@@ -619,7 +644,9 @@ ApplicationWindow {
         readonly property string path: row >= 0 && window.folderModel !== null ? window.folderModel.pathAt(row) : ""
         function show(at) {
             row = at
-            itemOpenWith.load(window.folderModel.selectedPaths())
+            const paths = window.folderModel.selectedPaths()
+            itemOpenWith.load(paths)
+            window.actions.offer(paths)
             popup()
         }
         MenuItem { text: qsTr("Open"); visible: itemMenu.single && itemMenu.folder; height: visible ? implicitHeight : 0; onTriggered: window.openRow(itemMenu.row) }
@@ -646,6 +673,30 @@ ApplicationWindow {
             apps: window.apps
             onOthersRequested: (paths) => openWithDialog.ask(paths)
             onFailed: (message) => notice.show(message)
+        }
+        // The user's actions: those placed at the top level, then the rest under Actions.
+        MenuSeparator { visible: window.actions.offered.length > 0; height: visible ? implicitHeight : 0 }
+        Instantiator {
+            model: window.topActions
+            delegate: MenuItem {
+                required property var modelData
+                text: modelData.name
+                enabled: modelData.available
+                onTriggered: window.runAction(modelData, window.folderModel.selectedPaths(), window.browser.location, false)
+            }
+            onObjectAdded: (index, item) => itemMenu.insertItem(itemMenu.indexOf(itemActionsAt) + index, item)
+            onObjectRemoved: (index, item) => itemMenu.removeItem(item)
+        }
+        MenuItem { id: itemActionsAt; visible: false; height: 0 }
+        // Actions, a submenu only while some are offered there.
+        Instantiator {
+            model: window.submenuActions.length > 0 ? 1 : 0
+            delegate: ActionsMenu {
+                actions: window.submenuActions
+                onChosen: (action) => window.runAction(action, window.folderModel.selectedPaths(), window.browser.location, false)
+            }
+            onObjectAdded: (index, menu) => itemMenu.insertMenu(itemMenu.indexOf(itemActionsAt), menu)
+            onObjectRemoved: (index, menu) => itemMenu.removeMenu(menu)
         }
         MenuSeparator {}
         MenuItem { text: qsTr("Cut"); onTriggered: window.ops.copy(window.folderModel, true) }
@@ -686,6 +737,11 @@ ApplicationWindow {
     // A right click on empty space in a folder.
     ContextMenu {
         id: spaceMenu
+        // The folder shown is what its actions run on.
+        function show() {
+            window.actions.offer([window.browser.location])
+            popup()
+        }
         MenuItem { text: qsTr("New Folder"); onTriggered: window.ops.create(window.folderModel, true) }
         MenuItem { text: qsTr("New File"); onTriggered: window.ops.create(window.folderModel, false) }
         MenuSeparator {}
@@ -696,6 +752,28 @@ ApplicationWindow {
         MenuItem { text: window.ops.redoLabel.length > 0 ? qsTr("Redo %1").arg(window.ops.redoLabel) : qsTr("Redo"); enabled: window.ops.redoLabel.length > 0; onTriggered: window.ops.redo() }
         MenuSeparator {}
         MenuItem { text: qsTr("Show Hidden Files"); checkable: true; checked: window.folderModel !== null && window.folderModel.showHidden; onTriggered: window.folderModel.showHidden = !window.folderModel.showHidden }
+        MenuSeparator { visible: window.actions.offered.length > 0; height: visible ? implicitHeight : 0 }
+        Instantiator {
+            model: window.topActions
+            delegate: MenuItem {
+                required property var modelData
+                text: modelData.name
+                enabled: modelData.available
+                onTriggered: window.runAction(modelData, [window.browser.location], window.browser.location, true)
+            }
+            onObjectAdded: (index, item) => spaceMenu.insertItem(spaceMenu.indexOf(spaceActionsAt) + index, item)
+            onObjectRemoved: (index, item) => spaceMenu.removeItem(item)
+        }
+        MenuItem { id: spaceActionsAt; visible: false; height: 0 }
+        Instantiator {
+            model: window.submenuActions.length > 0 ? 1 : 0
+            delegate: ActionsMenu {
+                actions: window.submenuActions
+                onChosen: (action) => window.runAction(action, [window.browser.location], window.browser.location, true)
+            }
+            onObjectAdded: (index, menu) => spaceMenu.insertMenu(spaceMenu.indexOf(spaceActionsAt), menu)
+            onObjectRemoved: (index, menu) => spaceMenu.removeMenu(menu)
+        }
     }
 
     // The header's New menu.

@@ -5,6 +5,7 @@
 #include "backend/BackendClient.h"
 #include "desktop/AppIcons.h"
 #include "desktop/DesktopApps.h"
+#include "models/ActionsModel.h"
 #include "models/FavoritesModel.h"
 #include "models/FolderModel.h"
 #include "models/JobModel.h"
@@ -56,6 +57,8 @@ int main(int argc, char *argv[]) {
     Transfers transfers(&ops);
     // Programs, for Open With; their icons from the desktop's theme.
     DesktopApps apps;
+    // The user's custom actions and their runs.
+    ActionsModel actions(&backend);
     AppIconProvider::useDesktopTheme();
     QObject::connect(&backend, &BackendClient::failed, &app, [](const QString &why) {
         qCritical().noquote() << why;
@@ -78,6 +81,7 @@ int main(int argc, char *argv[]) {
                               {QStringLiteral("transfers"), QVariant::fromValue(&transfers)},
                               {QStringLiteral("ops"), QVariant::fromValue(&ops)},
                               {QStringLiteral("apps"), QVariant::fromValue(&apps)},
+                              {QStringLiteral("actions"), QVariant::fromValue(&actions)},
                               {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
 
     backend.start();

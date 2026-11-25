@@ -4,6 +4,7 @@
 #include "backend/BackendClient.h"
 #include "desktop/AppIcons.h"
 #include "desktop/DesktopApps.h"
+#include "models/ActionsModel.h"
 #include "models/Browser.h"
 #include "models/FavoritesModel.h"
 #include "models/RecentModel.h"
@@ -70,6 +71,7 @@ private slots:
         Operations ops(&backend, &jobs);
         Transfers transfers(&ops);
         DesktopApps apps;
+        ActionsModel actions(&backend);
         Properties properties(&backend, &apps);
         Preview preview;
         SearchModel search(&backend);
@@ -90,6 +92,7 @@ private slots:
                                      {"transfers", QVariant::fromValue(&transfers)},
                                      {"ops", QVariant::fromValue(&ops)},
                                      {"apps", QVariant::fromValue(&apps)},
+                                     {"actions", QVariant::fromValue(&actions)},
                                      {"properties", QVariant::fromValue(&properties)},
                                      {"preview", QVariant::fromValue(&preview)},
                                      {"search", QVariant::fromValue(&search)},
@@ -229,6 +232,7 @@ private slots:
         Operations ops(&backend, &jobs);
         Transfers transfers(&ops);
         DesktopApps apps;
+        ActionsModel actions(&backend);
         QQmlApplicationEngine engine;
         engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
         engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider);
@@ -242,6 +246,7 @@ private slots:
                                   {"transfers", QVariant::fromValue(&transfers)},
                                   {"ops", QVariant::fromValue(&ops)},
                                   {"apps", QVariant::fromValue(&apps)},
+                                  {"actions", QVariant::fromValue(&actions)},
                                   {"backend", QVariant::fromValue(&backend)}});
         QQuickWindow *one = windows.open({first.path()});
         QQuickWindow *two = windows.open({second.path(), first.path()});
