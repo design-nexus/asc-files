@@ -48,4 +48,8 @@ QImage videoFrameNow(const QByteArray &file, int size);
 /// The PDF `file`'s first page, no larger than `size` per side, synchronously, in the sandbox.
 QImage pdfPageNow(const QByteArray &file, int size);
 
+/// The cover a comic, e-book or model carries (`format`: cbz, epub, 3mf or fcstd), read by the
+/// document reader, at most `size` a side; null when there is none. Blocking, as `runNow`.
+QImage coverNow(const QByteArray &file, const QString &format, int size);
+
 } // namespace Sandbox

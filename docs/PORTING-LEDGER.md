@@ -319,6 +319,13 @@ and `services/table.rs`, with their tests, which checked legacy's own document b
 
 | `sandbox_helper/document_media/tests.rs` (8) | 7 | `sniffed_svg_rejected_by_resvg_reaches_the_raster_loaders` (the helper draws only Mermaid and equations; pictures are Qt's) |
 
+| `sandbox_helper/archive_cover/tests.rs` (6) | 5 | `rar_disabled_comic_cover_reports_unsupported_build` (CBR covers wait for B9's RAR support) |
+
+Covers for thumbnails (`src/cover.rs`) are legacy's `archive_cover.rs` (CBZ, EPUB) and the embedded
+thumbnails of `model/embedded.rs` (3MF, FreeCAD), decoded with the `image` crate instead of
+gdk-pixbuf. Not yet: CBR covers (B9), drawing a model with no thumbnail of its own, AppImage icons and
+camera RAW thumbnails (engine gaps, item 11).
+
 Mermaid diagrams and equations in Markdown are legacy's renderer (`sandbox_helper/document_media.rs`:
 mermaid-svg; MathJax 4.1.3 in QuickJS; resvg) in `src/media.rs`. New: equations are drawn in the
 text's colour and diagrams on a light card, and pictures reach the preview as PNGs it serves.

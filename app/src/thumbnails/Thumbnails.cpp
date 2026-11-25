@@ -76,7 +76,10 @@ QString cachePath(const QByteArray &path, int size) {
 
 namespace {
 
-enum class Source { None, Picture, Video, Pdf };
+enum class Source { None, Picture, Video, Pdf, Cover };
+
+/// Files that carry their own cover, read by the document reader.
+const QList<QByteArray> covered{"cbz", "epub", "3mf", "fcstd"};
 
 Source sourceOf(const QString &name) {
     static const QList<QByteArray> formats = QImageReader::supportedImageFormats();
@@ -92,6 +95,9 @@ Source sourceOf(const QString &name) {
     }
     if (videos.contains(suffix)) {
         return Source::Video;
+    }
+    if (covered.contains(suffix)) {
+        return Source::Cover;
     }
     return suffix == "pdf" ? Source::Pdf : Source::None;
 }
@@ -119,9 +125,10 @@ QImage thumbnail(const QByteArray &path, int size) {
         return {};
     }
     // Decoded in the sandbox, as every untrusted file is.
-    QImage image = source == Source::Video ? Sandbox::videoFrameNow(path, wanted)
-                   : source == Source::Pdf ? Sandbox::pdfPageNow(path, wanted)
-                                           : Sandbox::decodeImageNow(path, wanted);
+    QImage image = source == Source::Video   ? Sandbox::videoFrameNow(path, wanted)
+                   : source == Source::Pdf   ? Sandbox::pdfPageNow(path, wanted)
+                   : source == Source::Cover ? Sandbox::coverNow(path, QFileInfo(QFile::decodeName(path)).suffix().toLower(), wanted)
+                                             : Sandbox::decodeImageNow(path, wanted);
     if (image.isNull()) {
         QImage marker(1, 1, QImage::Format_ARGB32);
         marker.fill(Qt::transparent);

@@ -8,7 +8,9 @@
 //! pulldown-cmark and cleaned with ammonia.
 //!
 //!     asc-files-docs markdown|html|rtf|docx|sheet|csv|tsv <file> [<text colour, #rrggbb>]
+//!     asc-files-docs cover cbz|epub|3mf|fcstd <file> <edge>   (a cover for a thumbnail, as a PNG)
 
+mod cover;
 mod docx;
 mod html;
 mod markdown;
@@ -118,12 +120,36 @@ pub(crate) fn render(kind: &str, path: &Path, ink: &str) -> Result<Rendered, Str
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
+    // A cover: `cover <cbz|epub|3mf|fcstd> <file> <edge>`, written out as a PNG.
+    if let [_, mode, format, file, edge] = args.as_slice()
+        && mode == "cover"
+    {
+        let Some(format) = cover::CoverFormat::from_name(format) else {
+            eprintln!("unknown cover format {format}");
+            return ExitCode::from(2);
+        };
+        let edge = edge.parse().unwrap_or(256).clamp(1, 1024);
+        return match cover::render(Path::new(file), format, edge) {
+            Ok(png) => {
+                use std::io::Write as _;
+                if std::io::stdout().write_all(&png).is_ok() {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                }
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let (kind, file, ink) = match args.as_slice() {
         [_, kind, file] => (kind, file, "#000000"),
         [_, kind, file, ink] => (kind, file, ink.as_str()),
         _ => {
             eprintln!(
-                "usage: asc-files-docs markdown|html|rtf|docx|sheet|csv|tsv <file> [#rrggbb]"
+                "usage: asc-files-docs markdown|html|rtf|docx|sheet|csv|tsv <file> [#rrggbb] | cover cbz|epub|3mf|fcstd <file> <edge>"
             );
             return ExitCode::from(2);
         }

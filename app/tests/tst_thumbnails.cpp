@@ -108,6 +108,42 @@ private slots:
         QVERIFY(Thumbnails::thumbnail(QFile::encodeName(dir.filePath("plain.flac")), 128).isNull());
     }
 
+    void comicsBooksAndModelsShowTheirCovers() {
+        QVERIFY(Thumbnails::canMake("issue.CBZ"));
+        QVERIFY(Thumbnails::canMake("novel.epub"));
+        QVERIFY(Thumbnails::canMake("part.3mf"));
+        QVERIFY(Thumbnails::canMake("part.FCStd"));
+        const QString python = QStandardPaths::findExecutable("python3");
+        if (python.isEmpty()) {
+            QSKIP("python3 is not installed to make an archive");
+        }
+        QTemporaryDir dir;
+        QImage page(200, 300, QImage::Format_RGB32);
+        page.fill(Qt::red);
+        QVERIFY(page.save(dir.filePath("page.png")));
+        // A comic whose pages are out of order in the archive: the first page is the cover.
+        QImage other(200, 300, QImage::Format_RGB32);
+        other.fill(Qt::blue);
+        QVERIFY(other.save(dir.filePath("other.png")));
+        QProcess make;
+        make.start(python, {"-I", "-c", "import sys, zipfile\n"
+                                        "z = zipfile.ZipFile(sys.argv[1], 'w')\n"
+                                        "z.write(sys.argv[3], 'page10.png')\n"
+                                        "z.write(sys.argv[2], 'page2.png')\n"
+                                        "z.close()",
+                            dir.filePath("issue.cbz"), dir.filePath("page.png"), dir.filePath("other.png")});
+        QVERIFY(make.waitForFinished(30000) && make.exitCode() == 0);
+        const QImage cover = Thumbnails::thumbnail(QFile::encodeName(dir.filePath("issue.cbz")), 128);
+        QVERIFY(!cover.isNull());
+        QVERIFY(qMax(cover.width(), cover.height()) <= 256);
+        QVERIFY2(cover.pixelColor(cover.width() / 2, cover.height() / 2).red() > 200, "the first page, by its number");
+        // One without a picture: none.
+        make.start(python, {"-I", "-c", "import sys, zipfile\nz = zipfile.ZipFile(sys.argv[1], 'w')\nz.writestr('notes.txt', 'x')\nz.close()",
+                            dir.filePath("empty.cbz")});
+        QVERIFY(make.waitForFinished(30000) && make.exitCode() == 0);
+        QVERIFY(Thumbnails::thumbnail(QFile::encodeName(dir.filePath("empty.cbz")), 128).isNull());
+    }
+
     void whatCannotBeReadIsNotTriedAgain() {
         QTemporaryDir dir;
         const QString broken = dir.filePath("broken.jpg");

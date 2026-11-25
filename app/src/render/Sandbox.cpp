@@ -222,4 +222,8 @@ QImage pdfPageNow(const QByteArray &file, int size) {
                           file));
 }
 
+QImage coverNow(const QByteArray &file, const QString &format, int size) {
+    return fromPng(runNow(documentReader(), {QStringLiteral("cover"), format, QStringLiteral("{}"), QString::number(size)}, file));
+}
+
 } // namespace Sandbox
