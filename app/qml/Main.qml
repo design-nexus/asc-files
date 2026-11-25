@@ -497,6 +497,7 @@ ApplicationWindow {
         places: window.places
         theme: SystemTheme
         search: window.search
+        actions: window.actions
         currentFolder: window.inFolder ? window.browser.location : ""
     }
 

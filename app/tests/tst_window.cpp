@@ -181,6 +181,29 @@ private slots:
             settings->setProperty("page", page);
             QTest::qWait(50);
         }
+        // The action editor, with its three tabs.
+        auto *editor = window->findChild<QObject *>(QStringLiteral("actionEditor"));
+        QVERIFY(editor);
+        QMetaObject::invokeMethod(editor, "create");
+        QTRY_VERIFY(editor->property("opened").toBool());
+        for (int tab = 0; tab < 3; ++tab) {
+            editor->setProperty("tab", tab);
+            QTest::qWait(50);
+        }
+        // What it saves is an action the backend takes.
+        editor->setProperty("name", QStringLiteral("Say hello"));
+        editor->setProperty("runtime", QStringLiteral("bash"));
+        editor->setProperty("entrypoint", QStringLiteral("run.sh"));
+        editor->setProperty("extensions", QStringLiteral("txt, .MD"));
+        editor->setProperty("maxItems", QStringLiteral("3"));
+        editor->setProperty("scripts", QVariantMap{{"python", ""}, {"bash", "#!/usr/bin/env bash\necho hello\n"}});
+        QCOMPARE(editor->property("actionId").toString(), QStringLiteral("say-hello"));
+        QMetaObject::invokeMethod(editor, "save");
+        QTRY_VERIFY_WITH_TIMEOUT(!editor->property("visible").toBool(), 10000);
+        QTRY_VERIFY(!actions.actions().isEmpty());
+        QCOMPARE(actions.actions().first().toMap().value("id").toString(), QStringLiteral("say-hello"));
+        actions.remove(QStringLiteral("say-hello"));
+        QTRY_VERIFY(actions.actions().isEmpty());
         QMetaObject::invokeMethod(settings, "close");
         QTRY_VERIFY(!settings->property("visible").toBool());
 

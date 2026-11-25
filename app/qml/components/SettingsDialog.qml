@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QtQuick.Layouts
 
 import AscFiles
@@ -16,6 +17,8 @@ Popup {
     required property var theme
     /// The window's search, which checks exclusion rules with the backend.
     required property var search
+    /// The user's custom actions.
+    required property var actions
     /// The folder the window shows, offered as the start folder.
     property string currentFolder
     property int page: 0
@@ -26,6 +29,7 @@ Popup {
         { title: qsTr("Sidebar"), detail: qsTr("Places shown, colours") },
         { title: qsTr("Search"), detail: qsTr("Typing to filter, limits, exclusions") },
         { title: qsTr("Transfers"), detail: qsTr("Dropping files") },
+        { title: qsTr("Actions"), detail: qsTr("Your own commands for files") },
         { title: qsTr("Previews"), detail: qsTr("Preview style, thumbnails") },
         { title: qsTr("Appearance"), detail: qsTr("Theme, accent, text size") },
         { title: qsTr("About"), detail: qsTr("Version, diagnostics") }
@@ -141,7 +145,7 @@ Popup {
                 Loader {
                     x: 28
                     width: scroll.availableWidth - 56
-                    sourceComponent: [general, browsing, sidebar, searching, transfers, previews, appearance, about][dialog.page]
+                    sourceComponent: [general, browsing, sidebar, searching, transfers, actionsPage, previews, appearance, about][dialog.page]
                 }
             }
         }
@@ -442,6 +446,117 @@ Popup {
                     ToggleSwitch { checked: AppSettings.openAfterDrop; onToggled: AppSettings.openAfterDrop = checked }
                 }
             }
+        }
+    }
+
+    ActionEditor { id: actionEditor; actions: dialog.actions }
+    // Asks for a folder, for importing an action or exporting one; made when wanted.
+    Loader {
+        id: folderAsk
+        active: false
+        property var chosen: null
+        property string title
+        function ask(title, chosen) {
+            folderAsk.title = title
+            folderAsk.chosen = chosen
+            active = true
+            item.open()
+        }
+        sourceComponent: FolderDialog {
+            title: folderAsk.title
+            onAccepted: folderAsk.chosen(decodeURIComponent(selectedFolder.toString().replace(/^file:\/\//, "")))
+        }
+    }
+
+    Component {
+        id: actionsPage
+        PageBody {
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("Your own scripts and programs, on the item menus. They run with your permissions, without a sandbox; one you import is off until you turn it on.")
+                wrapMode: Text.Wrap
+                color: Theme.textDim
+                font.family: Theme.family
+                font.pointSize: Theme.small
+            }
+            SettingsGroup {
+                title: qsTr("Your actions")
+                Text {
+                    visible: dialog.actions.actions.length === 0
+                    Layout.margins: 16
+                    text: qsTr("No actions yet.")
+                    color: Theme.textMute
+                    font.family: Theme.family
+                    font.pointSize: Theme.body
+                }
+                Repeater {
+                    model: dialog.actions.actions
+                    SettingRow {
+                        id: actionRow
+                        required property int index
+                        required property var modelData
+                        divided: index > 0
+                        title: modelData.name
+                        description: (modelData.description || (modelData.runtime + " · " + (modelData.mode === "per-item" ? qsTr("once per item") : qsTr("once for all"))))
+                                     + (modelData.available ? "" : "\n" + (modelData.reason || qsTr("It can't run here.")))
+                        ToggleSwitch {
+                            anchors.verticalCenter: parent.verticalCenter
+                            Accessible.name: qsTr("Turn on %1").arg(actionRow.modelData.name)
+                            checked: actionRow.modelData.enabled
+                            onToggled: dialog.actions.setEnabled(actionRow.modelData.id, checked)
+                        }
+                        IconButton {
+                            label: qsTr("Edit %1").arg(actionRow.modelData.name)
+                            iconPath: "M3 13h3l7-7-3-3-7 7zM9 4l3 3"
+                            onClicked: actionEditor.edit(actionRow.modelData.id)
+                        }
+                        IconButton {
+                            id: more
+                            label: qsTr("More")
+                            iconPath: "M4 8h.01M8 8h.01M12 8h.01"
+                            onClicked: moreMenu.popup(more, 0, more.height)
+                        }
+                        ContextMenu {
+                            id: moreMenu
+                            MenuItem { text: qsTr("Duplicate"); onTriggered: dialog.actions.duplicate(actionRow.modelData.id) }
+                            MenuItem {
+                                text: qsTr("Export…")
+                                onTriggered: folderAsk.ask(qsTr("Export this action to a folder"), (folder) => dialog.actions.exportTo(actionRow.modelData.id, folder))
+                            }
+                            MenuSeparator {}
+                            MenuItem {
+                                text: qsTr("Delete…")
+                                onTriggered: deleteConfirm.ask(qsTr("Delete “%1”?").arg(actionRow.modelData.name),
+                                                               qsTr("Its folder and script are deleted."), qsTr("Delete"),
+                                                               () => dialog.actions.remove(actionRow.modelData.id))
+                            }
+                        }
+                    }
+                }
+            }
+            SettingsGroup {
+                visible: dialog.actions.failures.length > 0
+                title: qsTr("Problems")
+                Repeater {
+                    model: dialog.actions.failures
+                    SettingRow {
+                        required property int index
+                        required property var modelData
+                        divided: index > 0
+                        title: modelData.directory
+                        description: modelData.reason
+                    }
+                }
+            }
+            RowLayout {
+                spacing: 8
+                Button { text: qsTr("New Action…"); onClicked: actionEditor.create() }
+                Button {
+                    text: qsTr("Import…")
+                    onClicked: folderAsk.ask(qsTr("Import an action folder"), (folder) => dialog.actions.importFrom(folder))
+                }
+            }
+            ConfirmDialog { id: deleteConfirm }
         }
     }
 

@@ -63,6 +63,7 @@ qt_add_qml_module(asc_files_qml
         qml/OverviewPage.qml
         qml/SearchPage.qml
         qml/Theme.qml
+        qml/components/ActionEditor.qml
         qml/components/ActionsMenu.qml
         qml/components/Badge.qml
         qml/components/Breadcrumb.qml
