@@ -21,6 +21,7 @@ ColumnLayout {
         : search.truncated ? qsTr("%n results; it stopped at its limit", "", search.count)
         : qsTr("%n results", "", search.count)
     signal fileActivated(string path)
+    signal contextRequested(int row)
 
     function focusList() { results.focusList() }
     function step(delta) { results.step(delta) }
@@ -60,5 +61,6 @@ ColumnLayout {
         emptyText: page.search.query.length === 0 ? qsTr("Type to search")
                  : page.search.running ? "" : qsTr("Nothing matches “%1”").arg(page.search.query)
         onFileActivated: (path) => page.fileActivated(path)
+        onContextRequested: (row) => page.contextRequested(row)
     }
 }

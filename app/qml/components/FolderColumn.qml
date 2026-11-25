@@ -17,6 +17,7 @@ Rectangle {
 
     signal openRow(int row)
     signal clickRow(int row, int modifiers)
+    signal menuRow(int row)
 
     width: 250
     color: "transparent"
@@ -47,6 +48,10 @@ Rectangle {
             radius: Theme.radius
             color: selected || (open && !column.last) ? Theme.selection : hover.hovered ? Theme.hover : "transparent"
             HoverHandler { id: hover }
+            TapHandler {
+                acceptedButtons: Qt.RightButton
+                onTapped: column.menuRow(entry.index)
+            }
             TapHandler {
                 id: tap
                 onTapped: {

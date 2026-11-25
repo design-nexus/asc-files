@@ -29,6 +29,8 @@ ColumnLayout {
     signal emptyRequested()
     /// A file was double-clicked or Entered: the window opens it.
     signal fileActivated(string path)
+    /// A right click on `row`, selected first.
+    signal contextRequested(int row)
 
     function focusList() { list.forceActiveFocus() }
     readonly property string currentPath: selectedRow >= 0 && items ? (items.count, items.pathAt(selectedRow)) : ""
@@ -106,6 +108,7 @@ ColumnLayout {
             showKind: view.showKind
             onClicked: { view.selectedRow = index; list.forceActiveFocus() }
             onActivated: view.open(index)
+            onMenuRequested: { view.selectedRow = index; list.forceActiveFocus(); view.contextRequested(index) }
         }
         Keys.onUpPressed: { view.selectedRow = Math.max(0, view.selectedRow - 1); positionViewAtIndex(view.selectedRow, ListView.Contain) }
         Keys.onDownPressed: { view.selectedRow = Math.min(count - 1, view.selectedRow + 1); positionViewAtIndex(view.selectedRow, ListView.Contain) }

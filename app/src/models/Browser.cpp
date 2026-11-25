@@ -250,7 +250,7 @@ QVariantList Browser::crumbs() const {
     for (const QByteArray &path : crumbPaths()) {
         const bool isHome = path == home;
         const QString label = isHome ? tr("Home") : path == "/" ? tr("Computer") : Wire::display(Wire::baseName(path));
-        result.append(QVariantMap{{QStringLiteral("label"), label}, {QStringLiteral("home"), isHome}});
+        result.append(QVariantMap{{QStringLiteral("label"), label}, {QStringLiteral("home"), isHome}, {QStringLiteral("path"), Wire::display(path)}});
     }
     return result;
 }

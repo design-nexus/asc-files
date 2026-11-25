@@ -234,6 +234,32 @@ private slots:
         tabs.next();
         QCOMPARE(tabs.currentIndex(), 0);
     }
+
+    void tabsAreDuplicatedAndClosedTogether() {
+        QTemporaryDir dir;
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        TabModel tabs(&backend);
+        tabs.openTab(dir.path());
+        tabs.openTab(QDir::homePath());
+        tabs.current()->goPage(Browser::Trash);
+        // A duplicate sits beside its tab, on the same folder or page.
+        tabs.duplicateTab(0);
+        QCOMPARE(tabs.rowCount(), 3);
+        QCOMPARE(tabs.currentIndex(), 1);
+        QVERIFY(openedAt(*tabs.at(1), dir.path()));
+        QCOMPARE(tabs.folderAt(1), dir.path());
+        tabs.duplicateTab(2);
+        QCOMPARE(tabs.at(3)->page(), Browser::Trash);
+        QCOMPARE(tabs.folderAt(3), QString());
+        // Those after a tab, then all others.
+        tabs.closeTabsAfter(1);
+        QCOMPARE(tabs.rowCount(), 2);
+        tabs.closeOtherTabs(1);
+        QCOMPARE(tabs.rowCount(), 1);
+        QCOMPARE(tabs.currentIndex(), 0);
+        QCOMPARE(tabs.folderAt(0), dir.path());
+    }
 };
 
 QTEST_GUILESS_MAIN(TestBrowser)

@@ -49,8 +49,25 @@ QList<QByteArray> Operations::selectedPaths(FolderModel *folder) const {
     return paths;
 }
 
-void Operations::copy(FolderModel *folder, bool cut) {
-    const QList<QByteArray> paths = selectedPaths(folder);
+void Operations::copy(FolderModel *folder, bool cut) { setClipboard(selectedPaths(folder), cut); }
+
+void Operations::copyPaths(const QStringList &paths, bool cut) {
+    QList<QByteArray> raw;
+    for (const QString &path : paths) {
+        raw.append(QFile::encodeName(path));
+    }
+    setClipboard(raw, cut);
+}
+
+void Operations::copyPathText(const QStringList &paths) {
+    if (paths.isEmpty()) {
+        return;
+    }
+    QGuiApplication::clipboard()->setText(paths.join(u'\n'));
+    emit notice(tr("Copied the location"));
+}
+
+void Operations::setClipboard(const QList<QByteArray> &paths, bool cut) {
     if (paths.isEmpty()) {
         return;
     }
@@ -244,17 +261,32 @@ void Operations::startBatch(const QByteArray &into, const QJsonArray &items, boo
 }
 
 void Operations::trash(FolderModel *folder) {
+    trashRaw(selectedPaths(folder));
+    if (folder) {
+        folder->clearSelection();
+    }
+}
+
+void Operations::trashPaths(const QStringList &paths) {
+    QList<QByteArray> raw;
+    for (const QString &path : paths) {
+        raw.append(QFile::encodeName(path));
+    }
+    trashRaw(raw);
+}
+
+void Operations::trashRaw(const QList<QByteArray> &paths) {
     QJsonArray items;
-    for (const QByteArray &path : selectedPaths(folder)) {
+    for (const QByteArray &path : paths) {
         items.append(QJsonObject{{"source", Wire::encode(path)}, {"action", "trash"}});
     }
     if (items.isEmpty()) {
         return;
     }
     const QString label = tr("Move %n items to Trash", "", int(items.size()));
-    m_jobs->start({{"into", Wire::encode(folder->rawFolder())}, {"items", items}, {"label", label}}, label,
+    // A job's folder is where its items are; trashed items may come from anywhere.
+    m_jobs->start({{"into", Wire::encode(Wire::parent(paths.first()))}, {"items", items}, {"label", label}}, label,
                   [this, label](qint64, const BackendError &error) { emit notice(error.isNull() ? label : error.message); });
-    folder->clearSelection();
 }
 
 void Operations::deleteForever(FolderModel *folder) {

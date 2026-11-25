@@ -15,6 +15,8 @@ Item {
     readonly property bool editing: field.visible
 
     signal edited()
+    /// A right click on a crumb: the folder it stands for.
+    signal menuRequested(string path)
 
     function edit() {
         field.text = crumbs.browser ? crumbs.browser.location : ""
@@ -65,6 +67,10 @@ Item {
                         implicitWidth: label.implicitWidth + (home.visible ? 23 : 0) + 12
                         Layout.maximumWidth: crumb.last ? 320 : 180
                         onClicked: crumbs.browser.goCrumb(crumb.index)
+                        TapHandler {
+                            acceptedButtons: Qt.RightButton
+                            onTapped: if (crumb.modelData.path) crumbs.menuRequested(crumb.modelData.path)
+                        }
                         background: Rectangle {
                             radius: 6
                             color: button.hovered ? Theme.hover : "transparent"

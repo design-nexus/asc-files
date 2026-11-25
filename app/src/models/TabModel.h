@@ -31,6 +31,14 @@ public:
     /// Opens a tab on a path given as text; empty for the current tab's folder.
     Q_INVOKABLE void openTab(const QString &path = {});
     Q_INVOKABLE void closeTab(int index);
+    /// A copy of the tab at `index` beside it: the same folder or page, view and place.
+    Q_INVOKABLE void duplicateTab(int index);
+    /// Closes every tab but the one at `index`.
+    Q_INVOKABLE void closeOtherTabs(int index);
+    /// Closes the tabs after the one at `index`.
+    Q_INVOKABLE void closeTabsAfter(int index);
+    /// The folder the tab at `index` shows (empty on a page).
+    Q_INVOKABLE QString folderAt(int index) const;
     Q_INVOKABLE void moveTab(int from, int to);
     Q_INVOKABLE void next();
     Q_INVOKABLE void previous();

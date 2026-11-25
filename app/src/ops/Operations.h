@@ -35,6 +35,12 @@ public:
 
     /// Puts the selection of `folder` on the clipboard, to be copied, or moved when `cut`.
     Q_INVOKABLE void copy(FolderModel *folder, bool cut);
+    /// Copies (or cuts) items named by path: from Recent, Favorites, search results, a crumb.
+    Q_INVOKABLE void copyPaths(const QStringList &paths, bool cut);
+    /// Puts the paths themselves on the clipboard, as text.
+    Q_INVOKABLE void copyPathText(const QStringList &paths);
+    /// Moves items named by path to the Trash.
+    Q_INVOKABLE void trashPaths(const QStringList &paths);
     /// Pastes the clipboard into the folder `folder` shows, or into its folder at `row` when
     /// `row` is a folder.
     Q_INVOKABLE void paste(FolderModel *folder, int row = -1);
@@ -108,6 +114,8 @@ private:
     void startBatch(const QByteArray &into, const QJsonArray &items, bool cut, bool fromClipboard);
     void undoNow(bool overwrite);
     QList<QByteArray> selectedPaths(FolderModel *folder) const;
+    void setClipboard(const QList<QByteArray> &paths, bool cut);
+    void trashRaw(const QList<QByteArray> &paths);
 
     BackendClient *m_backend;
     JobModel *m_jobs;

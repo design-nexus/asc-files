@@ -23,6 +23,7 @@ Rectangle {
 
     signal activated()
     signal clicked()
+    signal menuRequested()
 
     height: Theme.rowHeight
     radius: Theme.radius
@@ -33,6 +34,10 @@ Rectangle {
     TapHandler {
         onTapped: row.clicked()
         onDoubleTapped: row.activated()
+    }
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        onTapped: row.menuRequested()
     }
 
     RowLayout {

@@ -268,6 +268,34 @@ private slots:
         QCOMPARE(created.last().at(1).toString(), QStringLiteral("New Folder (1)"));
         QVERIFY(QFileInfo(dir.filePath("New Folder (1)")).isDir());
     }
+
+    void itemsNamedByPathAreCopiedAndTrashed() {
+        QTemporaryDir dir(QDir::home().filePath(QStringLiteral("ops-XXXXXX")));
+        QDir().mkdir(dir.filePath("from"));
+        QDir().mkdir(dir.filePath("into"));
+        write(dir.filePath("from/found.txt"), "f");
+        write(dir.filePath("from/gone.txt"), "g");
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        JobModel jobs(&backend);
+        Operations ops(&backend, &jobs);
+        // As from search results: copied by path, pasted elsewhere.
+        ops.copyPaths({dir.filePath("from/found.txt")}, false);
+        QVERIFY(ops.canPaste());
+        FolderModel into(&backend);
+        QVERIFY(openAll(into, dir.filePath("into")));
+        QSignalSpy finished(&jobs, &JobModel::finished);
+        ops.paste(&into);
+        QVERIFY(finished.wait(20000));
+        QVERIFY(QFile::exists(dir.filePath("into/found.txt")));
+        QVERIFY(QFile::exists(dir.filePath("from/found.txt")));
+        // The location as text.
+        ops.copyPathText({dir.filePath("from/gone.txt")});
+        QCOMPARE(QGuiApplication::clipboard()->text(), dir.filePath("from/gone.txt"));
+        ops.trashPaths({dir.filePath("from/gone.txt")});
+        QVERIFY(finished.wait(20000));
+        QVERIFY(!QFile::exists(dir.filePath("from/gone.txt")));
+    }
 };
 
 QTEST_MAIN(TestOperations)

@@ -95,6 +95,37 @@ void TabModel::openTab(const QString &path) {
     open(QFile::encodeName(path));
 }
 
+void TabModel::duplicateTab(int index) {
+    if (index < 0 || index >= m_tabs.size()) {
+        return;
+    }
+    setCurrentIndex(index);
+    open({})->restore(m_tabs.at(index)->saved());
+}
+
+void TabModel::closeOtherTabs(int index) {
+    if (index < 0 || index >= m_tabs.size()) {
+        return;
+    }
+    closeTabsAfter(index);
+    while (m_tabs.size() > 1) {
+        closeTab(0);
+    }
+}
+
+void TabModel::closeTabsAfter(int index) {
+    while (index >= 0 && index + 1 < m_tabs.size()) {
+        closeTab(int(m_tabs.size()) - 1);
+    }
+}
+
+QString TabModel::folderAt(int index) const {
+    if (index < 0 || index >= m_tabs.size() || m_tabs.at(index)->page() != Browser::Folder) {
+        return {};
+    }
+    return m_tabs.at(index)->location();
+}
+
 void TabModel::closeTab(int index) {
     if (m_tabs.size() <= 1 || index < 0 || index >= m_tabs.size()) {
         return;

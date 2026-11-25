@@ -85,6 +85,7 @@ ApplicationWindow {
             Breadcrumb {
                 id: breadcrumb
                 browser: window.browser
+                onMenuRequested: (path) => pathMenu.show(path, true, true)
                 Layout.leftMargin: window.width >= 1000 ? 22 : 6
                 Layout.fillWidth: true
                 Layout.minimumWidth: 60
@@ -291,6 +292,7 @@ ApplicationWindow {
                                 current: index === window.tabs.currentIndex
                                 onClicked: window.tabs.currentIndex = index
                                 onCloseRequested: window.tabs.closeTab(index)
+                                onMenuRequested: tabMenu.show(index)
                             }
                         }
                         IconButton {
@@ -320,6 +322,7 @@ ApplicationWindow {
                             onNotice: (message) => notice.show(message)
                             onContextRequested: (row) => row >= 0 ? itemMenu.show(row) : spaceMenu.popup()
                             onFileActivated: (path) => window.ops.open(path)
+                            onPathMenuRequested: (path, isFolder) => pathMenu.show(path, isFolder)
                         }
                         OverviewPage {
                             browser: window.browser
@@ -328,11 +331,14 @@ ApplicationWindow {
                             favorites: window.favorites
                             trash: window.trash
                             downloads: window.downloads
+                            onFileActivated: (path) => window.ops.open(path)
+                            onMenuRequested: (path, isFolder) => pathMenu.show(path, isFolder)
                         }
                         ItemsView {
                             browser: window.browser
                             items: window.recent
                             onFileActivated: (path) => window.ops.open(path)
+                            onContextRequested: (row) => pathMenu.show(window.recent.pathAt(row), window.recent.isFolderAt(row))
                             whenTitle: qsTr("Used")
                             emptyText: qsTr("Files you open show up here")
                         }
@@ -340,6 +346,7 @@ ApplicationWindow {
                             browser: window.browser
                             items: window.favorites
                             onFileActivated: (path) => window.ops.open(path)
+                            onContextRequested: (row) => pathMenu.show(window.favorites.pathAt(row), window.favorites.isFolderAt(row))
                             emptyText: qsTr("Star files and folders to keep them at hand")
                         }
                         ItemsView {
@@ -350,6 +357,7 @@ ApplicationWindow {
                             emptyText: qsTr("The Trash is empty")
                             opensFolders: false
                             trashActions: true
+                            onContextRequested: (row) => trashMenu.show(row)
                             onRestoreRequested: (row) => window.ops.restore(window.trash.pathAt(row))
                             onDeleteRequested: (row) => confirm.ask(qsTr("Delete “%1” for good?").arg(window.trash.nameAt(row)),
                                                                     qsTr("This cannot be undone."), qsTr("Delete"),
@@ -364,6 +372,7 @@ ApplicationWindow {
                             search: window.search
                             places: window.places
                             onFileActivated: (path) => window.ops.open(path)
+                            onContextRequested: (row) => pathMenu.show(window.search.pathAt(row), window.search.isFolderAt(row))
                         }
                     }
                     Rectangle {
@@ -436,6 +445,102 @@ ApplicationWindow {
     }
     ConflictDialog { ops: window.ops; listening: window.foremost }
     ConfirmDialog { id: confirm }
+
+    // A right click on an item named by its path: in Recent, Favorites, search results, the
+    // Overview, a crumb, a column other than the current folder's.
+    ContextMenu {
+        id: pathMenu
+        property string path
+        property bool isFolder
+        /// A crumb: an ancestor of the folder shown, not offered for the Trash.
+        property bool crumb
+        readonly property string parentFolder: path.substring(0, path.lastIndexOf("/")) || "/"
+        function show(at, folder, isCrumb) { path = at; isFolder = folder; crumb = isCrumb === true; popup() }
+        MenuItem {
+            text: qsTr("Open")
+            onTriggered: pathMenu.isFolder ? window.browser.goPath(pathMenu.path) : window.ops.open(pathMenu.path)
+        }
+        MenuItem {
+            text: qsTr("Open in New Tab")
+            visible: pathMenu.isFolder
+            height: visible ? implicitHeight : 0
+            onTriggered: window.tabs.openTab(pathMenu.path)
+        }
+        MenuItem {
+            text: qsTr("Open in New Window")
+            visible: pathMenu.isFolder && window.windows !== null
+            height: visible ? implicitHeight : 0
+            onTriggered: window.windows.open([pathMenu.path])
+        }
+        MenuItem {
+            text: qsTr("Show in Folder")
+            visible: !pathMenu.crumb && pathMenu.path !== "/"
+            height: visible ? implicitHeight : 0
+            onTriggered: window.browser.goPath(pathMenu.parentFolder)
+        }
+        MenuSeparator {}
+        MenuItem { text: qsTr("Cut"); visible: !pathMenu.crumb; height: visible ? implicitHeight : 0; onTriggered: window.ops.copyPaths([pathMenu.path], true) }
+        MenuItem { text: qsTr("Copy"); onTriggered: window.ops.copyPaths([pathMenu.path], false) }
+        MenuItem { text: qsTr("Copy Location"); onTriggered: window.ops.copyPathText([pathMenu.path]) }
+        MenuSeparator {}
+        MenuItem {
+            text: window.favorites.contains(pathMenu.path) ? qsTr("Remove from Favorites") : qsTr("Add to Favorites")
+            onTriggered: window.favorites.contains(pathMenu.path) ? window.favorites.remove(pathMenu.path) : window.favorites.add(pathMenu.path)
+        }
+        MenuItem {
+            text: window.places.isPinned(pathMenu.path) ? qsTr("Unpin from Sidebar") : qsTr("Pin to Sidebar")
+            visible: pathMenu.isFolder
+            height: visible ? implicitHeight : 0
+            onTriggered: window.places.isPinned(pathMenu.path) ? window.places.unpin(pathMenu.path) : window.places.pin(pathMenu.path)
+        }
+        MenuSeparator { visible: !pathMenu.crumb; height: visible ? implicitHeight : 0 }
+        MenuItem {
+            text: qsTr("Move to Trash")
+            visible: !pathMenu.crumb
+            height: visible ? implicitHeight : 0
+            onTriggered: window.ops.trashPaths([pathMenu.path])
+        }
+    }
+
+    // A right click on an item in the Trash.
+    ContextMenu {
+        id: trashMenu
+        property int row: -1
+        function show(at) { row = at; popup() }
+        MenuItem { text: qsTr("Restore"); onTriggered: window.ops.restore(window.trash.pathAt(trashMenu.row)) }
+        MenuSeparator {}
+        MenuItem {
+            text: qsTr("Delete for Good…")
+            onTriggered: {
+                const row = trashMenu.row
+                confirm.ask(qsTr("Delete “%1” for good?").arg(window.trash.nameAt(row)), qsTr("This cannot be undone."),
+                            qsTr("Delete"), () => window.ops.deleteFromTrash(window.trash.extraAt(row)))
+            }
+        }
+    }
+
+    // A right click on a tab.
+    ContextMenu {
+        id: tabMenu
+        property int index: -1
+        function show(at) { index = at; popup() }
+        MenuItem { text: qsTr("New Tab"); onTriggered: window.tabs.openTab() }
+        MenuItem { text: qsTr("Duplicate Tab"); onTriggered: window.tabs.duplicateTab(tabMenu.index) }
+        MenuItem {
+            text: qsTr("Open in New Window")
+            visible: window.windows !== null && window.tabs.folderAt(tabMenu.index).length > 0
+            height: visible ? implicitHeight : 0
+            onTriggered: window.windows.open([window.tabs.folderAt(tabMenu.index)])
+        }
+        MenuSeparator {}
+        MenuItem { text: qsTr("Close Tab"); enabled: window.tabs.count > 1; onTriggered: window.tabs.closeTab(tabMenu.index) }
+        MenuItem { text: qsTr("Close Other Tabs"); enabled: window.tabs.count > 1; onTriggered: window.tabs.closeOtherTabs(tabMenu.index) }
+        MenuItem {
+            text: qsTr("Close Tabs to the Right")
+            enabled: tabMenu.index < window.tabs.count - 1
+            onTriggered: window.tabs.closeTabsAfter(tabMenu.index)
+        }
+    }
 
     // A right click on items.
     ContextMenu {

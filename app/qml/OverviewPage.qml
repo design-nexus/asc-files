@@ -18,6 +18,15 @@ Flickable {
     required property var downloads
     readonly property string status: ""
     readonly property string currentPath: ""
+    /// A file was clicked: the window opens it.
+    signal fileActivated(string path)
+    /// A right click on an item: the window shows what can be done with it.
+    signal menuRequested(string path, bool isFolder)
+
+    function activate(path, isFolder) {
+        if (isFolder) browser.goPath(path)
+        else fileActivated(path)
+    }
     function step(delta) {}
 
     function focusList() { forceActiveFocus() }
@@ -63,6 +72,9 @@ Flickable {
         property color iconColor: Theme.textDim
         property string label
         property string detail
+        /// What the line stands for, for its right-click menu (none when empty).
+        property string path
+        property bool isFolder: true
         signal clicked()
         Layout.fillWidth: true
         height: 30
@@ -70,6 +82,10 @@ Flickable {
         color: hover.hovered ? Theme.hover : "transparent"
         HoverHandler { id: hover }
         TapHandler { onTapped: line.clicked() }
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            onTapped: if (line.path.length > 0) page.menuRequested(line.path, line.isFolder)
+        }
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 8
@@ -110,6 +126,8 @@ Flickable {
                     iconPath: isFolder ? page.folderIcon : page.fileIcon
                     label: name
                     detail: whenText
+                    path: page.recent.pathAt(index)
+                    onClicked: page.activate(path, isFolder)
                 }
             }
             Text { visible: page.recent.count === 0; text: qsTr("Files you open show up here"); color: Theme.textMute; font.family: Theme.family; font.pointSize: Theme.small }
@@ -130,6 +148,7 @@ Flickable {
                         iconColor: Theme.sectionStorage
                         label: model.name
                         detail: model.freeText
+                        path: model.path
                         onClicked: page.browser.goPath(model.path)
                     }
                     Rectangle {
@@ -157,6 +176,7 @@ Flickable {
                     iconPath: model.icon
                     iconColor: Theme.sectionPinned
                     label: model.name
+                    path: model.path
                     onClicked: page.browser.goPath(model.path)
                 }
             }
@@ -168,7 +188,9 @@ Flickable {
                     iconColor: Theme.accent
                     label: model.name
                     detail: model.folder
-                    onClicked: if (model.isFolder) page.browser.goPath(model.path)
+                    path: model.path
+                    isFolder: model.isFolder
+                    onClicked: page.activate(model.path, model.isFolder)
                 }
             }
             Text {
@@ -196,6 +218,8 @@ Flickable {
                     iconPath: isFolder ? page.folderIcon : page.fileIcon
                     label: name
                     detail: modifiedText
+                    path: page.downloads.pathAt(index)
+                    onClicked: page.activate(path, isFolder)
                 }
             }
         }

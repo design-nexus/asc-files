@@ -14,6 +14,7 @@ AbstractButton {
     /// A tab can be closed; the same chip used as a choice cannot.
     property bool closable: true
     signal closeRequested()
+    signal menuRequested()
 
     implicitHeight: 30
     implicitWidth: row.implicitWidth + 24
@@ -26,6 +27,10 @@ AbstractButton {
     TapHandler {
         acceptedButtons: Qt.MiddleButton
         onTapped: tab.closeRequested()
+    }
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        onTapped: tab.menuRequested()
     }
 
     background: Rectangle {

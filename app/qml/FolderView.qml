@@ -37,6 +37,8 @@ Item {
     signal notice(string message)
     /// A file was double-clicked or Entered: the window opens it.
     signal fileActivated(string path)
+    /// A right click on an item in a column other than the current folder's.
+    signal pathMenuRequested(string path, bool isFolder)
 
     function startRename() {
         const target = mode === 1 ? grid : list
@@ -455,6 +457,13 @@ Item {
             last: index === ListView.view.count - 1
             onOpenRow: (row) => view.browser.goColumnRow(folderModel, row)
             onClickRow: (row, modifiers) => view.click(folderModel, row, modifiers)
+            onMenuRow: (row) => {
+                if (folderModel === view.folderModel) {
+                    view.requestContext(row)
+                } else {
+                    view.pathMenuRequested(folderModel.pathAt(row), folderModel.isFolder(row))
+                }
+            }
         }
     }
 }
