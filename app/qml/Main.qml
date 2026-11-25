@@ -57,6 +57,7 @@ ApplicationWindow {
     onTabBrowserChanged: rightActive = false
     readonly property var browser: dualPane && rightActive ? tabBrowser.second : tabBrowser
     readonly property bool gallery: tabBrowser !== null && tabBrowser.page === 0 && tabBrowser.view === 4
+    readonly property bool iconsShown: tabBrowser !== null && tabBrowser.page === 0 && tabBrowser.view === 1
     readonly property var folderModel: browser ? browser.folderModel : null
 
     width: 1600
@@ -896,6 +897,9 @@ ApplicationWindow {
         MenuItem { text: qsTr("Preview as Panel"); checkable: true; checked: window.previewAsPanel; onTriggered: AppSettings.previewStyle = "panel" }
         MenuSeparator {}
         MenuItem { text: qsTr("Show Hidden Files"); checkable: true; enabled: window.inFolder; checked: window.folderModel !== null && window.folderModel.showHidden; onTriggered: window.folderModel.showHidden = !window.folderModel.showHidden }
+        MenuSeparator {}
+        MenuItem { text: qsTr("Larger Icons (Ctrl+=)"); enabled: window.iconsShown && window.tabBrowser.iconSize < 160; onTriggered: window.tabBrowser.zoom(1) }
+        MenuItem { text: qsTr("Smaller Icons (Ctrl+-)"); enabled: window.iconsShown && window.tabBrowser.iconSize > 32; onTriggered: window.tabBrowser.zoom(-1) }
     }
 
     Notice {
@@ -1038,6 +1042,10 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+2"; onActivated: window.tabBrowser.view = 1 }
     Shortcut { sequence: "Ctrl+3"; onActivated: window.tabBrowser.view = 2 }
     Shortcut { sequence: "Ctrl+4"; onActivated: window.tabBrowser.view = 3 }
+    // Icons view's icon size, kept with the folder.
+    Shortcut { sequences: ["Ctrl+=", "Ctrl++"]; enabled: window.iconsShown; onActivated: window.tabBrowser.zoom(1) }
+    Shortcut { sequence: "Ctrl+-"; enabled: window.iconsShown; onActivated: window.tabBrowser.zoom(-1) }
+    Shortcut { sequence: "Ctrl+0"; enabled: window.iconsShown; onActivated: window.tabBrowser.iconSize = 64 }
     Shortcut { sequence: "Ctrl+5"; onActivated: window.tabBrowser.view = 4 }
     Shortcut { sequence: "Ctrl+6"; onActivated: window.tabBrowser.view = 5 }
     // Dual Pane: F5 copies the selection to the other pane's folder, F6 moves it there.

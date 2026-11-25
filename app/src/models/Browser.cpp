@@ -104,11 +104,16 @@ void Browser::show(const Place &place) {
             choice = FolderViews::shared().choice(folder);
             if (!FolderViews::shared().has(folder) && !first) {
                 choice.view = m_view;
+                choice.iconSize = m_iconSize;
             }
         } else if (first) {
             choice = FolderViews::defaults();
         } else {
-            choice = {m_view, m_folders->sortKey(), m_folders->sortDescending()};
+            choice = {m_view, m_folders->sortKey(), m_folders->sortDescending(), m_iconSize};
+        }
+        if (m_iconSize != choice.iconSize) {
+            m_iconSize = choice.iconSize;
+            emit iconSizeChanged();
         }
         m_folders->open(place.path, choice.sortKey, choice.descending);
         if (m_view != choice.view) {
@@ -130,6 +135,18 @@ void Browser::setView(int view) {
     rememberChoice();
 }
 
+void Browser::setIconSize(int size) {
+    size = qBound(FolderViews::MinIconSize, size, FolderViews::MaxIconSize);
+    if (size == m_iconSize) {
+        return;
+    }
+    m_iconSize = size;
+    emit iconSizeChanged();
+    rememberChoice();
+}
+
+void Browser::zoom(int steps) { setIconSize(m_iconSize + steps * FolderViews::IconSizeStep); }
+
 void Browser::makeSecond() {
     if (m_view == FolderViews::DualPane && !m_second && m_here.page == Folder) {
         m_second = new Browser(m_backend, this);
@@ -147,7 +164,7 @@ void Browser::sortBy(const QString &key) {
 void Browser::rememberChoice() {
     if (m_here.page == Folder && !m_here.path.isEmpty() && AppSettings::shared().rememberFolderViews()) {
         FolderViews::shared().remember(QFile::decodeName(m_here.path),
-                                       {m_view, m_folders->sortKey(), m_folders->sortDescending()});
+                                       {m_view, m_folders->sortKey(), m_folders->sortDescending(), m_iconSize});
     }
 }
 

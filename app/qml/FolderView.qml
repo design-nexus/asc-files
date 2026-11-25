@@ -407,14 +407,17 @@ FocusScope {
         interactive: false
         // Only a shown grid holds the model, so a hidden view asks for no rows.
         model: visible ? view.folderModel : null
-        cellWidth: 120
-        cellHeight: 124
+        // The icon size is the folder's own (Ctrl+scroll, Ctrl+= and Ctrl+-).
+        readonly property int iconSize: view.browser ? view.browser.iconSize : 64
+        cellWidth: iconSize + 56
+        cellHeight: iconSize + 60
         currentIndex: -1
         ScrollBar.vertical: ScrollBar {}
         readonly property int perRow: Math.max(1, Math.floor(width / cellWidth))
         delegate: FileTile {
             width: GridView.view.cellWidth - 8
             height: GridView.view.cellHeight - 8
+            iconSize: grid.iconSize
             id: tileItem
             editing: index === view.renamingRow
             Drag.dragType: Drag.Automatic
@@ -441,6 +444,10 @@ FocusScope {
             onRenameCancelled: { view.renamingRow = -1; view.focusList() }
             onClicked: (modifiers) => { grid.currentIndex = index; view.rowClicked(view.folderModel, index, modifiers); grid.forceActiveFocus() }
             onActivated: view.rowDoubleClicked(view.folderModel, index)
+        }
+        WheelHandler {
+            acceptedModifiers: Qt.ControlModifier
+            onWheel: (event) => view.browser.zoom(event.angleDelta.y > 0 ? 1 : -1)
         }
         Keys.onLeftPressed: (event) => view.moveBy(grid, -1, event.modifiers)
         Keys.onRightPressed: (event) => view.moveBy(grid, 1, event.modifiers)

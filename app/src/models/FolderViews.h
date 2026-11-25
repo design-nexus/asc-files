@@ -14,10 +14,16 @@ public:
     /// The views a folder can be shown in; Compact List, Gallery and Dual Pane are new in 2.0.
     enum View { List, Icons, Columns, Compact, Gallery, DualPane };
     static constexpr int LastView = DualPane;
+    static constexpr int MinIconSize = 32;
+    static constexpr int MaxIconSize = 160;
+    static constexpr int IconSizeStep = 16;
+    static constexpr int DefaultIconSize = 64;
     struct Choice {
         int view = List;
         QString sortKey = QStringLiteral("name");
         bool descending = false;
+        /// Icons view's icon size, in pixels.
+        int iconSize = DefaultIconSize;
     };
     static constexpr int MaxFolders = 2000;
 

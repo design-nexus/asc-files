@@ -36,7 +36,8 @@ FolderViews::FolderViews() {
         }
         m_choices.insert(path, {qBound(int(List), folder.value(QStringLiteral("view")).toInt(), LastView),
                                 folder.value(QStringLiteral("sort")).toString(QStringLiteral("name")),
-                                folder.value(QStringLiteral("descending")).toBool()});
+                                folder.value(QStringLiteral("descending")).toBool(),
+                                qBound(MinIconSize, folder.value(QStringLiteral("iconSize")).toInt(DefaultIconSize), MaxIconSize)});
         m_order.append(path);
     }
 }
@@ -51,7 +52,7 @@ FolderViews::Choice FolderViews::choice(const QString &folder) const {
 
 FolderViews::Choice FolderViews::defaults() {
     const AppSettings &settings = AppSettings::shared();
-    return {settings.defaultView(), settings.defaultSort(), settings.defaultDescending()};
+    return {settings.defaultView(), settings.defaultSort(), settings.defaultDescending(), DefaultIconSize};
 }
 
 void FolderViews::forgetAll() {
@@ -74,7 +75,7 @@ void FolderViews::save() const {
     QJsonArray folders;
     for (const QString &path : m_order) {
         const Choice &choice = m_choices.value(path);
-        folders.append(QJsonObject{{"path", path}, {"view", choice.view}, {"sort", choice.sortKey}, {"descending", choice.descending}});
+        folders.append(QJsonObject{{"path", path}, {"view", choice.view}, {"sort", choice.sortKey}, {"descending", choice.descending}, {"iconSize", choice.iconSize}});
     }
     QDir().mkpath(QFileInfo(filePath()).path());
     QSaveFile file(filePath());

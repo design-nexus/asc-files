@@ -181,6 +181,30 @@ private slots:
         QVERIFY(saved.readAll().contains("photos"));
     }
 
+    void eachFolderKeepsItsIconSize() {
+        QTemporaryDir dir;
+        QVERIFY(QDir().mkpath(dir.filePath("big")));
+        QVERIFY(QDir().mkpath(dir.filePath("small")));
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        Browser browser(&backend);
+        browser.goPath(dir.filePath("big"));
+        QVERIFY(openedAt(browser, dir.filePath("big")));
+        QCOMPARE(browser.iconSize(), int(FolderViews::DefaultIconSize));
+        browser.zoom(2);
+        QCOMPARE(browser.iconSize(), 96);
+        browser.zoom(10);
+        QCOMPARE(browser.iconSize(), int(FolderViews::MaxIconSize));
+        browser.goPath(dir.filePath("small"));
+        QVERIFY(openedAt(browser, dir.filePath("small")));
+        browser.setIconSize(16);
+        QCOMPARE(browser.iconSize(), int(FolderViews::MinIconSize));
+        browser.back();
+        QVERIFY(openedAt(browser, dir.filePath("big")));
+        QCOMPARE(browser.iconSize(), int(FolderViews::MaxIconSize));
+        QCOMPARE(FolderViews::shared().choice(dir.filePath("small")).iconSize, int(FolderViews::MinIconSize));
+    }
+
     void theDefaultsAndForgettingComeFromSettings() {
         QTemporaryDir dir;
         QVERIFY(QDir().mkpath(dir.filePath("a")));

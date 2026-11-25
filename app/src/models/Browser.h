@@ -9,6 +9,7 @@
 class BackendClient;
 #include "ColumnsModel.h"
 #include "FolderModel.h"
+#include "FolderViews.h"
 
 /// One tab's browsing: the folder or page it shows, with back and forward history and the
 /// breadcrumb. Besides folders, a tab can show a page of its own (Overview, Recent, Favorites,
@@ -19,6 +20,8 @@ class Browser : public QObject {
     Q_PROPERTY(Page page READ page NOTIFY locationChanged)
     /// How the folder is shown (0 List, 1 Icons, 2 Columns), remembered for each folder.
     Q_PROPERTY(int view READ view WRITE setView NOTIFY viewChanged)
+    /// Icons view's icon size (32–160 px), kept with the folder's view and sort.
+    Q_PROPERTY(int iconSize READ iconSize WRITE setIconSize NOTIFY iconSizeChanged)
     Q_PROPERTY(FolderModel *folderModel READ folderModel CONSTANT)
     /// The columns Columns view shows; kept up to date while that view is chosen.
     Q_PROPERTY(ColumnsModel *columns READ columns CONSTANT)
@@ -58,6 +61,10 @@ public:
     QByteArray rawLocation() const;
     QString location() const;
     Browser *second() const { return m_second; }
+    int iconSize() const { return m_iconSize; }
+    void setIconSize(int size);
+    /// One step larger (`steps` > 0) or smaller.
+    Q_INVOKABLE void zoom(int steps);
     QString title() const;
     bool canGoBack() const { return !m_back.isEmpty(); }
     bool canGoForward() const { return !m_forward.isEmpty(); }
@@ -83,6 +90,7 @@ signals:
     void historyChanged();
     void locationChanged();
     void viewChanged();
+    void iconSizeChanged();
     void secondChanged();
 
 private:
@@ -102,6 +110,7 @@ private:
     ColumnsModel *m_columns;
     BackendClient *m_backend;
     Browser *m_second = nullptr;
+    int m_iconSize = FolderViews::DefaultIconSize;
     void updateColumns();
     Place m_here;
     QList<Place> m_back;
