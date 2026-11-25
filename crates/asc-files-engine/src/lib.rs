@@ -4,6 +4,7 @@
 
 rust_i18n::i18n!("locales", fallback = "en");
 
+pub mod actions;
 pub mod adapters;
 pub mod drives;
 pub mod error;
