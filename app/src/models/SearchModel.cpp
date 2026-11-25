@@ -3,6 +3,7 @@
 
 #include "../backend/BackendClient.h"
 #include "../backend/Wire.h"
+#include "../settings/AppSettings.h"
 
 #include <QFile>
 #include <QJsonArray>
@@ -30,6 +31,18 @@ void SearchModel::search(const QString &query, const QStringList &roots) {
     m_roots = roots;
     emit stateChanged();
     m_pause.start();
+}
+
+void SearchModel::addExclusion(const QString &rule) {
+    m_backend->call(QStringLiteral("search.exclusion"), {{"rule", rule}}, this,
+                    [this](const QJsonValue &result, const BackendError &error) {
+                        if (!error.isNull()) {
+                            emit exclusionRefused(error.message);
+                            return;
+                        }
+                        AppSettings &settings = AppSettings::shared();
+                        settings.setSearchExclusions(settings.searchExclusions() << result.toObject().value("rule").toString());
+                    });
 }
 
 void SearchModel::stop() {
@@ -61,7 +74,14 @@ void SearchModel::searchNow() {
     m_running = true;
     emit stateChanged();
     const QString query = m_query;
-    m_backend->call(QStringLiteral("search.start"), {{"roots", roots}, {"query", query}}, this,
+    // Settings › Search: how long and how far, and what is left out.
+    const AppSettings &settings = AppSettings::shared();
+    const QJsonObject params{{"roots", roots},
+                             {"query", query},
+                             {"seconds", settings.searchSeconds()},
+                             {"entries", settings.searchEntries()},
+                             {"exclude", QJsonArray::fromStringList(settings.searchExclusions())}};
+    m_backend->call(QStringLiteral("search.start"), params, this,
                     [this, query](const QJsonValue &result, const BackendError &error) {
                         if (query != m_query) {
                             // Typed on meanwhile: this one is not wanted.

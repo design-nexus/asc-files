@@ -38,6 +38,8 @@ Item {
     signal notice(string message)
     /// A file was double-clicked or Entered: the window opens it.
     signal fileActivated(string path)
+    /// A drop was taken: what it did (Transfers.Dropped), into `target`.
+    signal dropped(int result, string target)
     /// A right click on an item in a column other than the current folder's.
     signal pathMenuRequested(string path, bool isFolder)
 
@@ -148,7 +150,7 @@ Item {
 
     Keys.onPressed: (event) => {
         // Typing a name filters the folder to what matches it.
-        if (mode !== 2 && event.text.length === 1 && event.text >= " " && event.text !== " " &&
+        if (AppSettings.typeToFilter && mode !== 2 && event.text.length === 1 && event.text >= " " && event.text !== " " &&
                 !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
             filterField.text = event.text
             filterField.forceActiveFocus()
@@ -171,7 +173,10 @@ Item {
     DropArea {
         anchors.fill: parent
         enabled: view.mode !== 2
-        onDropped: (drop) => { if (view.transfers.dropHere(drop.urls, view.folderModel)) drop.accept() }
+        onDropped: (drop) => {
+            const result = view.transfers.dropHere(drop.urls, view.folderModel)
+            if (result !== Transfers.Refused) { drop.accept(); view.dropped(result, view.browser.location) }
+        }
     }
 
     // A notice above the folder when an interrupted operation left originals here.
@@ -340,7 +345,10 @@ Item {
                 DropArea {
                     anchors.fill: parent
                     enabled: rowItem.isFolder
-                    onDropped: (drop) => { if (view.transfers.dropInto(drop.urls, view.folderModel, rowItem.index)) drop.accept() }
+                    onDropped: (drop) => {
+                        const result = view.transfers.dropInto(drop.urls, view.folderModel, rowItem.index)
+                        if (result !== Transfers.Refused) { drop.accept(); view.dropped(result, view.folderModel.pathAt(rowItem.index)) }
+                    }
                     Rectangle { anchors.fill: parent; radius: Theme.radius; color: "transparent"; border.width: parent.containsDrag ? 1 : 0; border.color: Theme.accent }
                 }
                 TapHandler {
@@ -413,7 +421,10 @@ Item {
             DropArea {
                 anchors.fill: parent
                 enabled: tileItem.isFolder
-                onDropped: (drop) => { if (view.transfers.dropInto(drop.urls, view.folderModel, tileItem.index)) drop.accept() }
+                onDropped: (drop) => {
+                    const result = view.transfers.dropInto(drop.urls, view.folderModel, tileItem.index)
+                    if (result !== Transfers.Refused) { drop.accept(); view.dropped(result, view.folderModel.pathAt(tileItem.index)) }
+                }
                 Rectangle { anchors.fill: parent; radius: 11; color: "transparent"; border.width: parent.containsDrag ? 1 : 0; border.color: Theme.accent }
             }
             TapHandler {

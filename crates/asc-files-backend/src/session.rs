@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
     sync::mpsc::{self, Sender},
     thread,
+    time::Duration,
 };
 
 use asc_files_engine::{
@@ -214,6 +215,9 @@ impl Session {
                 query,
                 hidden,
                 limit,
+                entries,
+                seconds,
+                exclude,
             } => {
                 self.next_search += 1;
                 let search = self.next_search;
@@ -226,6 +230,16 @@ impl Session {
                             .unwrap_or(usize::MAX)
                             .clamp(1, 10_000)
                     }),
+                    // 0: no limit.
+                    entries: entries.map_or(200_000, |entries| match entries {
+                        0 => usize::MAX,
+                        entries => usize::try_from(entries).unwrap_or(usize::MAX),
+                    }),
+                    time: seconds.map_or(Duration::from_secs(10), |seconds| match seconds {
+                        0 => Duration::MAX,
+                        seconds => Duration::from_secs(seconds),
+                    }),
+                    exclusions: asc_files_engine::search::Exclusions::new(&exclude, &home()),
                     ..Default::default()
                 };
                 self.workers.push(thread::spawn(move || {
@@ -248,6 +262,12 @@ impl Session {
                     ));
                 }));
                 now(json!({"search": search}))
+            }
+            Call::SearchExclusion { rule } => {
+                match asc_files_engine::search::Exclusions::normalize(&rule, &home()) {
+                    Ok(rule) => now(json!({"rule": rule})),
+                    Err(why) => Err(Fault::invalid_params(why)),
+                }
             }
             Call::SearchCancel { search } => {
                 if let Some(cancel) = self.searches.get(&search) {
@@ -457,6 +477,11 @@ fn found_json(found: &asc_files_engine::search::Found) -> Value {
     })
 }
 
+/// Home, for search rules written from `~/`.
+fn home() -> PathBuf {
+    std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
+}
+
 fn capabilities(undo: bool) -> Vec<&'static str> {
     let mut capabilities = vec![
         "list",
@@ -472,6 +497,7 @@ fn capabilities(undo: bool) -> Vec<&'static str> {
         "ops.rename",
         "ops.create",
         "search",
+        "search.exclusions",
         "list.filter",
         "trash",
         "leftovers",

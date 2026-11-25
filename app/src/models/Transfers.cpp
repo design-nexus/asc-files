@@ -4,6 +4,7 @@
 #include "../backend/Wire.h"
 #include "FolderModel.h"
 #include "../ops/Operations.h"
+#include "../settings/AppSettings.h"
 
 #include <QFile>
 #include <sys/stat.h>
@@ -44,18 +45,18 @@ bool Transfers::movesInto(const QList<QUrl> &urls, const QString &target) const 
     });
 }
 
-bool Transfers::drop(const QList<QUrl> &urls, const QString &target) { return dropRaw(urls, QFile::encodeName(target)); }
+int Transfers::drop(const QList<QUrl> &urls, const QString &target) { return dropRaw(urls, QFile::encodeName(target)); }
 
-bool Transfers::dropInto(const QList<QUrl> &urls, FolderModel *folder, int row) {
+int Transfers::dropInto(const QList<QUrl> &urls, FolderModel *folder, int row) {
     const QByteArray name = folder ? folder->rawName(row) : QByteArray();
-    return !name.isEmpty() && folder->isFolder(row) && dropRaw(urls, Wire::join(folder->rawFolder(), name));
+    return !name.isEmpty() && folder->isFolder(row) ? dropRaw(urls, Wire::join(folder->rawFolder(), name)) : Refused;
 }
 
-bool Transfers::dropHere(const QList<QUrl> &urls, FolderModel *folder) {
-    return folder && !folder->rawFolder().isEmpty() && dropRaw(urls, folder->rawFolder());
+int Transfers::dropHere(const QList<QUrl> &urls, FolderModel *folder) {
+    return folder && !folder->rawFolder().isEmpty() ? dropRaw(urls, folder->rawFolder()) : Refused;
 }
 
-bool Transfers::dropRaw(const QList<QUrl> &urls, const QByteArray &into) {
+int Transfers::dropRaw(const QList<QUrl> &urls, const QByteArray &into) {
     QList<QByteArray> sources;
     for (const QUrl &url : urls) {
         const QByteArray path = localPath(url);
@@ -66,8 +67,26 @@ bool Transfers::dropRaw(const QList<QUrl> &urls, const QByteArray &into) {
         sources.append(path);
     }
     if (sources.isEmpty()) {
-        return false;
+        return Refused;
     }
-    m_ops->transfer(sources, into, movesInto(urls, QFile::decodeName(into)));
-    return true;
+    if (movesInto(urls, QFile::decodeName(into))) {
+        m_ops->transfer(sources, into, true);
+        return Started;
+    }
+    const QString choice = AppSettings::shared().crossDriveDrop();
+    if (choice == QLatin1String("ask")) {
+        m_askedSources = sources;
+        m_askedInto = into;
+        return Asking;
+    }
+    m_ops->transfer(sources, into, choice == QLatin1String("move"));
+    return Started;
+}
+
+void Transfers::answer(bool copy, bool move) {
+    const QList<QByteArray> sources = std::exchange(m_askedSources, {});
+    const QByteArray into = std::exchange(m_askedInto, {});
+    if (!sources.isEmpty() && (copy || move)) {
+        m_ops->transfer(sources, into, move);
+    }
 }

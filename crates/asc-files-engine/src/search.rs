@@ -6,12 +6,13 @@
 //! name, or failing that its path below the root, in fzf's syntax as legacy took it: `!word`
 //! leaves out what matches it, `^word` and `word$` anchor it, `'word` asks for it exactly. A match in
 //! the name outranks one in the path only, and an exact name ranks first. The walk stops at its
-//! limits: results kept, entries looked at, depth and time.
+//! limits: results kept, entries looked at, depth and time. Folders the user leaves out (by name
+//! or by path) are never walked.
 
 use std::{
     cmp::Reverse,
     collections::BinaryHeap,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -43,14 +44,16 @@ const GENERATED_TREES: [&str; 14] = [
 const NAME_TERM_TIER: i64 = 1 << 32;
 const EXACT_NAME_BONUS: i64 = 1 << 31;
 
-/// How far a search goes.
-#[derive(Clone, Copy, Debug)]
+/// How far a search goes, and where it doesn't.
+#[derive(Clone, Debug)]
 pub struct Limits {
     /// The best this many are kept.
     pub results: usize,
     pub entries: usize,
     pub depth: usize,
     pub time: Duration,
+    /// Folders the user leaves out of every search.
+    pub exclusions: Exclusions,
 }
 
 impl Default for Limits {
@@ -60,7 +63,97 @@ impl Default for Limits {
             entries: 200_000,
             depth: 64,
             time: Duration::from_secs(10),
+            exclusions: Exclusions::default(),
         }
+    }
+}
+
+/// Folders left out of searches, as legacy kept them: a folder name (`cache`) leaves out every
+/// folder of that name, whatever its case, and all below it, but not files so named; a path
+/// (`/srv/backups`, `~/Private`) leaves out that folder and all below it, case and all.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Exclusions {
+    names: Vec<String>,
+    folders: Vec<PathBuf>,
+}
+
+impl Exclusions {
+    /// A rule as it is kept (`~/` spelled out against `home`, the path tidied), or why it can't
+    /// be one: empty, `.` or `..`, a path not from `/` or `~/`, one with `..` in it, or the
+    /// whole of `/` or Home.
+    pub fn normalize(raw: &str, home: &Path) -> Result<String, &'static str> {
+        let input = raw.trim();
+        if input.is_empty() {
+            return Err("Enter a folder name or a folder's path.");
+        }
+        if input.contains('\0') {
+            return Err("A rule cannot hold a NUL character.");
+        }
+        let trimmed = input.trim_end_matches('/');
+        if trimmed.is_empty() || trimmed == "~" {
+            return Err("The whole computer or Home cannot be left out.");
+        }
+        if !(trimmed.starts_with('~') || trimmed.contains('/')) {
+            if matches!(trimmed, "." | "..") {
+                return Err("Enter a folder name, not . or ..");
+            }
+            return Ok(trimmed.to_owned());
+        }
+        let path = if let Some(rest) = trimmed.strip_prefix("~/") {
+            home.join(rest.trim_start_matches('/'))
+        } else if trimmed.starts_with('/') {
+            PathBuf::from(trimmed)
+        } else {
+            return Err("A folder's path starts with / or ~/");
+        };
+        // Taking .. out by reading would change what a path through a link means.
+        if path.components().any(|part| part == Component::ParentDir) {
+            return Err("A folder's path cannot hold ..");
+        }
+        let path: PathBuf = path.components().collect();
+        if path == Path::new("/") || path == home {
+            return Err("The whole computer or Home cannot be left out.");
+        }
+        Ok(path.to_string_lossy().into_owned())
+    }
+
+    /// The rules among `raw` that can be; the others are left out.
+    pub fn new(raw: &[String], home: &Path) -> Self {
+        let mut exclusions = Self::default();
+        for rule in raw {
+            let Ok(rule) = Self::normalize(rule, home) else {
+                continue;
+            };
+            if Path::new(&rule).is_absolute() {
+                exclusions.folders.push(PathBuf::from(rule));
+            } else {
+                exclusions.names.push(rule.to_ascii_lowercase());
+            }
+        }
+        exclusions.names.sort();
+        exclusions.names.dedup();
+        exclusions.folders.sort();
+        exclusions.folders.dedup();
+        exclusions
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty() && self.folders.is_empty()
+    }
+
+    /// Whether `path` (named `name`) is left out, by a rule on it or on a folder above it.
+    pub fn is_excluded(&self, path: &Path, name: &str, is_folder: bool) -> bool {
+        self.folders.iter().any(|folder| path.starts_with(folder))
+            || (is_folder && self.names_folder(name))
+            || (!self.names.is_empty()
+                && path
+                    .ancestors()
+                    .skip(1)
+                    .any(|parent| parent.file_name().is_some_and(|name| self.names_folder(&name.to_string_lossy()))))
+    }
+
+    fn names_folder(&self, name: &str) -> bool {
+        self.names.iter().any(|rule| name.eq_ignore_ascii_case(rule))
     }
 }
 
@@ -208,6 +301,19 @@ pub fn search(
             .require_git(false)
             .same_file_system(true)
             .max_depth(Some(limits.depth))
+            // What the user leaves out goes, with all below it; the walk never looks inside.
+            .filter_entry({
+                let exclusions = limits.exclusions.clone();
+                move |entry| {
+                    exclusions.is_empty()
+                        || entry.depth() == 0
+                        || !exclusions.is_excluded(
+                            entry.path(),
+                            &entry.file_name().to_string_lossy(),
+                            entry.file_type().is_some_and(|kind| kind.is_dir()),
+                        )
+                }
+            })
             .overrides(
                 overrides
                     .build()
@@ -473,5 +579,92 @@ mod tests {
         assert!(Filter::new("  ").is_empty());
         // Accents and case fold alike.
         assert!(Filter::new("CAFÉ").matches("café.txt"));
+    }
+
+    // Legacy's exclusion tests (`services/search/exclusions/tests.rs`), with Home given.
+    #[test]
+    fn folder_rules_match_ancestors_but_not_same_named_files() {
+        let exclusions = Exclusions::new(&["cache".into()], Path::new("/home/someone"));
+        for (path, folder, excluded) in [
+            ("/project/cache", true, true),
+            ("/other/CACHE", true, true),
+            ("/project/cache/nested", true, true),
+            ("/project/cache/nested/file.py", false, true),
+            ("/project/cache", false, false),
+            ("/project/caches", true, false),
+            ("/project/file.py", false, false),
+        ] {
+            let path = Path::new(path);
+            let name = path.file_name().unwrap().to_str().unwrap();
+            assert_eq!(exclusions.is_excluded(path, name, folder), excluded, "{path:?}");
+        }
+    }
+
+    #[test]
+    fn folder_paths_take_home_and_keep_to_whole_names_and_case() {
+        let home = Path::new("/home/someone");
+        let exclusions = Exclusions::new(&["~/Secret/./nested//".into()], home);
+        for (below, excluded) in [
+            ("Secret/nested", true),
+            ("Secret/nested/file.txt", true),
+            ("Secret/nested-other/file.txt", false),
+            ("Other/Secret/nested", false),
+            ("secret/nested/file.txt", false),
+        ] {
+            let path = home.join(below);
+            let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+            assert_eq!(exclusions.is_excluded(&path, &name, true), excluded, "{below}");
+        }
+    }
+
+    #[test]
+    fn the_same_rule_written_twice_is_one_and_bad_rules_are_left_out() {
+        let home = Path::new("/home/someone");
+        let exclusions = Exclusions::new(
+            &[
+                " Cache/ ".into(),
+                "cache".into(),
+                "~/Secret//./nested".into(),
+                "/home/someone/Secret/nested".into(),
+                "relative/sub".into(),
+                "~someone".into(),
+                "/".into(),
+                "~".into(),
+                "/var/../".into(),
+                ".".into(),
+                "..".into(),
+                "bad\0name".into(),
+                "/home/someone".into(),
+            ],
+            home,
+        );
+        assert_eq!(exclusions, Exclusions::new(&["cache".into(), "~/Secret/nested".into()], home));
+        assert!(!exclusions.is_excluded(Path::new("/var/other"), "other", true));
+        assert_eq!(Exclusions::normalize("~", home), Err("The whole computer or Home cannot be left out."));
+        assert_eq!(Exclusions::normalize(" Build/ ", home), Ok("Build".to_owned()));
+    }
+
+    #[test]
+    fn a_search_never_walks_what_is_left_out() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path();
+        for folder in ["work/Backups/old", "work/notes", "private"] {
+            std::fs::create_dir_all(dir.join(folder)).unwrap();
+        }
+        for file in ["work/Backups/old/plan.txt", "work/notes/plan.txt", "private/plan.txt", "work/backups"] {
+            std::fs::write(dir.join(file), b"x").unwrap();
+        }
+        let limits = Limits {
+            exclusions: Exclusions::new(
+                &["backups".into(), dir.join("private").to_string_lossy().into_owned()],
+                Path::new("/home/someone"),
+            ),
+            ..Limits::default()
+        };
+        let summary = search(&[dir.to_path_buf()], "plan", false, limits.clone(), &Cancel::new(), |_| {});
+        assert_eq!(names(&summary.best, dir), ["work/notes/plan.txt"]);
+        // A file named as a folder rule stays.
+        let backups = search(&[dir.to_path_buf()], "backups", false, limits, &Cancel::new(), |_| {});
+        assert_eq!(names(&backups.best, dir), ["work/backups"]);
     }
 }

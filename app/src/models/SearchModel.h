@@ -28,6 +28,9 @@ public:
     /// Searches now, without waiting for a pause.
     Q_INVOKABLE void searchNow();
     Q_INVOKABLE void stop();
+    /// Adds a rule to Settings' search exclusions, as the backend keeps it; one that can't be is
+    /// refused, saying why.
+    Q_INVOKABLE void addExclusion(const QString &rule);
 
     QString query() const { return m_query; }
     bool running() const { return m_running; }
@@ -37,6 +40,7 @@ public:
 
 signals:
     void stateChanged();
+    void exclusionRefused(const QString &why);
 
 private:
     void notification(const QString &method, const QJsonObject &params);

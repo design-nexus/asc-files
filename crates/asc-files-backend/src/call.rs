@@ -99,6 +99,15 @@ pub enum Call {
         query: String,
         hidden: bool,
         limit: Option<u64>,
+        /// Entries looked at and seconds spent before it stops; 0 for no limit.
+        entries: Option<u64>,
+        seconds: Option<u64>,
+        /// Folders left out, by name or path (`search::Exclusions`).
+        exclude: Vec<String>,
+    },
+    /// A rule for `exclude` as it would be kept, or why it can't be one.
+    SearchExclusion {
+        rule: String,
     },
     SearchCancel {
         search: u64,
@@ -246,6 +255,12 @@ fn call(method: &str, params: &Params) -> Result<Call, Fault> {
             query: params.string("query")?,
             hidden: params.optional("hidden", Params::bool_of)?.unwrap_or(false),
             limit: params.optional("limit", Params::u64_of)?,
+            entries: params.optional("entries", Params::u64_of)?,
+            seconds: params.optional("seconds", Params::u64_of)?,
+            exclude: params.optional("exclude", Params::strings_of)?.unwrap_or_default(),
+        },
+        "search.exclusion" => Call::SearchExclusion {
+            rule: params.string("rule")?,
         },
         "search.cancel" => Call::SearchCancel {
             search: params.u64("search")?,
@@ -515,6 +530,16 @@ impl<'a> Params<'a> {
             .as_str()
             .map(str::to_owned)
             .ok_or_else(|| Fault::invalid_params(format!("{at} must be a string")))
+    }
+
+    fn strings_of(at: &str, value: &'a Value) -> Result<Vec<String>, Fault> {
+        value
+            .as_array()
+            .ok_or_else(|| Fault::invalid_params(format!("{at} must be an array")))?
+            .iter()
+            .enumerate()
+            .map(|(index, element)| Self::string_of(&format!("{at}[{index}]"), element))
+            .collect()
     }
 
     fn bool_of(at: &str, value: &'a Value) -> Result<bool, Fault> {

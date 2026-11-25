@@ -79,6 +79,33 @@ private slots:
         settings.setDateFormat(QStringLiteral("relative"));
         QCOMPARE(settings.dateExample(QStringLiteral("relative")), QStringLiteral("5m ago"));
     }
+
+    void searchAndTransfersAsLegacy() {
+        AppSettings &settings = AppSettings::shared();
+        QVERIFY(settings.typeToFilter());
+        QCOMPARE(settings.searchSeconds(), 10);
+        QCOMPARE(settings.searchEntries(), 200000);
+        QCOMPARE(settings.crossDriveDrop(), QStringLiteral("ask"));
+        QVERIFY(!settings.openAfterDrop());
+        // Limits are legacy's choices: others go up to the next; 0 or past the largest, none.
+        settings.setSearchSeconds(45);
+        QCOMPARE(settings.searchSeconds(), 60);
+        settings.setSearchSeconds(5000);
+        QCOMPARE(settings.searchSeconds(), 0);
+        settings.setSearchSeconds(10);
+        settings.setSearchEntries(1);
+        QCOMPARE(settings.searchEntries(), 200000);
+        settings.setSearchEntries(0);
+        QCOMPARE(settings.searchEntries(), 0);
+        settings.setSearchEntries(200000);
+        settings.setSearchExclusions({"cache", "", "cache", "/srv/old"});
+        QCOMPARE(settings.searchExclusions(), (QStringList{"cache", "/srv/old"}));
+        settings.removeSearchExclusion("cache");
+        QCOMPARE(settings.searchExclusions(), QStringList{"/srv/old"});
+        settings.setSearchExclusions({});
+        settings.setCrossDriveDrop(QStringLiteral("sideways"));
+        QCOMPARE(settings.crossDriveDrop(), QStringLiteral("ask"));
+    }
 };
 
 QTEST_GUILESS_MAIN(TestAppSettings)

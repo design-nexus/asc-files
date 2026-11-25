@@ -3,6 +3,7 @@
 #include "backend/BackendClient.h"
 #include "models/FolderModel.h"
 #include "models/SearchModel.h"
+#include "settings/AppSettings.h"
 
 #include <QAbstractItemModelTester>
 #include <QFile>
@@ -47,6 +48,34 @@ private slots:
         search.search("", {dir.path()});
         search.searchNow();
         QCOMPARE(search.rowCount(), 0);
+    }
+
+    void foldersLeftOutAreNotSearched() {
+        QTemporaryDir dir;
+        QDir().mkpath(dir.filePath("Archive"));
+        QDir().mkpath(dir.filePath("live"));
+        touch(dir.filePath("Archive/plan.txt"));
+        touch(dir.filePath("live/plan.txt"));
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        SearchModel search(&backend);
+        // A rule is kept as the backend keeps it; one that can't be is refused, saying why.
+        QSignalSpy changed(&AppSettings::shared(), &AppSettings::changed);
+        search.addExclusion(" archive/ ");
+        QVERIFY(changed.wait(10000));
+        QCOMPARE(AppSettings::shared().searchExclusions(), QStringList{"archive"});
+        QSignalSpy refused(&search, &SearchModel::exclusionRefused);
+        search.addExclusion("~");
+        QVERIFY(refused.wait(10000));
+        QVERIFY(!refused.first().first().toString().isEmpty());
+        QCOMPARE(AppSettings::shared().searchExclusions(), QStringList{"archive"});
+
+        search.search("plan", {dir.path()});
+        search.searchNow();
+        QTRY_VERIFY_WITH_TIMEOUT(!search.running() && search.rowCount() > 0, 10000);
+        QCOMPARE(search.rowCount(), 1);
+        QCOMPARE(search.pathAt(0), dir.filePath("live/plan.txt"));
+        AppSettings::shared().setSearchExclusions({});
     }
 
     void aFolderIsFilteredByTyping() {

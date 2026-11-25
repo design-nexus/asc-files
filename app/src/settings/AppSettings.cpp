@@ -16,6 +16,20 @@
 namespace {
 
 const QStringList DateFormats{QStringLiteral("relative"), QStringLiteral("iso"), QStringLiteral("long")};
+const QList<int> SearchSeconds{10, 30, 60, 300, 900};
+const QList<int> SearchEntries{200'000, 500'000, 1'000'000, 5'000'000};
+
+/// A limit as one of `choices`: an unlisted one goes up to the next; 0, or past the largest,
+/// is no limit.
+int chosenLimit(int value, const QList<int> &choices) {
+    for (const int choice : choices) {
+        if (value > 0 && value <= choice) {
+            return choice;
+        }
+    }
+    return 0;
+}
+
 const QStringList SortKeys{QStringLiteral("name"), QStringLiteral("size"), QStringLiteral("modified"), QStringLiteral("type")};
 
 QString absolute(const QDateTime &when, const QString &format) {
@@ -129,6 +143,45 @@ void AppSettings::forgetFolderViews() {
 }
 
 bool AppSettings::hasFolderViews() const { return FolderViews::shared().count() > 0; }
+
+bool AppSettings::typeToFilter() const { return value("search/typeToFilter", true).toBool(); }
+void AppSettings::setTypeToFilter(bool filters) { set("search/typeToFilter", filters); }
+
+int AppSettings::searchSeconds() const { return chosenLimit(value("search/seconds", 10).toInt(), SearchSeconds); }
+void AppSettings::setSearchSeconds(int seconds) { set("search/seconds", chosenLimit(seconds, SearchSeconds)); }
+
+int AppSettings::searchEntries() const { return chosenLimit(value("search/entries", 200'000).toInt(), SearchEntries); }
+void AppSettings::setSearchEntries(int entries) { set("search/entries", chosenLimit(entries, SearchEntries)); }
+
+QStringList AppSettings::searchExclusions() const { return value("search/exclusions", QStringList()).toStringList(); }
+
+void AppSettings::setSearchExclusions(const QStringList &rules) {
+    QStringList kept;
+    for (const QString &rule : rules) {
+        if (!rule.isEmpty() && !kept.contains(rule)) {
+            kept.append(rule);
+        }
+    }
+    set("search/exclusions", kept);
+}
+
+void AppSettings::removeSearchExclusion(const QString &rule) {
+    QStringList rules = searchExclusions();
+    rules.removeAll(rule);
+    setSearchExclusions(rules);
+}
+
+QString AppSettings::crossDriveDrop() const {
+    const QString choice = value("transfers/crossDriveDrop", QStringLiteral("ask")).toString();
+    return choice == QLatin1String("copy") || choice == QLatin1String("move") ? choice : QStringLiteral("ask");
+}
+
+void AppSettings::setCrossDriveDrop(const QString &choice) {
+    set("transfers/crossDriveDrop", choice == QLatin1String("copy") || choice == QLatin1String("move") ? choice : QStringLiteral("ask"));
+}
+
+bool AppSettings::openAfterDrop() const { return value("transfers/openAfterDrop", false).toBool(); }
+void AppSettings::setOpenAfterDrop(bool opens) { set("transfers/openAfterDrop", opens); }
 
 QString AppSettings::previewStyle() const {
     return value("preview/style", QStringLiteral("popup")).toString() == QLatin1String("panel") ? QStringLiteral("panel") : QStringLiteral("popup");

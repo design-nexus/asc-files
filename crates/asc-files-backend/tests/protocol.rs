@@ -1003,3 +1003,41 @@ fn a_search_streams_what_it_finds_and_a_listing_filters() {
     assert_eq!(cleared["result"]["count"], 3, "{cleared}");
     backend.call("shutdown", json!({}), &mut notes);
 }
+
+#[test]
+fn a_search_leaves_out_folders_and_stops_at_its_limits() {
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    backend.call("initialize", json!({}), &mut notes);
+    let root = tempfile::tempdir_in(std::env::var("XDG_DATA_HOME").unwrap()).unwrap();
+    for folder in ["work/Archive", "work/live", "private"] {
+        fs::create_dir_all(root.path().join(folder)).unwrap();
+    }
+    for file in ["work/Archive/plan.txt", "work/live/plan.txt", "private/plan.txt"] {
+        fs::write(root.path().join(file), b"x").unwrap();
+    }
+    let finished = |backend: &mut Backend, notes: &mut Vec<Value>, params: Value| {
+        notes.clear();
+        let started = backend.call("search.start", params, notes);
+        let search = started["result"]["search"].clone();
+        backend.until(notes, |n| n["method"] == "search.finished" && n["params"]["search"] == search);
+        notes.iter().find(|n| n["method"] == "search.finished").unwrap()["params"].clone()
+    };
+    let left = finished(
+        &mut backend,
+        &mut notes,
+        json!({"roots": [root.path()], "query": "plan", "exclude": ["archive", root.path().join("private")], "seconds": 0, "entries": 0}),
+    );
+    let paths: Vec<_> = left["items"].as_array().unwrap().iter().map(|item| item["path"].clone()).collect();
+    assert_eq!(paths, [json!(root.path().join("work/live/plan.txt"))], "{left}");
+    assert_eq!(left["truncated"], false);
+    let few = finished(&mut backend, &mut notes, json!({"roots": [root.path()], "query": "plan", "entries": 2}));
+    assert_eq!(few["truncated"], true, "{few}");
+
+    // A rule as it is kept, or why it can't be one.
+    let kept = backend.call("search.exclusion", json!({"rule": " Build/ "}), &mut notes);
+    assert_eq!(kept["result"]["rule"], "Build");
+    let home = backend.call("search.exclusion", json!({"rule": "~"}), &mut notes);
+    assert_eq!(home["error"]["code"], -32602, "{home}");
+    backend.call("shutdown", json!({}), &mut notes);
+}

@@ -14,6 +14,8 @@ Popup {
 
     required property var places
     required property var theme
+    /// The window's search, which checks exclusion rules with the backend.
+    required property var search
     /// The folder the window shows, offered as the start folder.
     property string currentFolder
     property int page: 0
@@ -22,6 +24,8 @@ Popup {
         { title: qsTr("General"), detail: qsTr("Start folder, tabs, dates") },
         { title: qsTr("Browsing"), detail: qsTr("Opening items, views, sorting") },
         { title: qsTr("Sidebar"), detail: qsTr("Places shown, colours") },
+        { title: qsTr("Search"), detail: qsTr("Typing to filter, limits, exclusions") },
+        { title: qsTr("Transfers"), detail: qsTr("Dropping files") },
         { title: qsTr("Previews"), detail: qsTr("Preview style, thumbnails") },
         { title: qsTr("Appearance"), detail: qsTr("Theme, accent, text size") },
         { title: qsTr("About"), detail: qsTr("Version, diagnostics") }
@@ -137,7 +141,7 @@ Popup {
                 Loader {
                     x: 28
                     width: scroll.availableWidth - 56
-                    sourceComponent: [general, browsing, sidebar, previews, appearance, about][dialog.page]
+                    sourceComponent: [general, browsing, sidebar, searching, transfers, previews, appearance, about][dialog.page]
                 }
             }
         }
@@ -321,6 +325,121 @@ Popup {
                     title: qsTr("Folder order")
                     description: qsTr("Put the folders back in their first order.")
                     Button { text: qsTr("Reset"); onClicked: dialog.places.resetFolderOrder() }
+                }
+            }
+        }
+    }
+
+    Component {
+        id: searching
+        PageBody {
+            id: searchPage
+            property string refused
+            Connections {
+                target: dialog.search
+                function onExclusionRefused(why) { searchPage.refused = why }
+            }
+            SettingsGroup {
+                SettingRow {
+                    divided: false
+                    title: qsTr("Type to filter")
+                    description: qsTr("Typing in a folder filters it to the names that match.")
+                    ToggleSwitch { checked: AppSettings.typeToFilter; onToggled: AppSettings.typeToFilter = checked }
+                }
+                SettingRow {
+                    title: qsTr("Search time limit")
+                    description: qsTr("A search stops after this long. Slow or network drives need longer to look through every folder.")
+                    Segmented {
+                        options: [
+                            { label: qsTr("10 s"), value: 10 }, { label: qsTr("30 s"), value: 30 }, { label: qsTr("1 min"), value: 60 },
+                            { label: qsTr("5 min"), value: 300 }, { label: qsTr("15 min"), value: 900 }, { label: qsTr("No limit"), value: 0 }
+                        ]
+                        value: AppSettings.searchSeconds
+                        onPicked: (seconds) => AppSettings.searchSeconds = seconds
+                    }
+                }
+                SettingRow {
+                    title: qsTr("Search entry limit")
+                    description: qsTr("A search stops after looking at this many files and folders. Higher limits use more memory.")
+                    Segmented {
+                        options: [
+                            { label: Number(200000).toLocaleString(Qt.locale(), "f", 0), value: 200000 },
+                            { label: Number(500000).toLocaleString(Qt.locale(), "f", 0), value: 500000 },
+                            { label: Number(1000000).toLocaleString(Qt.locale(), "f", 0), value: 1000000 },
+                            { label: Number(5000000).toLocaleString(Qt.locale(), "f", 0), value: 5000000 },
+                            { label: qsTr("No limit"), value: 0 }
+                        ]
+                        value: AppSettings.searchEntries
+                        onPicked: (entries) => AppSettings.searchEntries = entries
+                    }
+                }
+            }
+            SettingsGroup {
+                title: qsTr("Left out of searches")
+                Repeater {
+                    model: AppSettings.searchExclusions
+                    SettingRow {
+                        required property int index
+                        required property string modelData
+                        divided: index > 0
+                        title: modelData
+                        description: modelData.startsWith("/") ? qsTr("This folder and all in it") : qsTr("Every folder with this name, and all in them")
+                        IconButton {
+                            label: qsTr("Remove %1").arg(modelData)
+                            iconPath: "m4 4 8 8M12 4l-8 8"
+                            onClicked: AppSettings.removeSearchExclusion(modelData)
+                        }
+                    }
+                }
+                SettingRow {
+                    divided: AppSettings.searchExclusions.length > 0
+                    title: qsTr("Leave out")
+                    description: searchPage.refused.length > 0 ? searchPage.refused
+                                 : qsTr("A folder name, such as cache, or a folder's path, such as ~/Private.")
+                    TextField {
+                        id: rule
+                        objectName: "exclusionField"
+                        width: 200
+                        height: 30
+                        color: Theme.text
+                        font.family: Theme.family
+                        font.pointSize: Theme.body
+                        placeholderText: qsTr("Folder name or path")
+                        placeholderTextColor: Theme.textMute
+                        leftPadding: 10
+                        background: Rectangle { radius: Theme.radius; color: Theme.field; border.width: 1; border.color: rule.activeFocus ? Theme.selectionEdge : Theme.panelEdge }
+                        onTextEdited: searchPage.refused = ""
+                        onAccepted: add.clicked()
+                    }
+                    Button {
+                        id: add
+                        text: qsTr("Add")
+                        enabled: rule.text.trim().length > 0
+                        onClicked: { dialog.search.addExclusion(rule.text); rule.text = "" }
+                    }
+                }
+            }
+        }
+    }
+
+    Component {
+        id: transfers
+        PageBody {
+            SettingsGroup {
+                SettingRow {
+                    divided: false
+                    title: qsTr("Dropping onto another drive")
+                    description: qsTr("On the same drive, a drop moves. Onto another drive or a share, it does this.")
+                    Segmented {
+                        options: [{ label: qsTr("Copy"), value: "copy" }, { label: qsTr("Move"), value: "move" }, { label: qsTr("Ask"), value: "ask" }]
+                        value: AppSettings.crossDriveDrop
+                        onPicked: (choice) => AppSettings.crossDriveDrop = choice
+                    }
+                }
+                SettingRow {
+                    title: qsTr("Open the folder after dropping")
+                    description: qsTr("Show the folder items were dropped into.")
+                    ToggleSwitch { checked: AppSettings.openAfterDrop; onToggled: AppSettings.openAfterDrop = checked }
                 }
             }
         }

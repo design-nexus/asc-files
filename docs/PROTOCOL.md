@@ -134,7 +134,8 @@ Items may also take `name` (the name a conflict prompt offered; one plain name),
 
 | Method | Params | Result |
 |---|---|---|
-| `search.start` | `roots`, `query`, `hidden?` (false), `limit?` (100) | `{search}` |
+| `search.start` | `roots`, `query`, `hidden?` (false), `limit?` (100), `entries?` (200,000), `seconds?` (10), `exclude?` ([]) | `{search}` |
+| `search.exclusion` | `rule` | `{rule}` |
 | `search.cancel` | `search` | `null` |
 
 A search walks `roots` for entries whose names match `query`, with no index, as legacy Files did. It never
@@ -142,8 +143,14 @@ follows links or crosses onto another drive, skips hidden entries unless `hidden
 `.gitignore` files leave out and the trees programs generate (caches, `node_modules`, `target`, package stores).
 Each word of the query is matched fuzzily against an entry's name, or failing that its path below the root,
 in fzf's syntax: `!word` leaves out what matches it, `^word` and `word$` anchor it, `'word` asks for it exactly.
-A match in the name outranks one in the path only; an exact name ranks first. It stops at 200,000 entries,
-depth 64 or 10 seconds.
+A match in the name outranks one in the path only; an exact name ranks first. It stops after `entries` entries
+or `seconds` seconds (0: no limit), or at depth 64.
+
+`exclude` holds folders the user leaves out, as legacy kept them: a name (`cache`) leaves out every folder so
+named, whatever its case, with all below it, but not files so named; a path (`/srv/backups`, `~/Private`)
+leaves out that folder and all below it. The walk never goes into them. Rules that can't be (`/`, Home, `.`,
+`..`, a path with `..` or not from `/` or `~/`) are passed over; `search.exclusion` gives a rule as it is kept,
+or an invalid-params error saying why it can't be one.
 
 Notifications: `search.found {search, items}` with new matches as the walk goes (every 50 ms at most);
 `search.finished {search, items, matched, entries, truncated, cancelled}` with the best `limit`, best first.

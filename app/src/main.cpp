@@ -19,6 +19,7 @@
 #include <QCommandLineParser>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QtQml/qqml.h>
 #include <QQmlExtensionPlugin>
 #include <QQuickStyle>
 #include <QStandardPaths>
@@ -58,6 +59,7 @@ int main(int argc, char *argv[]) {
     // The Nyx theme, followed live; Theme.qml reads it.
     SystemTheme::registerType();
     AppSettings::registerType();
+    qmlRegisterUncreatableType<Transfers>("AscFiles.System", 1, 0, "Transfers", QStringLiteral("The app makes the one Transfers."));
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
     engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider);

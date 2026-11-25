@@ -20,6 +20,7 @@
 
 #include <QFile>
 #include <QQmlApplicationEngine>
+#include <QtQml/qqml.h>
 #include <QQmlExtensionPlugin>
 #include <QQuickItem>
 #include <QQuickStyle>
@@ -38,6 +39,7 @@ private slots:
         QQuickStyle::setStyle(QStringLiteral("Basic"));
         SystemTheme::registerType();
         AppSettings::registerType();
+        qmlRegisterUncreatableType<Transfers>("AscFiles.System", 1, 0, "Transfers", QStringLiteral("The app makes the one Transfers."));
     }
 
     void theWindowShowsAFolderWithoutWarnings() {

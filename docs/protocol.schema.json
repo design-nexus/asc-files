@@ -1338,6 +1338,20 @@
             "limit": {
               "type": "integer",
               "minimum": 0
+            },
+            "entries": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "seconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "exclude": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -1356,6 +1370,32 @@
           },
           "required": [
             "search"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "search.exclusion": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "rule": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "rule"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "rule": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "rule"
           ],
           "additionalProperties": false
         }

@@ -31,6 +31,19 @@ class AppSettings : public QObject {
     Q_PROPERTY(QVariantMap clickCounts READ clickCounts NOTIFY changed)
     /// Whether any folder keeps its own view or sort.
     Q_PROPERTY(bool hasFolderViews READ hasFolderViews NOTIFY changed)
+    // Search
+    /// Whether typing in a folder filters it.
+    Q_PROPERTY(bool typeToFilter READ typeToFilter WRITE setTypeToFilter NOTIFY changed)
+    /// How long a search goes on, in seconds, and how many entries it looks at; 0: no limit.
+    Q_PROPERTY(int searchSeconds READ searchSeconds WRITE setSearchSeconds NOTIFY changed)
+    Q_PROPERTY(int searchEntries READ searchEntries WRITE setSearchEntries NOTIFY changed)
+    /// Folders left out of every search, by name or path, as the backend keeps them.
+    Q_PROPERTY(QStringList searchExclusions READ searchExclusions WRITE setSearchExclusions NOTIFY changed)
+    // Transfers
+    /// What a drop onto another drive does: "copy", "move" or "ask" (legacy's default).
+    Q_PROPERTY(QString crossDriveDrop READ crossDriveDrop WRITE setCrossDriveDrop NOTIFY changed)
+    /// Whether the folder dropped into is shown after the drop.
+    Q_PROPERTY(bool openAfterDrop READ openAfterDrop WRITE setOpenAfterDrop NOTIFY changed)
     // Previews
     /// "popup" over the window or "panel" beside the list.
     Q_PROPERTY(QString previewStyle READ previewStyle WRITE setPreviewStyle NOTIFY changed)
@@ -69,6 +82,22 @@ public:
     /// Every folder back to the default view and sort.
     Q_INVOKABLE void forgetFolderViews();
     bool hasFolderViews() const;
+
+    bool typeToFilter() const;
+    void setTypeToFilter(bool filters);
+    /// Legacy's choices: 10 s to 15 min, or none (0); others go up to the next.
+    int searchSeconds() const;
+    void setSearchSeconds(int seconds);
+    /// Legacy's choices: 200,000 to 5,000,000, or none (0).
+    int searchEntries() const;
+    void setSearchEntries(int entries);
+    QStringList searchExclusions() const;
+    void setSearchExclusions(const QStringList &rules);
+    Q_INVOKABLE void removeSearchExclusion(const QString &rule);
+    QString crossDriveDrop() const;
+    void setCrossDriveDrop(const QString &choice);
+    bool openAfterDrop() const;
+    void setOpenAfterDrop(bool opens);
 
     QString previewStyle() const;
     void setPreviewStyle(const QString &style);

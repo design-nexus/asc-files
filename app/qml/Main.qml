@@ -254,7 +254,10 @@ ApplicationWindow {
                                 anchors.fill: parent
                                 enabled: placeRow.model.path.length > 0
                                 keys: ["text/uri-list"]
-                                onDropped: (event) => { if (window.transfers.drop(event.urls, placeRow.model.path)) event.accept() }
+                                onDropped: (event) => {
+                                    const result = window.transfers.drop(event.urls, placeRow.model.path)
+                                    if (result !== Transfers.Refused) { event.accept(); window.dropped(result, placeRow.model.path) }
+                                }
                             }
                         }
                     }
@@ -326,6 +329,7 @@ ApplicationWindow {
                             onContextRequested: (row) => row >= 0 ? itemMenu.show(row) : spaceMenu.popup()
                             onFileActivated: (path) => window.ops.open(path)
                             onPathMenuRequested: (path, isFolder) => pathMenu.show(path, isFolder)
+                            onDropped: (result, target) => window.dropped(result, target)
                         }
                         OverviewPage {
                             browser: window.browser
@@ -452,7 +456,35 @@ ApplicationWindow {
         id: settingsDialog
         places: window.places
         theme: SystemTheme
+        search: window.search
         currentFolder: window.inFolder ? window.browser.location : ""
+    }
+
+    // A drop taken in this window: asked about when it crosses drives (as Settings says), and the
+    // folder shown after it when Settings says so.
+    function dropped(result, target) {
+        if (result === Transfers.Asking) {
+            dropMenu.target = target
+            dropMenu.popup()
+        } else {
+            afterDrop(target)
+        }
+    }
+    function afterDrop(target) {
+        if (AppSettings.openAfterDrop && target.length > 0 && (window.page !== 0 || target !== window.browser.location))
+            window.browser.goPath(target)
+    }
+    ContextMenu {
+        id: dropMenu
+        objectName: "dropMenu"
+        property string target
+        property bool answered
+        onAboutToShow: answered = false
+        MenuItem { text: qsTr("Copy Here"); onTriggered: { dropMenu.answered = true; window.transfers.answer(true, false); window.afterDrop(dropMenu.target) } }
+        MenuItem { text: qsTr("Move Here"); onTriggered: { dropMenu.answered = true; window.transfers.answer(false, true); window.afterDrop(dropMenu.target) } }
+        MenuSeparator {}
+        MenuItem { text: qsTr("Cancel") }
+        onClosed: if (!answered) window.transfers.answer(false, false)
     }
 
     // A right click on an item named by its path: in Recent, Favorites, search results, the

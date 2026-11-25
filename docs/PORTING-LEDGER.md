@@ -304,6 +304,15 @@ ported with a reason. This list must be empty, or every entry justified, before 
   first, so nothing is lost. Without the confirmation, such a step is left as before.
 - **Open:** a bulk path for many small items; inner merge clashes by stored names.
 
+## Search exclusions (legacy: 3 tests)
+
+Legacy's `services/search/exclusions/tests.rs` (3 tests) is ported to `asc-files-engine/src/search.rs` as
+`folder_rules_match_ancestors_but_not_same_named_files`, `folder_paths_take_home_and_keep_to_whole_names_and_case`
+and `the_same_rule_written_twice_is_one_and_bad_rules_are_left_out`, all passing. Home is given to the rules
+rather than read from GLib, so the tests name it. Legacy's third test also checked a cache key the rules
+shared; the engine keeps no cache of walks, so it checks that equal rules compare equal instead. A walk test
+(`a_search_never_walks_what_is_left_out`) and a protocol test check the rules in a real search.
+
 ## Archives (legacy: 225 tests)
 
 Out of scope for Phase A.

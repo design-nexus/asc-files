@@ -5,9 +5,11 @@
 #include "models/JobModel.h"
 #include "models/Transfers.h"
 #include "ops/Operations.h"
+#include "settings/AppSettings.h"
 
 #include <QFile>
 #include <QSignalSpy>
+#include <QStorageInfo>
 #include <QTemporaryDir>
 #include <QUrl>
 
@@ -97,6 +99,44 @@ private slots:
         QVERIFY(finished.wait(20000));
         QVERIFY(QFile::exists(dir.filePath("into/a.txt")));
         QCOMPARE(ops.conflicts().size(), 0);
+    }
+
+    void aDropOntoAnotherDriveAsksAsSettingsSay() {
+        // Another drive: a memory folder, when it is one.
+        QTemporaryDir other(QStringLiteral("/dev/shm/asc-files-test-XXXXXX"));
+        QTemporaryDir dir;
+        if (!other.isValid() || QStorageInfo(other.path()).device() == QStorageInfo(dir.path()).device()) {
+            QSKIP("No second drive to drop onto.");
+        }
+        touch(dir.filePath("a.txt"), "a");
+        touch(dir.filePath("b.txt"), "b");
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        JobModel jobs(&backend);
+        Operations ops(&backend, &jobs);
+        Transfers transfers(&ops);
+        QSignalSpy finished(&jobs, &JobModel::finished);
+        const QList<QUrl> a{QUrl::fromLocalFile(dir.filePath("a.txt"))};
+        QVERIFY(!transfers.movesInto(a, other.path()));
+        // Asked: nothing starts until the answer; Copy copies.
+        QCOMPARE(transfers.drop(a, other.path()), int(Transfers::Asking));
+        QCOMPARE(jobs.rowCount(), 0);
+        transfers.answer(true, false);
+        QVERIFY(finished.wait(20000));
+        QVERIFY(QFile::exists(dir.filePath("a.txt")));
+        QVERIFY(QFile::exists(other.filePath("a.txt")));
+        // Cancelled: nothing.
+        QCOMPARE(transfers.drop({QUrl::fromLocalFile(dir.filePath("b.txt"))}, other.path()), int(Transfers::Asking));
+        transfers.answer(false, false);
+        QTest::qWait(300);
+        QVERIFY(!QFile::exists(other.filePath("b.txt")));
+        // Set to move: moved, unasked.
+        AppSettings::shared().setCrossDriveDrop(QStringLiteral("move"));
+        QCOMPARE(transfers.drop({QUrl::fromLocalFile(dir.filePath("b.txt"))}, other.path()), int(Transfers::Started));
+        QVERIFY(finished.wait(20000));
+        QVERIFY(!QFile::exists(dir.filePath("b.txt")));
+        QVERIFY(QFile::exists(other.filePath("b.txt")));
+        AppSettings::shared().setCrossDriveDrop(QStringLiteral("ask"));
     }
 
     void dropsThatWouldDoNothingAreRefused() {
