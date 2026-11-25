@@ -106,6 +106,32 @@ FocusScope {
         contextRequested(row)
     }
 
+    // List view's columns after Name: Settings' order and widths, a copy while one is dragged.
+    property var columns: AppSettings.listColumns
+    Connections {
+        target: AppSettings
+        function onChanged() { view.columns = Qt.binding(() => AppSettings.listColumns) }
+    }
+    function sizeColumn(index, width, keep) {
+        const copy = columns.map(column => Object.assign({}, column))
+        copy[index].width = Math.max(40, Math.min(400, Math.round(width)))
+        columns = copy
+        if (keep) AppSettings.listColumns = copy
+    }
+    // Moves the column at `from` to where `middle` (an x in the header) falls among the others.
+    function moveColumn(from, middle) {
+        let to = 0
+        for (let i = 0; i < headings.count; ++i) {
+            const other = headings.itemAt(i)
+            if (i !== from && other.visible && other.x + other.width / 2 < middle) ++to
+        }
+        if (to === from) return
+        const copy = columns.slice()
+        const [moved] = copy.splice(from, 1)
+        copy.splice(to, 0, moved)
+        AppSettings.listColumns = copy
+    }
+
     // List columns that give way as the view narrows.
     readonly property bool showGap: list.width >= 1000
     readonly property bool showMode: list.width >= 720
@@ -276,45 +302,65 @@ FocusScope {
             Layout.preferredHeight: 36
             Layout.leftMargin: 24
             spacing: 0
+            // Name, which takes what the other columns leave (up to 600 px), then the others, in
+            // the order and widths chosen: drag a heading to move it, its edge to size it.
+            Heading {
+                title: qsTr("Name")
+                sortKey: "name"
+                Layout.fillWidth: true
+                Layout.maximumWidth: 600
+                Layout.preferredWidth: 600
+            }
             Repeater {
-                // The name takes what the other columns leave, up to 600 px.
-                model: [[qsTr("Name"), -1, false, "name"], [qsTr("Mode"), 70, false, ""], [qsTr("Size"), 91, true, "size"],
-                        ["", 40, false, ""], [qsTr("Kind"), 119, false, ""], [qsTr("Modified"), 140, false, "modified"]]
-                Item {
+                id: headings
+                model: view.columns
+                Heading {
                     id: heading
                     required property var modelData
                     required property int index
-                    readonly property bool sorted: view.folderModel !== null && modelData[3] === view.folderModel.sortKey
-                    visible: index === 1 ? view.showMode : index === 4 ? view.showKind : true
-                    Layout.fillWidth: modelData[1] < 0
-                    Layout.maximumWidth: modelData[1] < 0 ? 600 : index === 3 && !view.showGap ? 16 : modelData[1]
-                    Layout.preferredWidth: modelData[1] < 0 ? 600 : index === 3 && !view.showGap ? 16 : modelData[1]
-                    implicitHeight: 24
-                    RowLayout {
-                        anchors.fill: parent
-                        spacing: 6
-                        layoutDirection: heading.modelData[2] ? Qt.RightToLeft : Qt.LeftToRight
-                        Text {
-                            text: heading.modelData[0]
-                            color: heading.sorted ? Theme.textDim : Theme.textMute
-                            font.family: Theme.family
-                            font.pointSize: Theme.tiny
-                            font.weight: Font.DemiBold
-                        }
-                        Icon {
-                            visible: heading.sorted
-                            path: view.folderModel && view.folderModel.sortDescending ? "m4 6 4 4 4-4" : "m4 10 4-4 4 4"
-                            color: Theme.accent
-                            size: 10
-                            strokeWidth: 2
-                        }
-                        Item { Layout.fillWidth: true }
+                    readonly property string key: modelData.key
+                    readonly property int gap: key === "size" ? (view.showGap ? 40 : 16) : 0
+                    title: key === "mode" ? qsTr("Mode") : key === "size" ? qsTr("Size") : key === "kind" ? qsTr("Kind") : qsTr("Modified")
+                    sortKey: key === "size" ? "size" : key === "kind" ? "type" : key === "modified" ? "modified" : ""
+                    rightAligned: key === "size"
+                    trailing: gap
+                    visible: (key !== "mode" || view.showMode) && (key !== "kind" || view.showKind)
+                    Layout.preferredWidth: modelData.width + gap
+                    Layout.maximumWidth: modelData.width + gap
+                    // Moved: dropped where its middle is among the others.
+                    z: move.active ? 2 : 0
+                    transform: Translate { x: move.active ? move.translation.x : 0 }
+                    DragHandler {
+                        id: move
+                        target: null
+                        xAxis.enabled: true
+                        yAxis.enabled: false
+                        onActiveChanged: if (!active) view.moveColumn(heading.index, heading.x + heading.width / 2 + translation.x)
                     }
-                    TapHandler {
-                        enabled: heading.modelData[3].length > 0
-                        onTapped: view.browser.sortBy(heading.modelData[3])
+                    // Its right edge sizes it; a double click puts its width back.
+                    Item {
+                        anchors.right: parent.right
+                        anchors.rightMargin: heading.gap - 3
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        width: 8
+                        HoverHandler { id: edgeHover; cursorShape: Qt.SplitHCursor }
+                        Rectangle { anchors.centerIn: parent; width: 2; height: 14; radius: 1; color: Theme.textMute; visible: edgeHover.hovered || sizing.active }
+                        property int startWidth
+                        DragHandler {
+                            id: sizing
+                            target: null
+                            yAxis.enabled: false
+                            onActiveChanged: {
+                                if (active) parent.startWidth = heading.modelData.width
+                                else AppSettings.listColumns = view.columns
+                            }
+                            onTranslationChanged: if (active) view.sizeColumn(heading.index, parent.startWidth + translation.x)
+                        }
+                        TapHandler {
+                            onDoubleTapped: view.sizeColumn(heading.index, AppSettings.defaultColumnWidth(heading.key), true)
+                        }
                     }
-                    HoverHandler { enabled: heading.modelData[3].length > 0; cursorShape: Qt.PointingHandCursor }
                 }
             }
             Item { Layout.fillWidth: true }
@@ -339,6 +385,7 @@ FocusScope {
                 showGap: view.showGap
                 showMode: view.showMode
                 showKind: view.showKind
+                columns: view.columns
                 id: rowItem
                 editing: index === view.renamingRow
                 Drag.dragType: Drag.Automatic
@@ -475,6 +522,51 @@ FocusScope {
             onSelected: (rows, add) => view.folderModel.selectRows(rows, add)
             onCleared: view.folderModel.clearSelection()
         }
+    }
+
+    // A List column's heading: a click sorts by it (when it sorts), again turns it around.
+    component Heading: Item {
+        id: heading
+        property string title
+        property string sortKey
+        property bool rightAligned: false
+        /// Room kept after it (Size's gap).
+        property int trailing: 0
+        readonly property bool sorted: view.folderModel !== null && sortKey.length > 0 && sortKey === view.folderModel.sortKey
+        implicitHeight: 24
+        RowLayout {
+            anchors.fill: parent
+            anchors.rightMargin: heading.trailing
+            spacing: 6
+            layoutDirection: heading.rightAligned ? Qt.RightToLeft : Qt.LeftToRight
+            Text {
+                text: heading.title
+                color: heading.sorted ? Theme.textDim : Theme.textMute
+                font.family: Theme.family
+                font.pointSize: Theme.tiny
+                font.weight: Font.DemiBold
+            }
+            Icon {
+                visible: heading.sorted
+                path: view.folderModel && view.folderModel.sortDescending ? "m4 6 4 4 4-4" : "m4 10 4-4 4 4"
+                color: Theme.accent
+                size: 10
+                strokeWidth: 2
+            }
+            Item { Layout.fillWidth: true }
+        }
+        TapHandler {
+            enabled: heading.sortKey.length > 0
+            onTapped: view.browser.sortBy(heading.sortKey)
+        }
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            onTapped: columnsMenu.popup()
+        }
+    }
+    ContextMenu {
+        id: columnsMenu
+        MenuItem { text: qsTr("Reset Columns"); onTriggered: AppSettings.resetListColumns() }
     }
 
     // Compact List: small icons and names in columns that fill top to bottom, scrolled sideways.

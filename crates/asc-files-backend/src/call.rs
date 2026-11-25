@@ -449,6 +449,7 @@ fn options(params: &Params) -> Result<OptionsPatch, Fault> {
                 "name" => Ok(SortKey::Name),
                 "size" => Ok(SortKey::Size),
                 "modified" => Ok(SortKey::Modified),
+                "type" => Ok(SortKey::Type),
                 other => Err(unknown_value(&sort.at("key"), other)),
             })
             .transpose()?,

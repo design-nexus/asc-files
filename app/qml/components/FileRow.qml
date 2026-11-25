@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Layouts
 
 import AscFiles
+import AscFiles.System
 
 // One entry in List view: icon and name, then Mode (octal, symbolic on hover), Size (right
 // aligned, tabular figures), Kind and Modified. A row whose page has not arrived shows its place.
@@ -22,8 +23,8 @@ Rectangle {
     /// Its own colour and icon (path data, or `emoji:…`), from Customize; empty when none.
     required property string customColor
     required property string customIcon
-    /// Mode, Size, a gap, Kind and Modified; the name takes the rest, up to 600 px.
-    property var columns: [70, 91, 40, 119, 140]
+    /// The columns after Name, `[{key, width}]` in order; the name takes the rest, up to 600 px.
+    property var columns: AppSettings.listColumns
     /// Columns that give way as the list narrows, so the name keeps its room.
     property bool showGap: true
     property bool showMode: true
@@ -102,43 +103,36 @@ Rectangle {
                 font.pointSize: Theme.body
             }
         }
-        Text {
-            visible: row.showMode
-            Layout.preferredWidth: row.columns[0]
-            text: row.modeOctal
-            color: Theme.textDim
-            font.family: Theme.family
-            font.pointSize: Theme.body
-            font.features: { "tnum": 1 }
-            HoverHandler { id: modeHover }
-            ToolTipText { visible: modeHover.hovered && row.modeSymbolic.length > 0; text: row.modeSymbolic }
-        }
-        Text {
-            Layout.preferredWidth: row.columns[1]
-            horizontalAlignment: Text.AlignRight
-            text: row.sizeText
-            color: Theme.textDim
-            font.family: Theme.family
-            font.pointSize: Theme.body
-            font.features: { "tnum": 1 }
-        }
-        Item { Layout.preferredWidth: row.showGap ? row.columns[2] : 16 }
-        Text {
-            visible: row.showKind
-            Layout.preferredWidth: row.columns[3]
-            text: row.kindText
-            elide: Text.ElideRight
-            color: Theme.textDim
-            font.family: Theme.family
-            font.pointSize: Theme.body
-        }
-        Text {
-            Layout.preferredWidth: row.columns[4]
-            text: row.modifiedText
-            elide: Text.ElideRight
-            color: Theme.textDim
-            font.family: Theme.family
-            font.pointSize: Theme.body
+        // Mode, Size, Kind and Modified, in the order and widths chosen (Settings keeps them).
+        Repeater {
+            model: row.columns
+            Item {
+                id: cell
+                required property var modelData
+                readonly property string key: modelData.key
+                // Size, right-aligned, keeps a gap after it wherever it is.
+                readonly property int gap: key === "size" ? (row.showGap ? 40 : 16) : 0
+                visible: (key !== "mode" || row.showMode) && (key !== "kind" || row.showKind)
+                Layout.preferredWidth: modelData.width + gap
+                implicitHeight: label.implicitHeight
+                Text {
+                    id: label
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.rightMargin: cell.gap
+                    anchors.verticalCenter: parent.verticalCenter
+                    horizontalAlignment: cell.key === "size" ? Text.AlignRight : Text.AlignLeft
+                    text: cell.key === "mode" ? row.modeOctal : cell.key === "size" ? row.sizeText
+                        : cell.key === "kind" ? row.kindText : row.modifiedText
+                    elide: Text.ElideRight
+                    color: Theme.textDim
+                    font.family: Theme.family
+                    font.pointSize: Theme.body
+                    font.features: cell.key === "mode" || cell.key === "size" ? { "tnum": 1 } : {}
+                    HoverHandler { id: cellHover; enabled: cell.key === "mode" }
+                    ToolTipText { visible: cellHover.hovered && row.modeSymbolic.length > 0; text: row.modeSymbolic }
+                }
+            }
         }
         Item { Layout.fillWidth: true }
     }

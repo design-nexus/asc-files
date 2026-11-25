@@ -38,7 +38,7 @@ outcome = {"oneOf": [
     obj({"status": const("failed"), "error": E, **changes}),
     obj({"status": const("notAttempted")}),
 ]}
-sort = obj({}, {"key": enum("name","size","modified"), "descending": BOOL, "foldersFirst": BOOL})
+sort = obj({}, {"key": enum("name","size","modified","type"), "descending": BOOL, "foldersFirst": BOOL})
 row = obj({"name": N, "kind": enum("folder","file","link","special"), "linkToFolder": BOOL, "hidden": BOOL},
           {"size": INT, "modified": SINT, "modifiedNs": INT, "mode": INT, "gone": const(True)})
 clash_choice = enum("keepBoth","replace","skip")

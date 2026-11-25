@@ -106,6 +106,25 @@ private slots:
         settings.setCrossDriveDrop(QStringLiteral("sideways"));
         QCOMPARE(settings.crossDriveDrop(), QStringLiteral("ask"));
     }
+
+    void listColumnsKeepTheirOrderAndWidths() {
+        AppSettings &settings = AppSettings::shared();
+        const auto keys = [&] {
+            QStringList keys;
+            for (const QVariant &column : settings.listColumns()) keys.append(column.toMap().value("key").toString());
+            return keys;
+        };
+        QCOMPARE(keys(), (QStringList{"mode", "size", "kind", "modified"}));
+        settings.setListColumns({QVariantMap{{"key", "modified"}, {"width", 200}}, QVariantMap{{"key", "size"}, {"width", 9}},
+                                 QVariantMap{{"key", "modified"}, {"width", 50}}, QVariantMap{{"key", "colour"}, {"width", 80}}});
+        // Each known one once, widths held, the ones left out after.
+        QCOMPARE(keys(), (QStringList{"modified", "size", "mode", "kind"}));
+        QCOMPARE(settings.listColumns().at(0).toMap().value("width").toInt(), 200);
+        QCOMPARE(settings.listColumns().at(1).toMap().value("width").toInt(), 40);
+        settings.resetListColumns();
+        QCOMPARE(keys(), (QStringList{"mode", "size", "kind", "modified"}));
+        QCOMPARE(settings.defaultColumnWidth("size"), 91);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestAppSettings)

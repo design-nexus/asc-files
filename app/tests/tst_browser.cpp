@@ -181,6 +181,26 @@ private slots:
         QVERIFY(saved.readAll().contains("photos"));
     }
 
+    void kindSortsByTypeFromA() {
+        QTemporaryDir dir;
+        for (const char *name : {"b.txt", "a.png", "c"}) {
+            QFile file(dir.filePath(QLatin1String(name)));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+        }
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        Browser browser(&backend);
+        browser.goPath(dir.path());
+        QVERIFY(openedAt(browser, dir.path()));
+        browser.sortBy(QStringLiteral("type"));
+        QCOMPARE(browser.folderModel()->sortKey(), QStringLiteral("type"));
+        QVERIFY(!browser.folderModel()->sortDescending());
+        // Reading a row loads its page.
+        FolderModel *model = browser.folderModel();
+        QTRY_COMPARE(model->data(model->index(0), FolderModel::NameRole).toString(), QStringLiteral("a.png"));
+        QTRY_COMPARE(model->data(model->index(2), FolderModel::NameRole).toString(), QStringLiteral("c"));
+    }
+
     void eachFolderKeepsItsIconSize() {
         QTemporaryDir dir;
         QVERIFY(QDir().mkpath(dir.filePath("big")));

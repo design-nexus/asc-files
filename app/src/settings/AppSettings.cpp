@@ -30,6 +30,10 @@ int chosenLimit(int value, const QList<int> &choices) {
     return 0;
 }
 
+// List view's columns after Name, with their widths as they start.
+const QList<QPair<QString, int>> ListColumns{
+    {QStringLiteral("mode"), 70}, {QStringLiteral("size"), 91}, {QStringLiteral("kind"), 119}, {QStringLiteral("modified"), 140}};
+
 const QStringList SortKeys{QStringLiteral("name"), QStringLiteral("size"), QStringLiteral("modified"), QStringLiteral("type")};
 
 QString absolute(const QDateTime &when, const QString &format) {
@@ -145,6 +149,47 @@ void AppSettings::forgetFolderViews() {
 }
 
 bool AppSettings::hasFolderViews() const { return FolderViews::shared().count() > 0; }
+
+/// Each known column once, in the order given, its width held to 40–400; the ones left out after.
+QVariantList AppSettings::normalizedColumns(const QVariantList &given) const {
+    QVariantList columns;
+    QStringList seen;
+    for (const QVariant &entry : given) {
+        const QVariantMap column = entry.toMap();
+        const QString key = column.value(QStringLiteral("key")).toString();
+        if (seen.contains(key) || defaultColumnWidth(key) == 0) {
+            continue;
+        }
+        seen.append(key);
+        columns.append(QVariantMap{{QStringLiteral("key"), key},
+                                   {QStringLiteral("width"), qBound(40, column.value(QStringLiteral("width")).toInt(), 400)}});
+    }
+    for (const auto &[key, width] : ListColumns) {
+        if (!seen.contains(key)) {
+            columns.append(QVariantMap{{QStringLiteral("key"), key}, {QStringLiteral("width"), width}});
+        }
+    }
+    return columns;
+}
+
+QVariantList AppSettings::listColumns() const { return normalizedColumns(value("list/columns", QVariantList()).toList()); }
+
+void AppSettings::setListColumns(const QVariantList &columns) { set("list/columns", normalizedColumns(columns)); }
+
+void AppSettings::resetListColumns() {
+    m_settings.remove(QStringLiteral("list/columns"));
+    m_settings.sync();
+    emit changed();
+}
+
+int AppSettings::defaultColumnWidth(const QString &key) const {
+    for (const auto &[known, width] : ListColumns) {
+        if (known == key) {
+            return width;
+        }
+    }
+    return 0;
+}
 
 bool AppSettings::typeToFilter() const { return value("search/typeToFilter", true).toBool(); }
 void AppSettings::setTypeToFilter(bool filters) { set("search/typeToFilter", filters); }

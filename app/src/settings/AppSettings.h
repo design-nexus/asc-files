@@ -31,6 +31,8 @@ class AppSettings : public QObject {
     Q_PROPERTY(QVariantMap clickCounts READ clickCounts NOTIFY changed)
     /// Whether any folder keeps its own view or sort.
     Q_PROPERTY(bool hasFolderViews READ hasFolderViews NOTIFY changed)
+    /// List view's columns after Name, in order: `[{key, width}]` (mode, size, kind, modified).
+    Q_PROPERTY(QVariantList listColumns READ listColumns WRITE setListColumns NOTIFY changed)
     // Search
     /// Whether typing in a folder filters it.
     Q_PROPERTY(bool typeToFilter READ typeToFilter WRITE setTypeToFilter NOTIFY changed)
@@ -83,6 +85,13 @@ public:
     Q_INVOKABLE void forgetFolderViews();
     bool hasFolderViews() const;
 
+    QVariantList listColumns() const;
+    /// Keeps `columns` (each known key once, widths held to 40–400; ones left out follow).
+    void setListColumns(const QVariantList &columns);
+    Q_INVOKABLE void resetListColumns();
+    /// A column's width when it is reset.
+    Q_INVOKABLE int defaultColumnWidth(const QString &key) const;
+
     bool typeToFilter() const;
     void setTypeToFilter(bool filters);
     /// Legacy's choices: 10 s to 15 min, or none (0); others go up to the next.
@@ -124,6 +133,7 @@ signals:
 private:
     AppSettings();
     QVariant value(const char *key, const QVariant &fallback) const;
+    QVariantList normalizedColumns(const QVariantList &given) const;
     void set(const char *key, const QVariant &value);
     mutable QSettings m_settings;
 };

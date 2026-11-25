@@ -38,6 +38,9 @@ pub enum SortKey {
     Name,
     Size,
     Modified,
+    /// By extension (legacy sorted by the type a name says; with no type database, its
+    /// extension is the nearest): none last, case aside. Folders keep name order.
+    Type,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -294,6 +297,16 @@ fn compare(a: &Entry, b: &Entry, order: Order) -> Ordering {
             let modified = |entry: &Entry| entry.stat.map_or((0, 0), |stat| stat.modified);
             modified(a).cmp(&modified(b))
         }
+        SortKey::Type if !both_folders => {
+            let a = extension(a.name.as_encoded_bytes());
+            let b = extension(b.name.as_encoded_bytes());
+            match (a, b) {
+                (None, None) => Ordering::Equal,
+                (None, Some(_)) => Ordering::Greater,
+                (Some(_), None) => Ordering::Less,
+                (Some(a), Some(b)) => a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()),
+            }
+        }
         _ => Ordering::Equal,
     };
     let ordered =
@@ -303,6 +316,12 @@ fn compare(a: &Entry, b: &Entry, order: Order) -> Ordering {
     } else {
         ordered
     }
+}
+
+/// What follows a name's last dot, unless the dot starts the name (`.bashrc` has none).
+fn extension(name: &[u8]) -> Option<&[u8]> {
+    let dot = name.iter().rposition(|&byte| byte == b'.')?;
+    (dot > 0 && dot + 1 < name.len()).then(|| &name[dot + 1..])
 }
 
 /// Finder's order rather than byte order: a run of digits compares by value (`file_2` before
@@ -726,6 +745,35 @@ mod tests {
         assert_eq!(
             name_order(big.as_bytes(), bigger.as_bytes()),
             Ordering::Less
+        );
+    }
+
+    #[test]
+    fn type_order_is_by_extension_with_none_last_and_folders_by_name() {
+        let root = tempfile::tempdir().unwrap();
+        for file in ["b.txt", "a.PNG", "c.png", "README", ".bashrc", "z.jpg"] {
+            std::fs::write(root.path().join(file), b"x").unwrap();
+        }
+        for folder in ["zeta", "alpha.d"] {
+            std::fs::create_dir(root.path().join(folder)).unwrap();
+        }
+        let options = Options {
+            show_hidden: true,
+            order: Order {
+                key: SortKey::Type,
+                ..Order::default()
+            },
+        };
+        let (entries, _) = read_entries(root.path(), &options).unwrap();
+        let names: Vec<_> = entries
+            .iter()
+            .map(|entry| entry.name.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "alpha.d", "zeta", "z.jpg", "a.PNG", "c.png", "b.txt", ".bashrc", "README"
+            ]
         );
     }
 

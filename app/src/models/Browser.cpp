@@ -156,7 +156,9 @@ void Browser::makeSecond() {
 }
 
 void Browser::sortBy(const QString &key) {
-    const bool descending = key == m_folders->sortKey() ? !m_folders->sortDescending() : key != QLatin1String("name");
+    // Size and dates start with the largest and newest; names and types from A.
+    const bool descending = key == m_folders->sortKey() ? !m_folders->sortDescending()
+                                                        : key == QLatin1String("size") || key == QLatin1String("modified");
     m_folders->setSort(key, descending);
     rememberChoice();
 }

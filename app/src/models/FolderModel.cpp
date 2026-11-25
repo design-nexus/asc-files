@@ -190,7 +190,7 @@ QJsonObject FolderModel::sortParams() const {
 }
 
 void FolderModel::setSort(const QString &key, bool descending, bool foldersFirst) {
-    static const QStringList keys{QStringLiteral("name"), QStringLiteral("size"), QStringLiteral("modified")};
+    static const QStringList keys{QStringLiteral("name"), QStringLiteral("size"), QStringLiteral("modified"), QStringLiteral("type")};
     if (!keys.contains(key) || (key == m_sortKey && descending == m_sortDescending && foldersFirst == m_foldersFirst)) {
         return;
     }

@@ -833,7 +833,8 @@
                   "enum": [
                     "name",
                     "size",
-                    "modified"
+                    "modified",
+                    "type"
                   ]
                 },
                 "descending": {
@@ -963,7 +964,8 @@
                   "enum": [
                     "name",
                     "size",
-                    "modified"
+                    "modified",
+                    "type"
                   ]
                 },
                 "descending": {
