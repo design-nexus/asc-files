@@ -109,6 +109,9 @@ void FolderModel::open(const QByteArray &path) {
     if (!m_filter.isEmpty()) {
         params.insert(QStringLiteral("filter"), m_filter);
     }
+    if (!m_globs.isEmpty()) {
+        params.insert(QStringLiteral("globs"), QJsonArray::fromStringList(m_globs));
+    }
     m_backend->call(QStringLiteral("list.open"), params, this,
                     [this, opening](const QJsonValue &result, const BackendError &error) {
                         if (opening != m_opening) {
@@ -210,6 +213,15 @@ void FolderModel::setFilter(const QString &filter) {
     reorder();
 }
 
+void FolderModel::setGlobs(const QStringList &globs) {
+    if (globs == m_globs) {
+        return;
+    }
+    m_globs = globs;
+    emit globsChanged();
+    reorder();
+}
+
 void FolderModel::setNewestFirst(bool newest) {
     if (newest) {
         setSort(QStringLiteral("modified"), true, false);
@@ -224,7 +236,9 @@ void FolderModel::reorder() {
     }
     const qint64 listing = m_listing;
     m_backend->call(QStringLiteral("list.reorder"),
-                    {{"listing", listing}, {"showHidden", m_showHidden}, {"sort", sortParams()}, {"filter", m_filter}}, this,
+                    {{"listing", listing}, {"showHidden", m_showHidden}, {"sort", sortParams()}, {"filter", m_filter},
+                     {"globs", QJsonArray::fromStringList(m_globs)}},
+                    this,
                     [this, listing](const QJsonValue &result, const BackendError &error) {
                         if (listing != m_listing || !error.isNull()) {
                             return;

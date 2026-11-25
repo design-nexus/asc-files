@@ -152,8 +152,9 @@ impl Session {
                 path,
                 options,
                 filter,
+                globs,
             } => {
-                self.listings.open(id, path, &options, filter);
+                self.listings.open(id, path, &options, (filter, globs));
                 Ok(Answer::Later)
             }
             Call::ListWindow {
@@ -165,7 +166,8 @@ impl Session {
                 listing,
                 options,
                 filter,
-            } => later(self.listings.reorder(id, listing, options, filter)),
+                globs,
+            } => later(self.listings.reorder(id, listing, options, (filter, globs))),
             Call::ListRefresh { listing } => later(self.listings.refresh(id, listing)),
             Call::ListClose { listing } => {
                 self.listings.close(listing);

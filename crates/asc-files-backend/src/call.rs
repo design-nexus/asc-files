@@ -64,6 +64,7 @@ pub enum Call {
         path: PathBuf,
         options: OptionsPatch,
         filter: Option<String>,
+        globs: Option<Vec<String>>,
     },
     ListWindow {
         listing: u64,
@@ -74,6 +75,7 @@ pub enum Call {
         listing: u64,
         options: OptionsPatch,
         filter: Option<String>,
+        globs: Option<Vec<String>>,
     },
     ListRefresh {
         listing: u64,
@@ -268,6 +270,7 @@ fn call(method: &str, params: &Params) -> Result<Call, Fault> {
             path: params.path("path")?,
             options: options(params)?,
             filter: params.optional("filter", Params::string_of)?,
+            globs: globs(params)?,
         },
         "list.window" => Call::ListWindow {
             listing: params.u64("listing")?,
@@ -278,6 +281,7 @@ fn call(method: &str, params: &Params) -> Result<Call, Fault> {
             listing: params.u64("listing")?,
             options: options(params)?,
             filter: params.optional("filter", Params::string_of)?,
+            globs: globs(params)?,
         },
         "list.refresh" => Call::ListRefresh {
             listing: params.u64("listing")?,
@@ -458,6 +462,22 @@ fn options(params: &Params) -> Result<OptionsPatch, Fault> {
         descending: sort.optional("descending", Params::bool_of)?,
         folders_first: sort.optional("foldersFirst", Params::bool_of)?,
     })
+}
+
+/// A file chooser's filter: globs files must match (folders always show); bounded, as the
+/// chooser bounds what callers send.
+fn globs(params: &Params) -> Result<Option<Vec<String>>, Fault> {
+    let globs = params.optional("globs", Params::strings_of)?;
+    if globs
+        .as_ref()
+        .is_some_and(|globs| globs.len() > 4096 || globs.iter().any(|glob| glob.len() > 256))
+    {
+        return Err(Fault::invalid_params(format!(
+            "{} is too long",
+            params.at("globs")
+        )));
+    }
+    Ok(globs)
 }
 
 fn names(params: &Params) -> Result<Vec<OsString>, Fault> {

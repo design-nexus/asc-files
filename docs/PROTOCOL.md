@@ -46,9 +46,9 @@ rows came from, the view asks for its windows again.
 
 | Method | Params | Result |
 |---|---|---|
-| `list.open` | `path`, `filter?`, `showHidden?` (false), `sort?: {key: "name"\|"size"\|"modified", descending?, foldersFirst?}` (name, ascending, folders first) | `{listing, generation, count, followsChanges, leftovers}` |
+| `list.open` | `path`, `filter?`, `globs?` (a file chooser's filter: files a glob matches, any case, and every folder), `showHidden?` (false), `sort?: {key: "name"\|"size"\|"modified", descending?, foldersFirst?}` (name, ascending, folders first) | `{listing, generation, count, followsChanges, leftovers}` |
 | `list.window` | `listing, start, count` | `{listing, generation, start, rows}` |
-| `list.reorder` | `listing`, and any of `showHidden`, `sort`, `filter` (what is left out keeps its value) | `{generation, count, leftovers}` |
+| `list.reorder` | `listing`, and any of `showHidden`, `sort`, `filter`, `globs` (what is left out keeps its value) | `{generation, count, leftovers}` |
 | `list.refresh` | `listing` | `{generation, count, leftovers}` |
 | `list.close` | `listing` | `null` |
 

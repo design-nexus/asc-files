@@ -33,6 +33,8 @@ class FolderModel : public QAbstractListModel {
     Q_PROPERTY(QStringList leftovers READ leftovers NOTIFY leftoversChanged)
     /// Text typed over the folder: only names it matches are listed.
     Q_PROPERTY(QString filter READ filter WRITE setFilter NOTIFY filterChanged)
+    /// A file chooser's filter: only files a glob matches (any case) are listed, and every folder.
+    Q_PROPERTY(QStringList globs READ globs WRITE setGlobs NOTIFY globsChanged)
     Q_PROPERTY(QString sortKey READ sortKey NOTIFY sortChanged)
     Q_PROPERTY(bool sortDescending READ sortDescending NOTIFY sortChanged)
     Q_PROPERTY(bool foldersFirst READ foldersFirst NOTIFY sortChanged)
@@ -96,6 +98,8 @@ public:
     void setShowHidden(bool show);
     QString filter() const { return m_filter; }
     void setFilter(const QString &filter);
+    QStringList globs() const { return m_globs; }
+    void setGlobs(const QStringList &globs);
     QString sortKey() const { return m_sortKey; }
     bool sortDescending() const { return m_sortDescending; }
     bool foldersFirst() const { return m_foldersFirst; }
@@ -149,6 +153,7 @@ signals:
     void showHiddenChanged();
     void sortChanged();
     void filterChanged();
+    void globsChanged();
     /// The folder is listed and its count known.
     void opened(int count);
     void selectionChanged();
@@ -182,6 +187,7 @@ private:
     bool m_followsChanges = false;
     bool m_showHidden = false;
     QString m_filter;
+    QStringList m_globs;
     QString m_sortKey = QStringLiteral("name");
     bool m_sortDescending = false;
     bool m_foldersFirst = true;

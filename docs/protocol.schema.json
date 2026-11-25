@@ -872,6 +872,12 @@
             },
             "filter": {
               "type": "string"
+            },
+            "globs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -1003,6 +1009,12 @@
             },
             "filter": {
               "type": "string"
+            },
+            "globs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [

@@ -125,6 +125,8 @@ pub struct Listing {
     leftovers: Vec<std::ffi::OsString>,
     /// Text typed over the folder: only the names it matches are listed.
     filter: String,
+    /// A file chooser's filter: files only where a glob matches; folders always.
+    globs: Vec<String>,
 }
 
 impl Listing {
@@ -136,6 +138,7 @@ impl Listing {
             entries: Vec::new(),
             leftovers: Vec::new(),
             filter: String::new(),
+            globs: Vec::new(),
         };
         listing.refresh()?;
         Ok(listing)
@@ -148,6 +151,13 @@ impl Listing {
         if !filter.is_empty() {
             self.entries
                 .retain(|entry| filter.matches(&entry.name.to_string_lossy()));
+        }
+        if !self.globs.is_empty() {
+            let globs = &self.globs;
+            self.entries.retain(|entry| {
+                let name = entry.name.to_string_lossy();
+                entry.opens_as_folder() || globs.iter().any(|glob| glob_matches(glob, &name))
+            });
         }
         self.generation += 1;
         Ok(())
@@ -168,6 +178,17 @@ impl Listing {
 
     pub fn filter(&self) -> &str {
         &self.filter
+    }
+
+    /// Lists only the files a glob of `globs` matches (any case), and every folder, as a file
+    /// chooser's filter does; none lists everything.
+    pub fn set_globs(&mut self, globs: &[String]) -> Result<(), Error> {
+        let previous = std::mem::replace(&mut self.globs, globs.to_vec());
+        self.refresh().inspect_err(|_| self.globs = previous)
+    }
+
+    pub fn globs(&self) -> &[String] {
+        &self.globs
     }
 
     pub fn folder(&self) -> &Path {
@@ -725,6 +746,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn globs_match_names_as_a_file_chooser_filter_does() {
+        for (glob, name, matches) in [
+            ("*.png", "photo.PNG", true),
+            ("*.png", "photo.png.txt", false),
+            ("*.[jJ][pP]*g", "a.jpeg", true),
+            ("report-??.txt", "report-12.txt", true),
+            ("report-??.txt", "report-1.txt", false),
+            ("[!a]*", "apple", false),
+            ("[!a]*", "banana", true),
+            ("[a-c]x", "bx", true),
+            ("*a*.txt", "banana.txt", true),
+            ("*", "", true),
+            ("[unclosed", "[unclosed", true),
+        ] {
+            assert_eq!(glob_matches(glob, name), matches, "{glob} {name}");
+        }
+        // Many stars don't make it slow.
+        let long = "a".repeat(10_000);
+        assert!(!glob_matches("*a*a*a*a*a*a*a*b", &long));
+    }
+
+    #[test]
+    fn a_chooser_filter_lists_matching_files_and_every_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["a.png", "b.txt", "C.PNG"] {
+            std::fs::write(dir.path().join(name), b"").unwrap();
+        }
+        std::fs::create_dir(dir.path().join("folder.txt")).unwrap();
+        let mut listing = Listing::read(dir.path(), Options::default()).unwrap();
+        listing.set_globs(&["*.png".to_owned()]).unwrap();
+        let mut names: Vec<_> = listing
+            .entries
+            .iter()
+            .map(|entry| entry.name.to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["C.PNG", "a.png", "folder.txt"]);
+        listing.set_globs(&[]).unwrap();
+        assert_eq!(listing.len(), 4);
+    }
+
+    #[test]
     fn names_sort_by_number_value_and_without_case() {
         let mut names = vec![
             "file_10", "File_2", "file_02", "apple", "Apple", "b", "file_1",
@@ -784,4 +847,66 @@ mod tests {
         std::fs::create_dir_all(root.path().join("a")).unwrap();
         assert_eq!(nearest_existing(&gone), root.path().join("a"));
     }
+}
+
+/// Whether `name` matches the shell glob `glob` (`*`, `?`, `[...]` with ranges and `!`), ignoring
+/// case. Iterative: a pattern's stars never make it backtrack without bound.
+pub fn glob_matches(glob: &str, name: &str) -> bool {
+    let glob: Vec<char> = glob.to_lowercase().chars().collect();
+    let name: Vec<char> = name.to_lowercase().chars().collect();
+    // One character of `glob` at `at` against `c`; the pattern's length used, or None.
+    let one = |at: usize, c: char| -> Option<(bool, usize)> {
+        match glob[at] {
+            '?' => Some((true, 1)),
+            '[' => {
+                let mut index = at + 1;
+                let negated = matches!(glob.get(index), Some('!' | '^'));
+                if negated {
+                    index += 1;
+                }
+                let start = index;
+                let mut found = false;
+                while index < glob.len() && (glob[index] != ']' || index == start) {
+                    if index + 2 < glob.len() && glob[index + 1] == '-' && glob[index + 2] != ']' {
+                        found |= (glob[index]..=glob[index + 2]).contains(&c);
+                        index += 3;
+                    } else {
+                        found |= glob[index] == c;
+                        index += 1;
+                    }
+                }
+                // An unclosed bracket is a plain '['.
+                if index >= glob.len() {
+                    return Some((c == '[', 1));
+                }
+                Some((found != negated, index + 1 - at))
+            }
+            literal => Some((literal == c, 1)),
+        }
+    };
+    let (mut g, mut n) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while n < name.len() {
+        if g < glob.len() && glob[g] == '*' {
+            star = Some((g, n));
+            g += 1;
+            continue;
+        }
+        if g < glob.len()
+            && let Some((true, used)) = one(g, name[n])
+        {
+            g += used;
+            n += 1;
+            continue;
+        }
+        match star {
+            Some((at, from)) => {
+                g = at + 1;
+                n = from + 1;
+                star = Some((at, from + 1));
+            }
+            None => return false,
+        }
+    }
+    glob[g..].iter().all(|c| *c == '*')
 }

@@ -40,6 +40,8 @@ enum Command {
         options: OptionsPatch,
         /// New filter text, or None to keep the one it has.
         filter: Option<String>,
+        /// New chooser globs, or None to keep them.
+        globs: Option<Vec<String>>,
     },
     Refresh {
         id: Value,
@@ -72,7 +74,7 @@ impl Listings {
         id: Value,
         folder: PathBuf,
         options: &OptionsPatch,
-        filter: Option<String>,
+        (filter, globs): (Option<String>, Option<Vec<String>>),
     ) {
         let options = options.apply(Options::default());
         self.next += 1;
@@ -85,7 +87,12 @@ impl Listings {
             .spawn(move || {
                 run(
                     listing,
-                    (folder, options, filter.unwrap_or_default()),
+                    (
+                        folder,
+                        options,
+                        filter.unwrap_or_default(),
+                        globs.unwrap_or_default(),
+                    ),
                     (id, &out),
                     &readers,
                     (changes, commands),
@@ -109,7 +116,7 @@ impl Listings {
         id: Value,
         listing: u64,
         options: OptionsPatch,
-        filter: Option<String>,
+        (filter, globs): (Option<String>, Option<Vec<String>>),
     ) -> Result<(), Fault> {
         self.send(
             listing,
@@ -117,6 +124,7 @@ impl Listings {
                 id,
                 options,
                 filter,
+                globs,
             },
         )
     }
@@ -156,7 +164,7 @@ impl Listings {
 
 fn run(
     listing: u64,
-    (folder, opened_with, filter): (PathBuf, Options, String),
+    (folder, opened_with, filter, globs): (PathBuf, Options, String, Vec<String>),
     (id, out): (Value, &Sender<Value>),
     readers: &Arc<Readers>,
     (changes, commands): (Sender<Command>, Receiver<Command>),
@@ -176,6 +184,9 @@ fn run(
     let read = Listing::read(&folder, opened_with).and_then(|mut listing| {
         if !filter.is_empty() {
             listing.set_filter(&filter)?;
+        }
+        if !globs.is_empty() {
+            listing.set_globs(&globs)?;
         }
         Ok(listing)
     });
@@ -218,11 +229,18 @@ fn run(
                 id,
                 options,
                 filter,
+                globs,
             } => {
                 let result = current
                     .set_options(options.apply(current.options()))
                     .and_then(|()| match &filter {
                         Some(text) if text != current.filter() => current.set_filter(text),
+                        _ => Ok(()),
+                    })
+                    .and_then(|()| match &globs {
+                        Some(globs) if globs.as_slice() != current.globs() => {
+                            current.set_globs(globs)
+                        }
                         _ => Ok(()),
                     })
                     .map_err(Fault::from);

@@ -60,9 +60,9 @@ none = obj()
 methods = {
  "initialize": (obj({}, {"protocolVersion": INT}), obj({"protocolVersion": const(2), "server": STR, "capabilities": arr(STR)})),
  "shutdown": (none, NULL),
- "list.open": (obj({"path": P}, {"showHidden": BOOL, "sort": sort, "filter": STR}), obj({"listing": INT, "generation": INT, "count": INT, "followsChanges": BOOL, "leftovers": arr(N)})),
+ "list.open": (obj({"path": P}, {"showHidden": BOOL, "sort": sort, "filter": STR, "globs": arr(STR)}), obj({"listing": INT, "generation": INT, "count": INT, "followsChanges": BOOL, "leftovers": arr(N)})),
  "list.window": (obj({"listing": INT, "start": INT, "count": INT}), obj({"listing": INT, "generation": INT, "start": INT, "rows": arr(ref("row"))})),
- "list.reorder": (obj({"listing": INT}, {"showHidden": BOOL, "sort": sort, "filter": STR}), obj({"generation": INT, "count": INT, "leftovers": arr(N)})),
+ "list.reorder": (obj({"listing": INT}, {"showHidden": BOOL, "sort": sort, "filter": STR, "globs": arr(STR)}), obj({"generation": INT, "count": INT, "leftovers": arr(N)})),
  "list.refresh": (obj({"listing": INT}), obj({"generation": INT, "count": INT, "leftovers": arr(N)})),
  "list.close": (obj({"listing": INT}), NULL),
  "jobs.start": (obj({"into": P, "items": arr(ref("item"))}, {"names": enum("fix","keep"), "label": STR, "durable": BOOL}), obj({"job": INT})),
