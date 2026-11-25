@@ -123,6 +123,7 @@ name = "asc-files-docs"
 version = "0.1.0"
 dependencies = [
  "ammonia",
+ "asc-files-engine",
  "base64 0.22.1",
  "calamine",
  "csv",

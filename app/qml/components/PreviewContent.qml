@@ -139,6 +139,12 @@ ColumnLayout {
             Binding { target: media.item; property: "path"; value: content.preview.path; when: media.status === Loader.Ready }
             Binding { target: media.item; property: "video"; value: content.preview.kind === "video"; when: media.status === Loader.Ready }
         }
+        // An archive's contents, browsed without extracting them.
+        ArchiveView {
+            anchors.fill: parent
+            visible: content.preview.kind === "archive" && !content.preview.loading
+            listing: content.preview.archive
+        }
         Icon {
             anchors.centerIn: parent
             visible: !picture.visible && (content.preview.kind === "folder" || content.preview.kind === "other" ||

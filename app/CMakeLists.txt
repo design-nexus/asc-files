@@ -85,6 +85,7 @@ qt_add_qml_module(asc_files_qml
         qml/components/JobsIndicator.qml
         qml/components/LeftoversDialog.qml
         qml/components/MediaView.qml
+        qml/components/ArchiveView.qml
         qml/components/NameEditor.qml
         qml/components/OpenWithDialog.qml
         qml/components/OpenWithMenu.qml

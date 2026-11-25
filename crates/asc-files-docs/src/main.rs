@@ -9,7 +9,9 @@
 //!
 //!     asc-files-docs markdown|html|rtf|docx|sheet|csv|tsv <file> [<text colour, #rrggbb>]
 //!     asc-files-docs cover cbz|epub|3mf|fcstd <file> <edge>   (a cover for a thumbnail, as a PNG)
+//!     asc-files-docs archive zip|7z|tar|tar.gz <file>   (an archive's listing, as JSON nodes)
 
+mod archive;
 mod cover;
 mod docx;
 mod html;
@@ -120,6 +122,13 @@ pub(crate) fn render(kind: &str, path: &Path, ink: &str) -> Result<Rendered, Str
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
+    // An archive's listing: `archive <format> <file>`, as JSON.
+    if let [_, mode, format, file] = args.as_slice()
+        && mode == "archive"
+    {
+        println!("{}", archive::listing(format, Path::new(file)));
+        return ExitCode::SUCCESS;
+    }
     // A cover: `cover <cbz|epub|3mf|fcstd> <file> <edge>`, written out as a PNG.
     if let [_, mode, format, file, edge] = args.as_slice()
         && mode == "cover"
@@ -149,7 +158,7 @@ fn main() -> ExitCode {
         [_, kind, file, ink] => (kind, file, ink.as_str()),
         _ => {
             eprintln!(
-                "usage: asc-files-docs markdown|html|rtf|docx|sheet|csv|tsv <file> [#rrggbb] | cover cbz|epub|3mf|fcstd <file> <edge>"
+                "usage: asc-files-docs markdown|html|rtf|docx|sheet|csv|tsv <file> [#rrggbb] | cover cbz|epub|3mf|fcstd <file> <edge> | archive <format> <file>"
             );
             return ExitCode::from(2);
         }

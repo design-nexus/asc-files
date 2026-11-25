@@ -3,11 +3,14 @@
 #include "render/Preview.h"
 #include "render/Sandbox.h"
 
+#include <QDir>
 #include <QFile>
 #include <QImage>
 #include <QPainter>
 #include <QPdfWriter>
+#include <QProcess>
 #include <QSignalSpy>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 
 namespace {
@@ -110,6 +113,44 @@ private slots:
         preview.show(dir.path());
         QCOMPARE(preview.kind(), QStringLiteral("folder"));
         QCOMPARE(preview.details().value("items").toInt(), 9);
+    }
+
+    void anArchiveIsListedNotExtracted() {
+        const QString python = QStandardPaths::findExecutable("python3");
+        if (python.isEmpty()) {
+            QSKIP("python3 is not installed to make an archive");
+        }
+        QTemporaryDir dir;
+        QProcess make;
+        make.start(python, {"-I", "-c", "import sys, zipfile\n"
+                                        "z = zipfile.ZipFile(sys.argv[1], 'w')\n"
+                                        "z.writestr('docs/readme.txt', 'hello')\n"
+                                        "z.writestr('top.txt', 't')\n"
+                                        "z.close()",
+                            dir.filePath("pack.zip")});
+        QVERIFY(make.waitForFinished(30000) && make.exitCode() == 0);
+        QCOMPARE(Preview::kindOf(dir.filePath("pack.zip")), QStringLiteral("archive"));
+        QCOMPARE(Preview::kindOf(dir.filePath("report.docx")).isEmpty(), false);
+        QVERIFY(Preview::kindOf(dir.filePath("report.docx")) != QStringLiteral("archive"));
+
+        Preview preview;
+        preview.show(dir.filePath("pack.zip"));
+        QTRY_VERIFY_WITH_TIMEOUT(!preview.archive().isEmpty(), 10000);
+        QCOMPARE(preview.archive().value("status").toString(), QStringLiteral("open"));
+        QCOMPARE(preview.archive().value("files").toInt(), 2);
+        const QVariantList nodes = preview.archive().value("nodes").toList();
+        QCOMPARE(nodes.size(), 4);
+        QStringList names;
+        for (const QVariant &node : nodes) {
+            names << node.toMap().value("name").toString();
+        }
+        QVERIFY2(names.contains("docs") && names.contains("readme.txt") && names.contains("top.txt"), qPrintable(names.join(",")));
+        QCOMPARE(QDir(dir.path()).entryList(QDir::NoDotAndDotDot | QDir::AllEntries), QStringList{"pack.zip"});
+
+        write(dir.filePath("broken.zip"), "not a zip");
+        preview.show(dir.filePath("broken.zip"));
+        QTRY_VERIFY_WITH_TIMEOUT(!preview.archive().isEmpty(), 10000);
+        QCOMPARE(preview.archive().value("status").toString(), QStringLiteral("error"));
     }
 
     void aPdfIsRenderedPageByPage() {

@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 ammonia = "4"
+asc-files-engine = { path = "../asc-files-engine" }
 base64 = "0.22"
 calamine = "0.36.1"
 csv = "1.4.0"

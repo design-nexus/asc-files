@@ -3,6 +3,8 @@
 
 #include "Sandbox.h"
 
+#include <algorithm>
+
 #include <QColor>
 #include <QDir>
 #include <QFile>
@@ -112,6 +114,13 @@ QString Preview::kindOf(const QString &path) {
     if (!documentKindOf(path).isEmpty()) {
         return QStringLiteral("document");
     }
+    // By name only: Word documents, e-books and comics are ZIP files too, with kinds of their own.
+    static const QStringList archives{QStringLiteral(".zip"), QStringLiteral(".7z"), QStringLiteral(".tar"),
+                                      QStringLiteral(".tar.gz"), QStringLiteral(".tgz"), QStringLiteral(".rar")};
+    const QString lower = info.fileName().toLower();
+    if (std::any_of(archives.begin(), archives.end(), [&](const QString &suffix) { return lower.endsWith(suffix); })) {
+        return QStringLiteral("archive");
+    }
     if (type.inherits(QStringLiteral("text/plain")) || name == QLatin1String("image/svg+xml") || name == QLatin1String("application/json") ||
         name == QLatin1String("application/x-shellscript")) {
         return QStringLiteral("text");
@@ -133,6 +142,7 @@ void Preview::show(const QString &path) {
     m_truncated = false;
     m_documentKind = m_kind == QLatin1String("document") ? documentKindOf(path) : QString();
     m_html.clear();
+    m_archive.clear();
     m_media.clear();
     m_image = {};
     m_page = 0;
@@ -167,6 +177,8 @@ void Preview::show(const QString &path) {
         }
     } else if (m_kind == QLatin1String("text")) {
         loadText();
+    } else if (m_kind == QLatin1String("archive")) {
+        loadArchive();
     } else if (m_kind == QLatin1String("document")) {
         loadDocument();
         if (hasSource()) {
@@ -210,6 +222,25 @@ void Preview::loadDocument() {
                      m_html.replace(named, QStringLiteral("src=\"image://preview/%1/media/\\1-%2\"").arg(m_id).arg(m_serial));
                      m_truncated = m_truncated || read.value(QStringLiteral("truncated")).toBool();
                      m_error = !error.isEmpty() ? error : read.isEmpty() ? tr("The document could not be read") : QString();
+                     emit changed();
+                 });
+}
+
+void Preview::loadArchive() {
+    m_loading = true;
+    // Its format by its name, which the reader can't see in the sandbox.
+    const QString lower = QFileInfo(m_path).fileName().toLower();
+    const QString format = lower.endsWith(QLatin1String(".tar.gz")) || lower.endsWith(QLatin1String(".tgz"))
+                               ? QStringLiteral("tar.gz")
+                               : QFileInfo(lower).suffix();
+    Sandbox::run(Sandbox::documentReader(), {QStringLiteral("archive"), format, QStringLiteral("{}")}, QFile::encodeName(m_path), m_work,
+                 [this](const QByteArray &out, const QString &error) {
+                     m_loading = false;
+                     m_archive = QJsonDocument::fromJson(out).object().toVariantMap();
+                     m_error = !error.isEmpty() ? error : m_archive.isEmpty() ? tr("The archive could not be read") : QString();
+                     if (m_archive.contains(QStringLiteral("files"))) {
+                         m_details.insert(QStringLiteral("items"), m_archive.value(QStringLiteral("files")));
+                     }
                      emit changed();
                  });
 }

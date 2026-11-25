@@ -25,6 +25,9 @@ class Preview : public QObject {
     Q_PROPERTY(QString documentKind READ documentKind NOTIFY changed)
     Q_PROPERTY(QString html READ html NOTIFY changed)
     Q_PROPERTY(bool hasSource READ hasSource NOTIFY changed)
+    /// An archive's listing: `{status, message, files, nodes: [{name, parent, folder, size}]}`,
+    /// node 0 the archive itself and every other after its parent.
+    Q_PROPERTY(QVariantMap archive READ archive NOTIFY changed)
     /// The text's colour where documents show (`#rrggbb`): equations are drawn in it.
     Q_PROPERTY(QString ink READ ink WRITE setInk NOTIFY changed)
     Q_PROPERTY(bool truncated READ truncated NOTIFY changed)
@@ -53,6 +56,7 @@ public:
     QString text() const { return m_text; }
     QString documentKind() const { return m_documentKind; }
     QString html() const { return m_html; }
+    QVariantMap archive() const { return m_archive; }
     bool hasSource() const;
     QString ink() const { return m_ink; }
     void setInk(const QString &ink);
@@ -76,6 +80,7 @@ signals:
 private:
     void loadImage();
     void loadDocument();
+    void loadArchive();
     void loadPdfPage();
     void loadText();
     void setDetails();
@@ -95,6 +100,7 @@ private:
     QVariantMap m_details;
     QString m_documentKind;
     QString m_html;
+    QVariantMap m_archive;
     QList<QImage> m_media;
     QString m_ink = QStringLiteral("#000000");
     QObject *m_work = nullptr;

@@ -427,6 +427,11 @@ members counted as the item's files, filed for undo as `Step::Extracted` and `St
 asking again for a locked archive's password, which is never kept). Password failures are error
 kinds of their own (`passwordRequired`, `passwordIncorrect`). Tests: `tests/archives.rs`.
 
+Step (d): the preview lists an archive (ZIP, 7z, TAR, TAR.GZ) through the sandboxed reader
+(`asc-files-docs archive <format> <file>`, the engine's listing as nodes naming their parents) and
+browses it folder by folder from "Contents", as legacy's did. A locked archive's listing says so; the
+preview does not ask for its password (legacy's did, for 7z archives whose names are locked too).
+
 Gaps the port found: the engine's locale had no `counts.bytes` plurals (a member's declared size
 showed as `counts.bytes.other`); the staging file's close is checked (a drive may report a failed
 write only then).
