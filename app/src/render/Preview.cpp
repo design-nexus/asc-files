@@ -7,6 +7,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLocale>
 #include <QMimeDatabase>
 #include <QMutex>
@@ -15,10 +17,6 @@
 namespace {
 
 /// Markdown and plain text by name; source code by its MIME type being text.
-bool isMarkdown(const QString &path) {
-    const QString suffix = QFileInfo(path).suffix().toLower();
-    return suffix == QLatin1String("md") || suffix == QLatin1String("markdown");
-}
 
 } // namespace
 
@@ -49,6 +47,40 @@ QString Preview::imageSource() const {
     return m_image.isNull() ? QString() : QStringLiteral("image://preview/%1/%2").arg(m_id).arg(m_serial);
 }
 
+QString Preview::documentKindOf(const QString &path) {
+    static QMimeDatabase mimes;
+    const QString type = mimes.mimeTypeForFile(path).name();
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    if (type == QLatin1String("text/markdown") || QStringList{"md", "markdown", "mdown", "mkd", "mkdn"}.contains(suffix)) {
+        return QStringLiteral("markdown");
+    }
+    if (type == QLatin1String("text/html") || type == QLatin1String("application/xhtml+xml")) {
+        return QStringLiteral("html");
+    }
+    if (type == QLatin1String("application/rtf") || type == QLatin1String("text/rtf") || suffix == QLatin1String("rtf")) {
+        return QStringLiteral("rtf");
+    }
+    if (type == QLatin1String("application/vnd.openxmlformats-officedocument.wordprocessingml.document") || suffix == QLatin1String("docx")) {
+        return QStringLiteral("docx");
+    }
+    if (type == QLatin1String("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") ||
+        type == QLatin1String("application/vnd.ms-excel") || type == QLatin1String("application/vnd.oasis.opendocument.spreadsheet") ||
+        QStringList{"xlsx", "xls", "ods"}.contains(suffix)) {
+        return QStringLiteral("sheet");
+    }
+    if (type == QLatin1String("text/csv") || suffix == QLatin1String("csv")) {
+        return QStringLiteral("csv");
+    }
+    if (type == QLatin1String("text/tab-separated-values") || suffix == QLatin1String("tsv")) {
+        return QStringLiteral("tsv");
+    }
+    return {};
+}
+
+bool Preview::hasSource() const {
+    return QStringList{"markdown", "html", "rtf", "csv", "tsv"}.contains(m_documentKind);
+}
+
 QString Preview::kindOf(const QString &path) {
     const QFileInfo info(path);
     if (info.isDir()) {
@@ -74,8 +106,8 @@ QString Preview::kindOf(const QString &path) {
     if (name.startsWith(QLatin1String("video/"))) {
         return QStringLiteral("video");
     }
-    if (isMarkdown(path)) {
-        return QStringLiteral("markdown");
+    if (!documentKindOf(path).isEmpty()) {
+        return QStringLiteral("document");
     }
     if (type.inherits(QStringLiteral("text/plain")) || name == QLatin1String("image/svg+xml") || name == QLatin1String("application/json") ||
         name == QLatin1String("application/x-shellscript")) {
@@ -96,6 +128,8 @@ void Preview::show(const QString &path) {
     m_error.clear();
     m_text.clear();
     m_truncated = false;
+    m_documentKind = m_kind == QLatin1String("document") ? documentKindOf(path) : QString();
+    m_html.clear();
     m_image = {};
     m_page = 0;
     m_pageCount = 0;
@@ -127,8 +161,13 @@ void Preview::show(const QString &path) {
                 loadPdfPage();
             });
         }
-    } else if (m_kind == QLatin1String("text") || m_kind == QLatin1String("markdown")) {
+    } else if (m_kind == QLatin1String("text")) {
         loadText();
+    } else if (m_kind == QLatin1String("document")) {
+        loadDocument();
+        if (hasSource()) {
+            loadText();
+        }
     }
     emit changed();
 }
@@ -142,6 +181,19 @@ void Preview::goToPage(int page) {
     m_work = new QObject(this);
     loadPdfPage();
     emit changed();
+}
+
+void Preview::loadDocument() {
+    m_loading = true;
+    Sandbox::run(Sandbox::documentReader(), {m_documentKind, QStringLiteral("{}")}, QFile::encodeName(m_path), m_work,
+                 [this](const QByteArray &out, const QString &error) {
+                     m_loading = false;
+                     const QJsonObject read = QJsonDocument::fromJson(out).object();
+                     m_html = read.value(QStringLiteral("html")).toString();
+                     m_truncated = m_truncated || read.value(QStringLiteral("truncated")).toBool();
+                     m_error = !error.isEmpty() ? error : read.isEmpty() ? tr("The document could not be read") : QString();
+                     emit changed();
+                 });
 }
 
 void Preview::loadImage() {

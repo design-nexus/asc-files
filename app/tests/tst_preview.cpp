@@ -69,9 +69,24 @@ private slots:
         preview.show(dir.filePath("code.rs"));
         QCOMPARE(preview.kind(), QStringLiteral("text"));
         QCOMPARE(preview.text(), QStringLiteral("fn main() {}\n"));
+        // Documents are read by the document reader, in the sandbox, as HTML that reaches nothing;
+        // the source of text ones stays to show.
         preview.show(dir.filePath("notes.md"));
-        QCOMPARE(preview.kind(), QStringLiteral("markdown"));
-        QVERIFY(preview.text().startsWith("# Title"));
+        QCOMPARE(preview.kind(), QStringLiteral("document"));
+        QCOMPARE(preview.documentKind(), QStringLiteral("markdown"));
+        QVERIFY(preview.hasSource());
+        QTRY_VERIFY(preview.text().startsWith("# Title"));
+        QTRY_VERIFY_WITH_TIMEOUT(preview.html().contains("<h1>Title</h1>"), 10000);
+        QVERIFY(preview.html().contains("<em>text</em>"));
+        write(dir.filePath("page.html"), "<html><body><h2>Hi</h2><img src=\"https://example.com/t.png\"><script>x()</script></body></html>");
+        preview.show(dir.filePath("page.html"));
+        QCOMPARE(preview.documentKind(), QStringLiteral("html"));
+        QTRY_VERIFY_WITH_TIMEOUT(preview.html().contains("<h2>Hi</h2>"), 10000);
+        QVERIFY(!preview.html().contains("example.com") && !preview.html().contains("script"));
+        write(dir.filePath("table.csv"), "a,b\n1,2\n");
+        preview.show(dir.filePath("table.csv"));
+        QCOMPARE(preview.documentKind(), QStringLiteral("csv"));
+        QTRY_VERIFY_WITH_TIMEOUT(preview.html().contains("<th>a</th>"), 10000);
         preview.show(dir.filePath("data.txt"));
         QCOMPARE(preview.kind(), QStringLiteral("other"));
         preview.show(dir.filePath("big.txt"));
@@ -86,7 +101,7 @@ private slots:
         QCOMPARE(preview.kind(), QStringLiteral("video"));
         preview.show(dir.path());
         QCOMPARE(preview.kind(), QStringLiteral("folder"));
-        QCOMPARE(preview.details().value("items").toInt(), 6);
+        QCOMPARE(preview.details().value("items").toInt(), 8);
     }
 
     void aPdfIsRenderedPageByPage() {

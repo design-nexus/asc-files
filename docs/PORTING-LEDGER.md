@@ -304,6 +304,22 @@ ported with a reason. This list must be empty, or every entry justified, before 
   first, so nothing is lost. Without the confirmation, such a step is left as before.
 - **Open:** a bulk path for many small items; inner merge clashes by stored names.
 
+## Document previews
+
+Legacy's document readers are in `crates/asc-files-docs`, a helper the app runs in the sandbox (as legacy ran
+them in its sandbox helper), each giving HTML: `services/docx.rs` (+ `docx/namespaces.rs`), `services/rtf.rs`
+and `services/table.rs`, with their tests, which checked legacy's own document blocks and now check the HTML.
+
+| Legacy tests | Ported | Not ported, why |
+|---|---|---|
+| `docx/tests.rs` (5) | 3 | `recognizes_word_documents_by_content_type_and_extension` (the app picks the kind, with Qt's type database); `derives_rendered_blocks_and_warns…` (legacy's block parser; Qt shows the HTML) |
+| `docx/namespaces/tests.rs` (4) | 4 | |
+| `rtf/tests.rs` (5) | 5 | the cancel half of the last test: the sandbox's time limit stops a long run |
+| `table/tests.rs` (6) | 5 | `rejects_untrusted_oversized_table_output` (legacy's JSON hand-off; the app bounds the helper's output) |
+
+New: Markdown (pulldown-cmark) and HTML (ammonia) reach nothing outside the file: no scripts, styles, remote
+pictures or links that load.
+
 ## Custom actions
 
 Legacy's custom actions (manifest, actions folder, catalog, runner, job queue) are in

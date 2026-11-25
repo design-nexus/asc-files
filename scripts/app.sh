@@ -31,14 +31,15 @@ shift || true
 cache="${XDG_CACHE_HOME:-$HOME/.cache}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$cache/asc-files-target}"
 build="${ASC_FILES_APP_BUILD:-$cache/asc-files-app-build}"
-cargo build -p asc-files-backend --locked --quiet
+cargo build -p asc-files-backend -p asc-files-docs --locked --quiet
 backend="$CARGO_TARGET_DIR/debug/asc-files-backend"
-cmake -S app -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DASC_FILES_BACKEND="$backend" >/dev/null
+docs="$CARGO_TARGET_DIR/debug/asc-files-docs"
+cmake -S app -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DASC_FILES_BACKEND="$backend" -DASC_FILES_DOCS="$docs" >/dev/null
 cmake --build "$build"
 case "$command" in
 build) ;;
 run)
-    exec env ASC_FILES_BACKEND="$backend" "$build/asc-files" "$@"
+    exec env ASC_FILES_BACKEND="$backend" ASC_FILES_DOCS="$docs" "$build/asc-files" "$@"
     ;;
 test)
     home="$cache/asc-files-test-home"

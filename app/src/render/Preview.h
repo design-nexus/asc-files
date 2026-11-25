@@ -20,6 +20,11 @@ class Preview : public QObject {
     Q_PROPERTY(bool loading READ loading NOTIFY changed)
     Q_PROPERTY(QString error READ error NOTIFY changed)
     Q_PROPERTY(QString text READ text NOTIFY changed)
+    /// A document's kind (`markdown`, `html`, `rtf`, `docx`, `sheet`, `csv`, `tsv`), its HTML as
+    /// the document reader made it in the sandbox, and whether its source can be shown as text.
+    Q_PROPERTY(QString documentKind READ documentKind NOTIFY changed)
+    Q_PROPERTY(QString html READ html NOTIFY changed)
+    Q_PROPERTY(bool hasSource READ hasSource NOTIFY changed)
     Q_PROPERTY(bool truncated READ truncated NOTIFY changed)
     /// What to ask the `image://preview/` provider for; changes with each image.
     Q_PROPERTY(QString imageSource READ imageSource NOTIFY changed)
@@ -44,6 +49,11 @@ public:
     bool loading() const { return m_loading; }
     QString error() const { return m_error; }
     QString text() const { return m_text; }
+    QString documentKind() const { return m_documentKind; }
+    QString html() const { return m_html; }
+    bool hasSource() const;
+    /// The document kind of `path` (as the reader takes it), or empty when it isn't one.
+    static QString documentKindOf(const QString &path);
     bool truncated() const { return m_truncated; }
     QString imageSource() const;
     int page() const { return m_page; }
@@ -59,6 +69,7 @@ signals:
 
 private:
     void loadImage();
+    void loadDocument();
     void loadPdfPage();
     void loadText();
     void setDetails();
@@ -76,6 +87,8 @@ private:
     int m_page = 0;
     int m_pageCount = 0;
     QVariantMap m_details;
+    QString m_documentKind;
+    QString m_html;
     QObject *m_work = nullptr;
 };
 

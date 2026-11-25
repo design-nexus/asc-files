@@ -17,6 +17,10 @@ ColumnLayout {
     /// Whether it offers to close (Gallery's doesn't: it is the view).
     property bool closable: true
     signal closeRequested()
+    // A solid colour as #rrggbb, as rich text takes one.
+    function hex(colour) {
+        return "#" + [colour.r, colour.g, colour.b].map(v => Math.round(v * 255).toString(16).padStart(2, "0")).join("")
+    }
 
     spacing: 0
 
@@ -44,7 +48,7 @@ ColumnLayout {
             onClicked: content.wrap = !content.wrap
         }
         IconButton {
-            visible: content.preview.kind === "markdown"
+            visible: content.preview.kind === "document" && content.preview.hasSource
             width: 28; height: 28
             checked: !content.rendered
             label: content.rendered ? qsTr("Show source") : qsTr("Show rendered")
@@ -79,7 +83,7 @@ ColumnLayout {
         }
         ScrollView {
             anchors.fill: parent
-            visible: content.preview.kind === "text" || (content.preview.kind === "markdown" && !content.rendered)
+            visible: content.preview.kind === "text" || (content.preview.kind === "document" && content.preview.hasSource && !content.rendered)
             clip: true
             TextArea {
                 id: code
@@ -103,13 +107,18 @@ ColumnLayout {
         }
         ScrollView {
             anchors.fill: parent
-            visible: content.preview.kind === "markdown" && content.rendered
+            visible: content.preview.kind === "document" && (content.rendered || !content.preview.hasSource)
             clip: true
             TextArea {
                 readOnly: true
                 selectByMouse: true
-                textFormat: TextEdit.MarkdownText
-                text: content.preview.text
+                // The document as the reader made it (in the sandbox): HTML with nothing in it
+                // that reaches out. Tables get the theme's rules.
+                textFormat: TextEdit.RichText
+                // (Qt's rich text takes a table's rules from its attributes, not from CSS.)
+                text: "<style>th { background: " + Theme.field + "; }</style>"
+                      + content.preview.html.replace(/<table>/g, '<table border="1" cellspacing="0" cellpadding="6" style="border-collapse: collapse;" bordercolor="'
+                                                                     + content.hex(Theme.mix(Theme.panel, Theme.text, 0.2)) + '">')
                 wrapMode: TextEdit.Wrap
                 color: Theme.text
                 selectionColor: Theme.selection

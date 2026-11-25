@@ -23,6 +23,10 @@ QString program(const QString &name);
 /// The helper that decodes images, `asc-files-render`, beside the app or on PATH.
 QString renderer();
 
+/// The helper that reads documents, `asc-files-docs`: beside the app, else as
+/// `ASC_FILES_DOCS` names it, else on PATH.
+QString documentReader();
+
 /// Runs `program` with `args` on `file` (inside the sandbox, `file` is `/input`; write `{}` in
 /// `args` where it goes). `done` gets what it wrote to stdout, or the error.
 void run(const QString &program, const QStringList &args, const QByteArray &file, QObject *context,

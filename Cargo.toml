@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/asc-files-engine", "crates/asc-files-backend"]
+members = ["crates/asc-files-engine", "crates/asc-files-backend", "crates/asc-files-docs"]
 resolver = "3"
 
 [workspace.package]

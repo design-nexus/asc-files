@@ -9,6 +9,7 @@
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTimer>
+#include <memory>
 #include <sys/resource.h>
 
 namespace Sandbox {
@@ -128,6 +129,15 @@ QString renderer() {
     return fromEnvironment.isEmpty() ? program(QStringLiteral("asc-files-render")) : fromEnvironment;
 }
 
+QString documentReader() {
+    const QString beside = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("asc-files-docs"));
+    if (QFileInfo(beside).isExecutable()) {
+        return QFileInfo(beside).canonicalFilePath();
+    }
+    const QString fromEnvironment = qEnvironmentVariable("ASC_FILES_DOCS");
+    return fromEnvironment.isEmpty() ? program(QStringLiteral("asc-files-docs")) : fromEnvironment;
+}
+
 void run(const QString &program, const QStringList &args, const QByteArray &file, QObject *context,
          std::function<void(const QByteArray &, const QString &)> done) {
     if (program.isEmpty()) {
@@ -135,8 +145,11 @@ void run(const QString &program, const QStringList &args, const QByteArray &file
         return;
     }
     QProcess *process = start(program, args, file);
-    process->setParent(context);
-    auto *output = new QByteArray;
+    // The process looks after itself: when what asked goes (the preview moved on) it is stopped,
+    // and it goes once it has ended, never destroyed while it runs.
+    auto output = std::make_shared<QByteArray>();
+    const QPointer<QObject> asker(context);
+    QObject::connect(context, &QObject::destroyed, process, [process] { process->kill(); });
     QObject::connect(process, &QProcess::readyReadStandardOutput, process, [process, output] {
         *output += process->readAllStandardOutput();
         if (output->size() > MaxOutput) {
@@ -147,20 +160,24 @@ void run(const QString &program, const QStringList &args, const QByteArray &file
     timer->setSingleShot(true);
     QObject::connect(timer, &QTimer::timeout, process, [process] { process->kill(); });
     timer->start(WallMs);
-    QObject::connect(process, &QProcess::finished, context, [process, output, done](int code, QProcess::ExitStatus status) {
+    QObject::connect(process, &QProcess::finished, process, [process, output, done, asker](int code, QProcess::ExitStatus status) {
+        process->deleteLater();
+        if (!asker) {
+            return;
+        }
         *output += process->readAllStandardOutput();
         const QString error = status == QProcess::NormalExit && code == 0
                                   ? QString()
                                   : QCoreApplication::translate("Sandbox", "The file could not be read");
         done(error.isEmpty() ? *output : QByteArray(), error);
-        delete output;
-        process->deleteLater();
     });
-    QObject::connect(process, &QProcess::errorOccurred, context, [process, output, done](QProcess::ProcessError error) {
-        if (error == QProcess::FailedToStart) {
+    QObject::connect(process, &QProcess::errorOccurred, process, [process, done, asker](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart) {
+            return;
+        }
+        process->deleteLater();
+        if (asker) {
             done({}, QCoreApplication::translate("Sandbox", "The decoder could not be started"));
-            delete output;
-            process->deleteLater();
         }
     });
 }

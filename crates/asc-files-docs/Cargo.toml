@@ -1,0 +1,20 @@
+[package]
+name = "asc-files-docs"
+description = "Files' document reader: turns a document into safe HTML for the preview, in the sandbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ammonia = "4"
+calamine = "0.36.1"
+csv = "1.4.0"
+docx-rs = { version = "0.4.22", default-features = false }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+quick-xml = "0.41.0"
+serde_json = "1.0"
+zip = "9.0.4"
+
+[dev-dependencies]
+tempfile = "3.27.0"

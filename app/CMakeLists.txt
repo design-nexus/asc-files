@@ -117,11 +117,12 @@ target_link_libraries(asc-files PRIVATE asc_files_core asc_files_qmlplugin Qt6::
 # Tests run against the real backend: ASC_FILES_BACKEND names it (scripts/app.sh builds it).
 enable_testing()
 set(ASC_FILES_BACKEND "" CACHE FILEPATH "The asc-files-backend binary the tests run")
+set(ASC_FILES_DOCS "" CACHE FILEPATH "The asc-files-docs document reader the tests run")
 foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search systemtheme appsettings desktopapps properties actions customizations codehighlighter)
     qt_add_executable(tst_${test} tests/tst_${test}.cpp)
     target_link_libraries(tst_${test} PRIVATE asc_files_core Qt6::Test)
     add_test(NAME ${test} COMMAND tst_${test})
-    set_tests_properties(${test} PROPERTIES ENVIRONMENT "ASC_FILES_BACKEND=${ASC_FILES_BACKEND};ASC_FILES_RENDER=$<TARGET_FILE:asc-files-render>;QT_QPA_PLATFORM=offscreen")
+    set_tests_properties(${test} PROPERTIES ENVIRONMENT "ASC_FILES_BACKEND=${ASC_FILES_BACKEND};ASC_FILES_DOCS=${ASC_FILES_DOCS};ASC_FILES_RENDER=$<TARGET_FILE:asc-files-render>;QT_QPA_PLATFORM=offscreen")
     add_dependencies(tst_${test} asc-files-render)
 endforeach()
 # The window loads with the models and logs no QML warning.
@@ -134,4 +135,4 @@ set_tests_properties(mediaview PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen
 qt_add_executable(tst_window tests/tst_window.cpp)
 target_link_libraries(tst_window PRIVATE asc_files_core Qt6::Test Qt6::Qml Qt6::Quick Qt6::QuickControls2 asc_files_qmlplugin)
 add_test(NAME window COMMAND tst_window)
-set_tests_properties(window PROPERTIES ENVIRONMENT "ASC_FILES_BACKEND=${ASC_FILES_BACKEND};ASC_FILES_RENDER=$<TARGET_FILE:asc-files-render>;QT_QPA_PLATFORM=offscreen")
+set_tests_properties(window PROPERTIES ENVIRONMENT "ASC_FILES_BACKEND=${ASC_FILES_BACKEND};ASC_FILES_DOCS=${ASC_FILES_DOCS};ASC_FILES_RENDER=$<TARGET_FILE:asc-files-render>;QT_QPA_PLATFORM=offscreen")
