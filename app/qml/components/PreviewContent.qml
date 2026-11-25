@@ -120,6 +120,16 @@ ColumnLayout {
                 background: Rectangle { radius: Theme.radius; color: Theme.panel }
             }
         }
+        // Sound and moving pictures: made only for them, and gone (stopped) when the preview moves
+        // on. Loaded by name, so Qt Multimedia loads the first time one is shown, not with Files.
+        Loader {
+            id: media
+            anchors.fill: parent
+            active: content.preview.kind === "audio" || content.preview.kind === "video"
+            source: active ? Qt.resolvedUrl("MediaView.qml") : ""
+            Binding { target: media.item; property: "path"; value: content.preview.path; when: media.status === Loader.Ready }
+            Binding { target: media.item; property: "video"; value: content.preview.kind === "video"; when: media.status === Loader.Ready }
+        }
         Icon {
             anchors.centerIn: parent
             visible: !picture.visible && (content.preview.kind === "folder" || content.preview.kind === "other" ||

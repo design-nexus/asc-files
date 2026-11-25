@@ -236,6 +236,12 @@ QString AppSettings::previewStyle() const {
 
 void AppSettings::setPreviewStyle(const QString &style) { set("preview/style", style == QLatin1String("panel") ? style : QStringLiteral("popup")); }
 
+bool AppSettings::autoplayMedia() const { return value("preview/autoplay", false).toBool(); }
+void AppSettings::setAutoplayMedia(bool autoplay) { set("preview/autoplay", autoplay); }
+
+double AppSettings::mediaVolume() const { return qBound(0.0, value("preview/volume", 1.0).toDouble(), 1.0); }
+void AppSettings::setMediaVolume(double volume) { set("preview/volume", qBound(0.0, volume, 1.0)); }
+
 int AppSettings::previewWidth() const { return qBound(260, value("preview/width", 380).toInt(), 900); }
 void AppSettings::setPreviewWidth(int width) { set("preview/width", qBound(260, width, 900)); }
 

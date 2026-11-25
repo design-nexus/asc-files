@@ -67,6 +67,13 @@ QString Preview::kindOf(const QString &path) {
     if (name.startsWith(QLatin1String("image/")) && name != QLatin1String("image/svg+xml")) {
         return QStringLiteral("image");
     }
+    // Played by the preview (Qt Multimedia), as legacy played them.
+    if (name.startsWith(QLatin1String("audio/"))) {
+        return QStringLiteral("audio");
+    }
+    if (name.startsWith(QLatin1String("video/"))) {
+        return QStringLiteral("video");
+    }
     if (isMarkdown(path)) {
         return QStringLiteral("markdown");
     }

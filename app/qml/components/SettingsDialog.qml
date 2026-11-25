@@ -578,6 +578,11 @@ Popup {
                     }
                 }
                 SettingRow {
+                    title: qsTr("Autoplay media previews")
+                    description: qsTr("Start playing audio and video as soon as their preview opens.")
+                    ToggleSwitch { checked: AppSettings.autoplayMedia; onToggled: AppSettings.autoplayMedia = checked }
+                }
+                SettingRow {
                     title: qsTr("Show thumbnails")
                     description: qsTr("Show pictures of images instead of file-type icons. Previews stay available.")
                     ToggleSwitch { checked: AppSettings.showThumbnails; onToggled: AppSettings.showThumbnails = checked }

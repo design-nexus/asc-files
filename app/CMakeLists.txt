@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Test)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Multimedia Test)
 # Previews' code colours (KDE's syntax definitions).
 find_package(KF6SyntaxHighlighting REQUIRED)
 qt_standard_project_setup(REQUIRES 6.8)
@@ -84,6 +84,7 @@ qt_add_qml_module(asc_files_qml
         qml/components/ItemRow.qml
         qml/components/JobsIndicator.qml
         qml/components/LeftoversDialog.qml
+        qml/components/MediaView.qml
         qml/components/NameEditor.qml
         qml/components/OpenWithDialog.qml
         qml/components/OpenWithMenu.qml
@@ -124,6 +125,12 @@ foreach(test wire backendclient foldermodel jobmodel browser places itemlists tr
     add_dependencies(tst_${test} asc-files-render)
 endforeach()
 # The window loads with the models and logs no QML warning.
+# The media player loads a sound (Qt Multimedia, as the app at run time).
+qt_add_executable(tst_mediaview tests/tst_mediaview.cpp)
+target_link_libraries(tst_mediaview PRIVATE asc_files_core Qt6::Test Qt6::Qml Qt6::Quick Qt6::QuickControls2 asc_files_qmlplugin)
+add_test(NAME mediaview COMMAND tst_mediaview)
+set_tests_properties(mediaview PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 qt_add_executable(tst_window tests/tst_window.cpp)
 target_link_libraries(tst_window PRIVATE asc_files_core Qt6::Test Qt6::Qml Qt6::Quick Qt6::QuickControls2 asc_files_qmlplugin)
 add_test(NAME window COMMAND tst_window)

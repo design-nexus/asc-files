@@ -77,9 +77,16 @@ private slots:
         preview.show(dir.filePath("big.txt"));
         QVERIFY(preview.truncated());
         QCOMPARE(preview.text().size(), Preview::MaxText);
+        // Sound and video are played, by their type.
+        write(dir.filePath("song.mp3"), "ID3");
+        write(dir.filePath("clip.mp4"), QByteArray("\0\0\0\x18ftypmp42", 12));
+        preview.show(dir.filePath("song.mp3"));
+        QCOMPARE(preview.kind(), QStringLiteral("audio"));
+        preview.show(dir.filePath("clip.mp4"));
+        QCOMPARE(preview.kind(), QStringLiteral("video"));
         preview.show(dir.path());
         QCOMPARE(preview.kind(), QStringLiteral("folder"));
-        QCOMPARE(preview.details().value("items").toInt(), 4);
+        QCOMPARE(preview.details().value("items").toInt(), 6);
     }
 
     void aPdfIsRenderedPageByPage() {

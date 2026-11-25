@@ -50,6 +50,10 @@ class AppSettings : public QObject {
     /// "popup" over the window or "panel" beside the list.
     Q_PROPERTY(QString previewStyle READ previewStyle WRITE setPreviewStyle NOTIFY changed)
     Q_PROPERTY(bool showThumbnails READ showThumbnails WRITE setShowThumbnails NOTIFY changed)
+    /// Whether audio and video previews start playing as they open (legacy's default: no).
+    Q_PROPERTY(bool autoplayMedia READ autoplayMedia WRITE setAutoplayMedia NOTIFY changed)
+    /// The previews' volume, 0–1, as last set.
+    Q_PROPERTY(double mediaVolume READ mediaVolume WRITE setMediaVolume NOTIFY changed)
     /// The preview panel's width (260–900 px).
     Q_PROPERTY(int previewWidth READ previewWidth WRITE setPreviewWidth NOTIFY changed)
 public:
@@ -114,6 +118,10 @@ public:
     void setPreviewStyle(const QString &style);
     bool showThumbnails() const;
     int previewWidth() const;
+    bool autoplayMedia() const;
+    void setAutoplayMedia(bool autoplay);
+    double mediaVolume() const;
+    void setMediaVolume(double volume);
     void setPreviewWidth(int width);
     void setShowThumbnails(bool shown);
 
