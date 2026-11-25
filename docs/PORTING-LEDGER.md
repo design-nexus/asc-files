@@ -464,4 +464,13 @@ items selected (and Properties). Files is one process per session: it owns
 |---|---|---|
 | `adapters/file_manager1/tests.rs` (7) | 6 (`tst_filemanager1`) | `a_remote_uri_reveals_its_parent_as_a_uri_location`: remote locations come with B7 |
 
+| `portal/tests.rs` (19) | 19 (`tst_portal`), and one new | |
+
+The chooser's requests (`app/src/portal/Chooser.cpp`) are legacy's `portal.rs` rules in C++: every
+string, path, filter, glob and choice from the calling program bounded; where it opens (the caller's
+folder where readable, else Downloads; a current file first); safe save names; Open's selection by
+kind, count and locality; SaveFiles' destinations (a folder of the name refuses); requests bounded in
+number, cancellable, and the chooser ending once idle. Found on the way: a URI built through a
+string turned a name's byte 0xFF into UTF-8.
+
 The bus activation file (start Files when FileManager1 is called) is installed with packaging (item 12).
