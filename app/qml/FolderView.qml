@@ -79,6 +79,35 @@ FocusScope {
                 renameWait.restart()
             }
         }
+        // An archive made or extracted here is selected once it shows up.
+        function onArchived(path) {
+            const slash = path.lastIndexOf("/")
+            if (view.folderModel && path.substring(0, slash) === view.folderModel.folder) {
+                view.pendingSelect = path.substring(slash + 1)
+                selectWait.restart()
+            }
+        }
+    }
+    property string pendingSelect
+    Timer {
+        id: selectWait
+        interval: 50
+        repeat: true
+        property int tries: 0
+        onTriggered: {
+            const row = view.folderModel.rowOfName(view.pendingSelect)
+            if (row >= 0 || ++tries > 60) {
+                stop()
+                tries = 0
+                if (row >= 0) {
+                    view.folderModel.clearSelection()
+                    view.folderModel.select(row)
+                    view.current.currentIndex = row
+                    view.current.positionViewAtIndex(row, ListView.Contain)
+                }
+                view.pendingSelect = ""
+            }
+        }
     }
     Timer {
         id: renameWait
@@ -193,6 +222,13 @@ FocusScope {
         if (event.matches(StandardKey.SelectAll)) { folderModel.selectAll(); event.accepted = true }
         else if (event.key === Qt.Key_Escape) { folderModel.clearSelection(); event.accepted = true }
         else if (event.key === Qt.Key_F2 && mode !== 2) { startRename(); event.accepted = true }
+        // The menu key or Shift+F10: the current item's menu, or the folder's when there is none.
+        else if (event.key === Qt.Key_Menu || (event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier))) {
+            const row = view.current && view.current.currentIndex >= 0 && view.current.currentIndex < view.current.count
+                      ? view.current.currentIndex : -1
+            requestContext(row)
+            event.accepted = true
+        }
     }
 
     // A right click on empty space.

@@ -75,7 +75,17 @@ public:
     /// Trash and goes ahead.
     Q_INVOKABLE void undo(bool overwrite = false);
     /// Opens a file in the program the desktop opens its kind with.
+    /// Opens `path` with its program; an archive is extracted beside itself instead, as legacy did.
     Q_INVOKABLE void open(const QString &path);
+    /// `zip`, `7z`, `tar` or `tar.gz` for an archive Files extracts and compresses, by its name;
+    /// empty otherwise.
+    Q_INVOKABLE static QString archiveFormat(const QString &path);
+    /// Extracts `archive` into `folder` (its own folder when empty). A locked one asks for its
+    /// password through `passwordWanted`.
+    Q_INVOKABLE void extract(const QString &archive, const QString &folder = QString(), const QString &password = QString());
+    /// Makes `name` plus `format`'s extension of `paths`, in the first one's folder, numbered if
+    /// the name is taken.
+    Q_INVOKABLE void compress(const QStringList &paths, const QString &name, const QString &format, const QString &password = QString());
     Q_INVOKABLE void redo();
     Q_INVOKABLE void refreshHistory();
 
@@ -101,6 +111,11 @@ signals:
     void trashChanged();
     /// A new item was made in `folder`; the window starts renaming it.
     void created(FolderModel *folder, const QString &name);
+    /// `archive` is locked: the window asks for the password (again, when `incorrect`) and calls
+    /// `extract` with it.
+    void passwordWanted(const QString &archive, const QString &folder, bool incorrect);
+    /// An archive was made, or one extracted into `path`: the window selects it.
+    void archived(const QString &path);
 
 private:
     struct Pending {
@@ -118,10 +133,17 @@ private:
     QList<QByteArray> selectedPaths(FolderModel *folder) const;
     void setClipboard(const QList<QByteArray> &paths, bool cut);
     void trashRaw(const QList<QByteArray> &paths);
+    void archiveItemDone(qint64 job, const QJsonObject &outcome);
 
     BackendClient *m_backend;
     JobModel *m_jobs;
     Pending m_pending;
+    /// Archive jobs running: the archive and where it goes, for a password asked for.
+    struct ArchiveJob {
+        QString archive;
+        QString folder;
+    };
+    QHash<qint64, ArchiveJob> m_archiveJobs;
     QVariantList m_conflicts;
     QString m_undoLabel;
     QString m_redoLabel;

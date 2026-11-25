@@ -10,6 +10,8 @@
 #include <QDesktopServices>
 #include <QFileInfo>
 #include <QHash>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QDir>
 #include <QPointer>
 #include <QFile>
@@ -36,6 +38,7 @@ Operations::Operations(BackendClient *backend, JobModel *jobs, QObject *parent)
     : QObject(parent), m_backend(backend), m_jobs(jobs) {
     connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this, &Operations::clipboardChanged);
     connect(m_jobs, &JobModel::finished, this, &Operations::refreshHistory);
+    connect(m_jobs, &JobModel::itemDone, this, [this](qint64 job, int, const QJsonObject &outcome) { archiveItemDone(job, outcome); });
     connect(m_backend, &BackendClient::ready, this, &Operations::refreshHistory);
 }
 
@@ -439,7 +442,81 @@ void Operations::recover(FolderModel *folder, const QString &name) {
                     });
 }
 
+QString Operations::archiveFormat(const QString &path) {
+    const QString name = QFileInfo(path).fileName().toLower();
+    if (name.endsWith(QLatin1String(".tar.gz")) || name.endsWith(QLatin1String(".tgz"))) {
+        return QStringLiteral("tar.gz");
+    }
+    const QString suffix = QFileInfo(name).suffix();
+    return suffix == QLatin1String("zip") || suffix == QLatin1String("7z") || suffix == QLatin1String("tar") ? suffix : QString();
+}
+
+void Operations::extract(const QString &archive, const QString &folder, const QString &password) {
+    const QString into = folder.isEmpty() ? QFileInfo(archive).absolutePath() : folder;
+    QJsonObject item{{"source", Wire::encode(QFile::encodeName(archive))}, {"action", "extract"}};
+    if (!password.isEmpty()) {
+        item.insert(QStringLiteral("password"), password);
+    }
+    const QString label = tr("Extract “%1”").arg(QFileInfo(archive).fileName());
+    m_jobs->start({{"into", Wire::encode(QFile::encodeName(into))}, {"items", QJsonArray{item}}, {"label", label}}, label,
+                  [this, archive, into, label](qint64 job, const BackendError &error) {
+                      if (!error.isNull()) {
+                          emit notice(error.message);
+                          return;
+                      }
+                      m_archiveJobs.insert(job, {archive, into});
+                      emit notice(label);
+                  });
+}
+
+void Operations::compress(const QStringList &paths, const QString &name, const QString &format, const QString &password) {
+    if (paths.isEmpty() || name.isEmpty()) {
+        return;
+    }
+    QJsonArray sources;
+    for (const QString &path : paths) {
+        sources.append(Wire::encode(QFile::encodeName(path)));
+    }
+    QJsonObject item{{"action", "compress"}, {"sources", sources}, {"archiveName", name}, {"format", format}, {"conflict", "keepBoth"}};
+    if (!password.isEmpty()) {
+        item.insert(QStringLiteral("password"), password);
+    }
+    const QString into = QFileInfo(paths.first()).absolutePath();
+    const QString label = tr("Compress %n items", "", int(paths.size()));
+    m_jobs->start({{"into", Wire::encode(QFile::encodeName(into))}, {"items", QJsonArray{item}}, {"label", label}}, label,
+                  [this, into, label](qint64 job, const BackendError &error) {
+                      if (!error.isNull()) {
+                          emit notice(error.message);
+                          return;
+                      }
+                      m_archiveJobs.insert(job, {QString(), into});
+                      emit notice(label);
+                  });
+}
+
+void Operations::archiveItemDone(qint64 job, const QJsonObject &outcome) {
+    const auto found = m_archiveJobs.constFind(job);
+    if (found == m_archiveJobs.constEnd()) {
+        return;
+    }
+    const ArchiveJob archive = found.value();
+    m_archiveJobs.erase(found);
+    const QString status = outcome.value(QStringLiteral("status")).toString();
+    const QString kind = outcome.value(QStringLiteral("error")).toObject().value(QStringLiteral("kind")).toString();
+    if (status == QLatin1String("done")) {
+        emit archived(QFile::decodeName(Wire::decode(outcome.value(QStringLiteral("path")))));
+    } else if (kind == QLatin1String("passwordRequired") || kind == QLatin1String("passwordIncorrect")) {
+        emit passwordWanted(archive.archive, archive.folder, kind == QLatin1String("passwordIncorrect"));
+    } else if (status == QLatin1String("failed")) {
+        emit notice(outcome.value(QStringLiteral("error")).toObject().value(QStringLiteral("message")).toString());
+    }
+}
+
 void Operations::open(const QString &path) {
+    if (!archiveFormat(path).isEmpty() && QFileInfo(path).isFile()) {
+        extract(path);
+        return;
+    }
     if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
         emit notice(tr("No program is set to open “%1”").arg(QFileInfo(path).fileName()));
     }

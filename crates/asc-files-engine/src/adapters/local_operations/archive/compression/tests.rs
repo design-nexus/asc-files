@@ -164,6 +164,15 @@ fn a_taken_name_is_refused_kept_or_numbered_as_asked() -> Result<(), Box<dyn Err
     let root = tempfile::tempdir()?;
     let source = root.path().join("source.txt");
     fs::write(&source, b"source")?;
+    // Keep Both takes the name itself while it is free.
+    let free = tempfile::tempdir()?;
+    let kept = compress_into(
+        &source,
+        free.path(),
+        TransferConflict::KeepBoth,
+        &never_cancelled(),
+    )?;
+    assert_eq!(kept.archive, free.path().join("archive.zip"));
     let archive = root.path().join("archive.zip");
     fs::write(&archive, b"original")?;
     assert!(

@@ -177,7 +177,7 @@ pub fn compress(
                 .map(|moved| (moved.name, None, false, moved.changes))
         }
         TransferConflict::KeepBoth => {
-            ops::move_numbered_as(&stage, target, NameMode::Keep, &cancel, &progress)
+            ops::move_keeping_both_as(&stage, target, NameMode::Keep, &cancel, &progress)
                 .map(|moved| (moved.name, None, false, moved.changes))
         }
         TransferConflict::ReplaceExisting => {

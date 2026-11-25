@@ -394,7 +394,7 @@ that give back legacy's events, so they read as they did.
 | `compression/tests/policy.rs` (3), `cancellation.rs` (2) | 5 | |
 | `services/preview/tests.rs`, archive tree and format (11) | 11 | `preview_request_debug_redacts_the_archive_password` (legacy's preview request) |
 | `decoders/rar/tests.rs` (4), `sandbox/archive` (7), `sandbox_helper/archive_rar` (11), `rar_extraction` (11) | — | step (f), the RAR helper |
-| `app/browser/tests/archive_activation.rs` (3) | — | step (e), the app |
+| `app/browser/tests/archive_activation.rs` (3) | 1 | `tst_operations::anArchiveIsMadeAndOpenedWithItsPassword` (opening a local archive extracts it); the chooser-mode and remote-archive cases wait for B6 and B7 |
 
 Publication: legacy wrote the archive to a stage and published it with its own replace strategies
 (exchange, set aside, Trash, delete) and the async `owed`/`release` machinery the engine dropped.
@@ -431,6 +431,13 @@ Step (d): the preview lists an archive (ZIP, 7z, TAR, TAR.GZ) through the sandbo
 (`asc-files-docs archive <format> <file>`, the engine's listing as nodes naming their parents) and
 browses it folder by folder from "Contents", as legacy's did. A locked archive's listing says so; the
 preview does not ask for its password (legacy's did, for 7z archives whose names are locked too).
+
+Step (e): the item menu has Compress… (name, format, password for ZIP and 7z, as legacy's dialog
+asked; numbered beside the first item when the name is taken), Extract Here and Extract To…; opening a
+local archive extracts it beside itself, as legacy's activation did. A locked archive asks for its
+password, again when it was wrong; what was made is selected. Found on the way: Keep Both numbered
+even a free name (`move_numbered_as` yields only numbered names), and the item menu could not be
+opened from the keyboard (now Menu or Shift+F10).
 
 Gaps the port found: the engine's locale had no `counts.bytes` plurals (a member's declared size
 showed as `counts.bytes.other`); the staging file's close is checked (a drive may report a failed

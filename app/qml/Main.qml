@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import QtQuick.Window
+import QtQuick.Dialogs
 
 import AscFiles
 import AscFiles.System
@@ -568,6 +569,35 @@ ApplicationWindow {
         }
     }
     ConflictDialog { ops: window.ops; listening: window.foremost }
+    // Archives: Compress…, a locked archive's password, and where Extract To… goes.
+    CompressDialog {
+        id: compressDialog
+        onChosen: (paths, name, format, password) => window.ops.compress(paths, name, format, password)
+    }
+    PasswordDialog {
+        id: passwordDialog
+        onGiven: (archive, folder, password) => window.ops.extract(archive, folder, password)
+    }
+    Connections {
+        target: window.ops
+        enabled: window.foremost
+        function onPasswordWanted(archive, folder, incorrect) { passwordDialog.ask(archive, folder, incorrect) }
+    }
+    Loader {
+        id: extractTo
+        active: false
+        property string archive
+        function ask(archive) {
+            extractTo.archive = archive
+            active = true
+            item.currentFolder = "file://" + archive.substring(0, archive.lastIndexOf("/"))
+            item.open()
+        }
+        sourceComponent: FolderDialog {
+            title: qsTr("Extract To")
+            onAccepted: window.ops.extract(extractTo.archive, decodeURIComponent(selectedFolder.toString().replace(/^file:\/\//, "")))
+        }
+    }
     // An action queued here opens the jobs list, as legacy's did; one refused says why.
     Connections {
         target: window.actions
@@ -804,6 +834,20 @@ ApplicationWindow {
             height: visible ? implicitHeight : 0
             enabled: window.ops.canPaste
             onTriggered: window.ops.paste(window.folderModel, itemMenu.row)
+        }
+        MenuSeparator {}
+        MenuItem { text: qsTr("Compress…"); onTriggered: compressDialog.ask(window.folderModel.selectedPaths()) }
+        MenuItem {
+            text: qsTr("Extract Here")
+            visible: itemMenu.single && !itemMenu.folder && window.ops.archiveFormat(itemMenu.path) !== ""
+            height: visible ? implicitHeight : 0
+            onTriggered: window.ops.extract(itemMenu.path)
+        }
+        MenuItem {
+            text: qsTr("Extract To…")
+            visible: itemMenu.single && !itemMenu.folder && window.ops.archiveFormat(itemMenu.path) !== ""
+            height: visible ? implicitHeight : 0
+            onTriggered: extractTo.ask(itemMenu.path)
         }
         MenuItem {
             text: qsTr("Customize…")

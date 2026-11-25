@@ -296,6 +296,47 @@ private slots:
         QVERIFY(finished.wait(20000));
         QVERIFY(!QFile::exists(dir.filePath("from/gone.txt")));
     }
+
+    void anArchiveIsMadeAndOpenedWithItsPassword() {
+        QTemporaryDir dir(QDir::home().filePath(QStringLiteral("ops-XXXXXX")));
+        QDir().mkdir(dir.filePath("docs"));
+        write(dir.filePath("docs/a.txt"), "a");
+        write(dir.filePath("b.txt"), "b");
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        JobModel jobs(&backend);
+        Operations ops(&backend, &jobs);
+        QCOMPARE(Operations::archiveFormat("x.ZIP"), QStringLiteral("zip"));
+        QCOMPARE(Operations::archiveFormat("x.tgz"), QStringLiteral("tar.gz"));
+        QCOMPARE(Operations::archiveFormat("x.docx"), QString());
+        QSignalSpy archived(&ops, &Operations::archived);
+        QSignalSpy wanted(&ops, &Operations::passwordWanted);
+
+        // Two items: one archive of both, beside them, selected once made.
+        ops.compress({dir.filePath("docs"), dir.filePath("b.txt")}, "pack", "zip", "secret");
+        QTRY_COMPARE_WITH_TIMEOUT(archived.size(), 1, 20000);
+        QCOMPARE(archived.takeFirst().at(0).toString(), dir.filePath("pack.zip"));
+        // A second one of the same name is numbered.
+        ops.compress({dir.filePath("b.txt")}, "pack", "zip");
+        QTRY_COMPARE_WITH_TIMEOUT(archived.size(), 1, 20000);
+        QVERIFY(archived.takeFirst().at(0).toString() != dir.filePath("pack.zip"));
+
+        // Opening an archive extracts it; a locked one asks for its password, and again if wrong.
+        ops.open(dir.filePath("pack.zip"));
+        QTRY_COMPARE_WITH_TIMEOUT(wanted.size(), 1, 20000);
+        QCOMPARE(wanted.first().at(0).toString(), dir.filePath("pack.zip"));
+        QCOMPARE(wanted.first().at(1).toString(), dir.path());
+        QCOMPARE(wanted.takeFirst().at(2).toBool(), false);
+        QDir().mkdir(dir.filePath("out"));
+        ops.extract(dir.filePath("pack.zip"), dir.filePath("out"), "wrong");
+        QTRY_COMPARE_WITH_TIMEOUT(wanted.size(), 1, 20000);
+        QCOMPARE(wanted.takeFirst().at(2).toBool(), true);
+        ops.extract(dir.filePath("pack.zip"), dir.filePath("out"), "secret");
+        QTRY_COMPARE_WITH_TIMEOUT(archived.size(), 1, 20000);
+        QCOMPARE(archived.takeFirst().at(0).toString(), dir.filePath("out/pack"));
+        QCOMPARE(read(dir.filePath("out/pack/docs/a.txt")), QByteArray("a"));
+        QCOMPARE(read(dir.filePath("out/pack/b.txt")), QByteArray("b"));
+    }
 };
 
 QTEST_MAIN(TestOperations)
