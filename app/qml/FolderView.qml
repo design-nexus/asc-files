@@ -166,8 +166,9 @@ FocusScope {
     readonly property bool showMode: list.width >= 720
     readonly property bool showKind: list.width >= 600
 
-    // A view chosen takes the keyboard.
-    onModeChanged: Qt.callLater(focusList)
+    // A view chosen takes the keyboard. A pane whose view is fixed (Dual Pane's second) chooses
+    // none: showing it must not take the keyboard from the pane in use.
+    onModeChanged: if (forcedMode < 0) Qt.callLater(focusList)
     function focusList() {
         (mode === 2 ? columnsView : current).forceActiveFocus()
     }

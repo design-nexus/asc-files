@@ -1273,6 +1273,10 @@ fn a_repeated_directory_member_merges_its_stored_metadata() -> Result<(), Box<dy
 #[test]
 fn a_password_failure_that_cannot_discard_its_output_offers_no_retry() -> Result<(), Box<dyn Error>>
 {
+    if rustix::process::geteuid().is_root() {
+        eprintln!("skipped: root removes a folder its permissions protect");
+        return Ok(());
+    }
     let root = tempfile::tempdir()?;
     let progress = AtomicUsize::new(0);
     let cancelled = AtomicBool::new(false);
