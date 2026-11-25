@@ -581,6 +581,14 @@ void FolderModel::clearSelection() {
     selectionTouched();
 }
 
+QStringList FolderModel::selectedPaths() const {
+    QStringList paths;
+    for (const QByteArray &name : selectedNames()) {
+        paths.append(QFile::decodeName(Wire::join(m_folder, name)));
+    }
+    return paths;
+}
+
 QList<QByteArray> FolderModel::selectedNames() const {
     QList<QByteArray> names;
     if (!m_allSelected) {

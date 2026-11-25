@@ -2,6 +2,8 @@
 #include "TestSupport.h"
 #include "app/Windows.h"
 #include "backend/BackendClient.h"
+#include "desktop/AppIcons.h"
+#include "desktop/DesktopApps.h"
 #include "models/Browser.h"
 #include "models/FavoritesModel.h"
 #include "models/RecentModel.h"
@@ -66,6 +68,7 @@ private slots:
         JobModel jobs(&backend);
         Operations ops(&backend, &jobs);
         Transfers transfers(&ops);
+        DesktopApps apps;
         Preview preview;
         SearchModel search(&backend);
         tabs.openTab(dir.path());
@@ -74,6 +77,7 @@ private slots:
         QQmlApplicationEngine engine;
         engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
         engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider);
+        engine.addImageProvider(QStringLiteral("appicon"), new AppIconProvider);
         engine.setInitialProperties({{"tabs", QVariant::fromValue(&tabs)},
                                      {"places", QVariant::fromValue(&places)},
                                      {"recent", QVariant::fromValue(&recent)},
@@ -83,6 +87,7 @@ private slots:
                                      {"jobModel", QVariant::fromValue(&jobs)},
                                      {"transfers", QVariant::fromValue(&transfers)},
                                      {"ops", QVariant::fromValue(&ops)},
+                                     {"apps", QVariant::fromValue(&apps)},
                                      {"preview", QVariant::fromValue(&preview)},
                                      {"search", QVariant::fromValue(&search)},
                                      {"backend", QVariant::fromValue(&backend)}});
@@ -210,9 +215,11 @@ private slots:
         JobModel jobs(&backend);
         Operations ops(&backend, &jobs);
         Transfers transfers(&ops);
+        DesktopApps apps;
         QQmlApplicationEngine engine;
         engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
         engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider);
+        engine.addImageProvider(QStringLiteral("appicon"), new AppIconProvider);
         Windows windows(&engine, {{"places", QVariant::fromValue(&places)},
                                   {"recent", QVariant::fromValue(&recent)},
                                   {"favorites", QVariant::fromValue(&favorites)},
@@ -221,6 +228,7 @@ private slots:
                                   {"jobModel", QVariant::fromValue(&jobs)},
                                   {"transfers", QVariant::fromValue(&transfers)},
                                   {"ops", QVariant::fromValue(&ops)},
+                                  {"apps", QVariant::fromValue(&apps)},
                                   {"backend", QVariant::fromValue(&backend)}});
         QQuickWindow *one = windows.open({first.path()});
         QQuickWindow *two = windows.open({second.path(), first.path()});

@@ -3,6 +3,8 @@
 
 #include "app/Windows.h"
 #include "backend/BackendClient.h"
+#include "desktop/AppIcons.h"
+#include "desktop/DesktopApps.h"
 #include "models/FavoritesModel.h"
 #include "models/FolderModel.h"
 #include "models/JobModel.h"
@@ -52,6 +54,9 @@ int main(int argc, char *argv[]) {
     JobModel jobs(&backend);
     Operations ops(&backend, &jobs);
     Transfers transfers(&ops);
+    // Programs, for Open With; their icons from the desktop's theme.
+    DesktopApps apps;
+    AppIconProvider::useDesktopTheme();
     QObject::connect(&backend, &BackendClient::failed, &app, [](const QString &why) {
         qCritical().noquote() << why;
     });
@@ -63,6 +68,7 @@ int main(int argc, char *argv[]) {
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
     engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider);
+    engine.addImageProvider(QStringLiteral("appicon"), new AppIconProvider);
     Windows windows(&engine, {{QStringLiteral("places"), QVariant::fromValue(&places)},
                               {QStringLiteral("recent"), QVariant::fromValue(&recent)},
                               {QStringLiteral("favorites"), QVariant::fromValue(&favorites)},
@@ -71,6 +77,7 @@ int main(int argc, char *argv[]) {
                               {QStringLiteral("jobModel"), QVariant::fromValue(&jobs)},
                               {QStringLiteral("transfers"), QVariant::fromValue(&transfers)},
                               {QStringLiteral("ops"), QVariant::fromValue(&ops)},
+                              {QStringLiteral("apps"), QVariant::fromValue(&apps)},
                               {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
 
     backend.start();

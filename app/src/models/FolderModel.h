@@ -128,6 +128,8 @@ public:
     /// The names selected among the rows that are here (all of them unless "all" is selected in
     /// a folder not fully read).
     QList<QByteArray> selectedNames() const;
+    /// The selected items' paths, as text (for programs to open, Properties).
+    Q_INVOKABLE QStringList selectedPaths() const;
     bool allSelected() const { return m_allSelected; }
     QStringList leftovers() const;
     QList<QByteArray> rawLeftovers() const { return m_leftovers; }

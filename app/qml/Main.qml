@@ -24,6 +24,8 @@ ApplicationWindow {
     required property var preview
     required property var search
     required property var backend
+    /// The desktop's programs, for Open With.
+    required property var apps
     /// The app's windows (absent in a test of one window).
     property var windows: null
     /// Whether operations answer here: the window used last does (their notices, clashes and
@@ -452,6 +454,11 @@ ApplicationWindow {
     }
     ConflictDialog { ops: window.ops; listening: window.foremost }
     ConfirmDialog { id: confirm }
+    OpenWithDialog {
+        id: openWithDialog
+        apps: window.apps
+        onFailed: (message) => notice.show(message)
+    }
     SettingsDialog {
         id: settingsDialog
         places: window.places
@@ -496,7 +503,11 @@ ApplicationWindow {
         /// A crumb: an ancestor of the folder shown, not offered for the Trash.
         property bool crumb
         readonly property string parentFolder: path.substring(0, path.lastIndexOf("/")) || "/"
-        function show(at, folder, isCrumb) { path = at; isFolder = folder; crumb = isCrumb === true; popup() }
+        function show(at, folder, isCrumb) {
+            path = at; isFolder = folder; crumb = isCrumb === true
+            pathOpenWith.load([at])
+            popup()
+        }
         MenuItem {
             text: qsTr("Open")
             onTriggered: pathMenu.isFolder ? window.browser.goPath(pathMenu.path) : window.ops.open(pathMenu.path)
@@ -512,6 +523,12 @@ ApplicationWindow {
             visible: pathMenu.isFolder && window.windows !== null
             height: visible ? implicitHeight : 0
             onTriggered: window.windows.open([pathMenu.path])
+        }
+        OpenWithMenu {
+            id: pathOpenWith
+            apps: window.apps
+            onOthersRequested: (paths) => openWithDialog.ask(paths)
+            onFailed: (message) => notice.show(message)
         }
         MenuItem {
             text: qsTr("Show in Folder")
@@ -590,7 +607,11 @@ ApplicationWindow {
         readonly property bool single: window.selectionCount === 1
         readonly property bool folder: row >= 0 && window.folderModel !== null && window.folderModel.isFolder(row)
         readonly property string path: row >= 0 && window.folderModel !== null ? window.folderModel.pathAt(row) : ""
-        function show(at) { row = at; popup() }
+        function show(at) {
+            row = at
+            itemOpenWith.load(window.folderModel.selectedPaths())
+            popup()
+        }
         MenuItem { text: qsTr("Open"); visible: itemMenu.single && itemMenu.folder; height: visible ? implicitHeight : 0; onTriggered: window.openRow(itemMenu.row) }
         MenuItem {
             text: qsTr("Open in New Tab")
@@ -603,6 +624,18 @@ ApplicationWindow {
             visible: itemMenu.single && itemMenu.folder && window.windows !== null
             height: visible ? implicitHeight : 0
             onTriggered: window.windows.open([itemMenu.path])
+        }
+        MenuItem {
+            text: qsTr("Open")
+            visible: itemMenu.single && !itemMenu.folder
+            height: visible ? implicitHeight : 0
+            onTriggered: window.ops.open(itemMenu.path)
+        }
+        OpenWithMenu {
+            id: itemOpenWith
+            apps: window.apps
+            onOthersRequested: (paths) => openWithDialog.ask(paths)
+            onFailed: (message) => notice.show(message)
         }
         MenuSeparator {}
         MenuItem { text: qsTr("Cut"); onTriggered: window.ops.copy(window.folderModel, true) }
