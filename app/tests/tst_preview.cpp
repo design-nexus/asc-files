@@ -78,6 +78,14 @@ private slots:
         QTRY_VERIFY(preview.text().startsWith("# Title"));
         QTRY_VERIFY_WITH_TIMEOUT(preview.html().contains("<h1>Title</h1>"), 10000);
         QVERIFY(preview.html().contains("<em>text</em>"));
+        // Diagrams and equations are drawn by the reader, and served by the preview.
+        write(dir.filePath("maths.md"), "Energy: $E=mc^2$\n\n```mermaid\nflowchart LR\n A --> B\n```\n");
+        preview.show(dir.filePath("maths.md"));
+        QTRY_VERIFY_WITH_TIMEOUT(preview.html().contains("image://preview/"), 20000);
+        QVERIFY(!preview.html().contains("media:0\""));
+        QVERIFY(!preview.media(0).isNull());
+        QVERIFY(!preview.media(1).isNull());
+        QVERIFY(preview.media(2).isNull());
         write(dir.filePath("page.html"), "<html><body><h2>Hi</h2><img src=\"https://example.com/t.png\"><script>x()</script></body></html>");
         preview.show(dir.filePath("page.html"));
         QCOMPARE(preview.documentKind(), QStringLiteral("html"));
@@ -101,7 +109,7 @@ private slots:
         QCOMPARE(preview.kind(), QStringLiteral("video"));
         preview.show(dir.path());
         QCOMPARE(preview.kind(), QStringLiteral("folder"));
-        QCOMPARE(preview.details().value("items").toInt(), 8);
+        QCOMPARE(preview.details().value("items").toInt(), 9);
     }
 
     void aPdfIsRenderedPageByPage() {

@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: MIT
 //! asc-files-docs: reads one document for Files' preview, inside the sandbox Files runs it in,
-//! and writes it out as JSON, `{"html", "truncated"}`: HTML in the subset Qt's rich text shows,
-//! with nothing in it that reaches out (no scripts, styles, remote pictures or links that load).
+//! and writes it out as JSON, `{"html", "truncated", "media"}`: HTML in the subset Qt's rich text
+//! shows, with nothing in it that reaches out (no scripts, styles, remote pictures or links that
+//! load), and the PNGs it draws (Markdown's diagrams and equations, as `media:N`), base64.
 //! Untrusted document readers never run in the app. Legacy's readers are ported here: Word
 //! (`docx`), RTF (`rtf`) and spreadsheets (`table`); Markdown and HTML are read with
 //! pulldown-cmark and cleaned with ammonia.
 //!
-//!     asc-files-docs markdown|html|rtf|docx|sheet|csv|tsv <file>
+//!     asc-files-docs markdown|html|rtf|docx|sheet|csv|tsv <file> [<text colour, #rrggbb>]
 
 mod docx;
 mod html;
 mod markdown;
+mod media;
 mod rtf;
 mod table;
 
@@ -37,9 +39,11 @@ pub(crate) fn escape(text: &str) -> String {
 }
 
 /// What the preview shows.
+#[derive(Default)]
 pub(crate) struct Rendered {
     pub html: String,
     pub truncated: bool,
+    pub media: Vec<Vec<u8>>,
 }
 
 /// The first `INPUT_LIMIT` bytes of `path` as text (invalid UTF-8 replaced), and whether there
@@ -55,13 +59,16 @@ fn read_text(path: &Path) -> Result<(String, bool), String> {
     Ok((String::from_utf8_lossy(&bytes).into_owned(), truncated))
 }
 
-pub(crate) fn render(kind: &str, path: &Path) -> Result<Rendered, String> {
+/// `ink`: the text's colour where the preview shows it, for what is drawn (equations).
+pub(crate) fn render(kind: &str, path: &Path, ink: &str) -> Result<Rendered, String> {
     match kind {
         "markdown" => {
             let (text, truncated) = read_text(path)?;
+            let markdown = markdown::to_html(&text, ink);
             Ok(Rendered {
-                html: markdown::to_html(&text),
+                html: markdown.html,
                 truncated,
+                media: markdown.media,
             })
         }
         "html" => {
@@ -69,6 +76,7 @@ pub(crate) fn render(kind: &str, path: &Path) -> Result<Rendered, String> {
             Ok(Rendered {
                 html: html::clean(&text),
                 truncated,
+                ..Default::default()
             })
         }
         "rtf" => {
@@ -76,6 +84,7 @@ pub(crate) fn render(kind: &str, path: &Path) -> Result<Rendered, String> {
             Ok(Rendered {
                 html: rtf::to_html(&text)?,
                 truncated,
+                ..Default::default()
             })
         }
         "docx" => {
@@ -83,6 +92,7 @@ pub(crate) fn render(kind: &str, path: &Path) -> Result<Rendered, String> {
             Ok(Rendered {
                 html: data.html,
                 truncated: data.truncated,
+                ..Default::default()
             })
         }
         "sheet" => {
@@ -90,6 +100,7 @@ pub(crate) fn render(kind: &str, path: &Path) -> Result<Rendered, String> {
             Ok(Rendered {
                 html: table.to_html(),
                 truncated: table.truncated,
+                ..Default::default()
             })
         }
         "csv" | "tsv" => {
@@ -98,6 +109,7 @@ pub(crate) fn render(kind: &str, path: &Path) -> Result<Rendered, String> {
             Ok(Rendered {
                 html: table.to_html(),
                 truncated: cut || table.truncated,
+                ..Default::default()
             })
         }
         other => Err(format!("unknown kind {other}")),
@@ -106,15 +118,27 @@ pub(crate) fn render(kind: &str, path: &Path) -> Result<Rendered, String> {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
-    let [_, kind, file] = args.as_slice() else {
-        eprintln!("usage: asc-files-docs markdown|html|rtf|docx|sheet|csv|tsv <file>");
-        return ExitCode::from(2);
+    let (kind, file, ink) = match args.as_slice() {
+        [_, kind, file] => (kind, file, "#000000"),
+        [_, kind, file, ink] => (kind, file, ink.as_str()),
+        _ => {
+            eprintln!(
+                "usage: asc-files-docs markdown|html|rtf|docx|sheet|csv|tsv <file> [#rrggbb]"
+            );
+            return ExitCode::from(2);
+        }
     };
-    match render(kind, Path::new(file)) {
+    match render(kind, Path::new(file), ink) {
         Ok(rendered) => {
+            use base64::Engine as _;
+            let media: Vec<String> = rendered
+                .media
+                .iter()
+                .map(|png| base64::engine::general_purpose::STANDARD.encode(png))
+                .collect();
             println!(
                 "{}",
-                serde_json::json!({"html": rendered.html, "truncated": rendered.truncated})
+                serde_json::json!({"html": rendered.html, "truncated": rendered.truncated, "media": media})
             );
             ExitCode::SUCCESS
         }

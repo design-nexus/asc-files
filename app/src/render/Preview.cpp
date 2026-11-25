@@ -3,15 +3,18 @@
 
 #include "Sandbox.h"
 
+#include <QColor>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocale>
 #include <QMimeDatabase>
 #include <QMutex>
+#include <QRegularExpression>
 #include <QStringDecoder>
 
 namespace {
@@ -130,6 +133,7 @@ void Preview::show(const QString &path) {
     m_truncated = false;
     m_documentKind = m_kind == QLatin1String("document") ? documentKindOf(path) : QString();
     m_html.clear();
+    m_media.clear();
     m_image = {};
     m_page = 0;
     m_pageCount = 0;
@@ -183,13 +187,27 @@ void Preview::goToPage(int page) {
     emit changed();
 }
 
+void Preview::setInk(const QString &ink) {
+    if (ink != m_ink && QColor::isValidColorName(ink)) {
+        m_ink = ink;
+        emit changed();
+    }
+}
+
 void Preview::loadDocument() {
     m_loading = true;
-    Sandbox::run(Sandbox::documentReader(), {m_documentKind, QStringLiteral("{}")}, QFile::encodeName(m_path), m_work,
+    Sandbox::run(Sandbox::documentReader(), {m_documentKind, QStringLiteral("{}"), m_ink}, QFile::encodeName(m_path), m_work,
                  [this](const QByteArray &out, const QString &error) {
                      m_loading = false;
                      const QJsonObject read = QJsonDocument::fromJson(out).object();
                      m_html = read.value(QStringLiteral("html")).toString();
+                     // Pictures it drew, served by the image provider: `media:N` names them.
+                     for (const QJsonValue &png : read.value(QStringLiteral("media")).toArray()) {
+                         m_media.append(QImage::fromData(QByteArray::fromBase64(png.toString().toLatin1()), "PNG"));
+                     }
+                     ++m_serial;
+                     static const QRegularExpression named(QStringLiteral("src=\"media:(\\d+)\""));
+                     m_html.replace(named, QStringLiteral("src=\"image://preview/%1/media/\\1-%2\"").arg(m_id).arg(m_serial));
                      m_truncated = m_truncated || read.value(QStringLiteral("truncated")).toBool();
                      m_error = !error.isEmpty() ? error : read.isEmpty() ? tr("The document could not be read") : QString();
                      emit changed();
@@ -269,7 +287,8 @@ QImage PreviewImageProvider::requestImage(const QString &id, QSize *size, const 
     {
         const QMutexLocker lock(&previewsLock);
         if (const Preview *preview = previews.value(id.section(u'/', 0, 0).toInt())) {
-            image = preview->image();
+            image = id.section(u'/', 1, 1) == QLatin1String("media") ? preview->media(id.section(u'/', 2, 2).section(u'-', 0, 0).toInt())
+                                                                    : preview->image();
         }
     }
     if (size) {

@@ -25,6 +25,8 @@ class Preview : public QObject {
     Q_PROPERTY(QString documentKind READ documentKind NOTIFY changed)
     Q_PROPERTY(QString html READ html NOTIFY changed)
     Q_PROPERTY(bool hasSource READ hasSource NOTIFY changed)
+    /// The text's colour where documents show (`#rrggbb`): equations are drawn in it.
+    Q_PROPERTY(QString ink READ ink WRITE setInk NOTIFY changed)
     Q_PROPERTY(bool truncated READ truncated NOTIFY changed)
     /// What to ask the `image://preview/` provider for; changes with each image.
     Q_PROPERTY(QString imageSource READ imageSource NOTIFY changed)
@@ -52,6 +54,8 @@ public:
     QString documentKind() const { return m_documentKind; }
     QString html() const { return m_html; }
     bool hasSource() const;
+    QString ink() const { return m_ink; }
+    void setInk(const QString &ink);
     /// The document kind of `path` (as the reader takes it), or empty when it isn't one.
     static QString documentKindOf(const QString &path);
     bool truncated() const { return m_truncated; }
@@ -60,6 +64,8 @@ public:
     int pageCount() const { return m_pageCount; }
     QVariantMap details() const { return m_details; }
     QImage image() const { return m_image; }
+    /// A picture the document reader drew (a diagram, an equation), by its number.
+    QImage media(int index) const { return m_media.value(index); }
 
     /// What a file is, for the preview, by its name and first bytes (read here: no decoder).
     static QString kindOf(const QString &path);
@@ -89,10 +95,13 @@ private:
     QVariantMap m_details;
     QString m_documentKind;
     QString m_html;
+    QList<QImage> m_media;
+    QString m_ink = QStringLiteral("#000000");
     QObject *m_work = nullptr;
 };
 
-/// Serves each preview's current image as `image://preview/<preview>/<serial>`.
+/// Serves each preview's current image as `image://preview/<preview>/<serial>`, and the pictures
+/// its document drew as `image://preview/<preview>/media/<n>-<serial>`.
 class PreviewImageProvider : public QQuickImageProvider {
 public:
     PreviewImageProvider() : QQuickImageProvider(QQuickImageProvider::Image) {}

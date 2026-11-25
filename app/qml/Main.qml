@@ -77,6 +77,12 @@ ApplicationWindow {
     // Gallery shows the preview large in the folder.
     readonly property string previewPath: (previewOpen || gallery) && view ? view.currentPath : ""
     onPreviewPathChanged: preview.show(previewPath)
+    // Equations in documents are drawn in the text's colour.
+    Binding {
+        target: window.preview
+        property: "ink"
+        value: "#" + [Theme.text.r, Theme.text.g, Theme.text.b].map(v => Math.round(v * 255).toString(16).padStart(2, "0")).join("")
+    }
 
     // The sidebar as chosen, railed when the window is too narrow for it in full.
     readonly property int sidebarMode: places.mode === 2 ? 2 : places.mode === 0 && width < 900 ? 1 : places.mode

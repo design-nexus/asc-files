@@ -317,6 +317,12 @@ and `services/table.rs`, with their tests, which checked legacy's own document b
 | `rtf/tests.rs` (5) | 5 | the cancel half of the last test: the sandbox's time limit stops a long run |
 | `table/tests.rs` (6) | 5 | `rejects_untrusted_oversized_table_output` (legacy's JSON hand-off; the app bounds the helper's output) |
 
+| `sandbox_helper/document_media/tests.rs` (8) | 7 | `sniffed_svg_rejected_by_resvg_reaches_the_raster_loaders` (the helper draws only Mermaid and equations; pictures are Qt's) |
+
+Mermaid diagrams and equations in Markdown are legacy's renderer (`sandbox_helper/document_media.rs`:
+mermaid-svg; MathJax 4.1.3 in QuickJS; resvg) in `src/media.rs`. New: equations are drawn in the
+text's colour and diagrams on a light card, and pictures reach the preview as PNGs it serves.
+
 New: Markdown (pulldown-cmark) and HTML (ammonia) reach nothing outside the file: no scripts, styles, remote
 pictures or links that load.
 
