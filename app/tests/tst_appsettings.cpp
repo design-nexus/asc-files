@@ -45,7 +45,7 @@ private slots:
         settings.setDefaultSort(QStringLiteral("colour"));
         QCOMPARE(settings.defaultSort(), QStringLiteral("name"));
         settings.setDefaultView(7);
-        QCOMPARE(settings.defaultView(), int(FolderViews::Columns));
+        QCOMPARE(settings.defaultView(), int(FolderViews::LastView));
         settings.setDefaultView(FolderViews::List);
         settings.setPreviewStyle(QStringLiteral("sideways"));
         QCOMPARE(settings.previewStyle(), QStringLiteral("popup"));

@@ -25,7 +25,7 @@ bool isWithin(const QByteArray &path, const QByteArray &folder) {
 } // namespace
 
 Browser::Browser(BackendClient *backend, QObject *parent)
-    : QObject(parent), m_folders(new FolderModel(backend, this)), m_columns(new ColumnsModel(backend, this)) {
+    : QObject(parent), m_folders(new FolderModel(backend, this)), m_columns(new ColumnsModel(backend, this)), m_backend(backend) {
     connect(this, &Browser::locationChanged, this, &Browser::updateColumns);
     connect(this, &Browser::viewChanged, this, &Browser::updateColumns);
     // The folder model may move on its own (its folder was deleted): follow it.
@@ -113,6 +113,7 @@ void Browser::show(const Place &place) {
         m_folders->open(place.path, choice.sortKey, choice.descending);
         if (m_view != choice.view) {
             m_view = choice.view;
+            makeSecond();
             emit viewChanged();
         }
     }
@@ -120,12 +121,21 @@ void Browser::show(const Place &place) {
 }
 
 void Browser::setView(int view) {
-    if (view == m_view || view < FolderViews::List || view > FolderViews::Columns) {
+    if (view == m_view || view < FolderViews::List || view > FolderViews::LastView) {
         return;
     }
     m_view = view;
+    makeSecond();
     emit viewChanged();
     rememberChoice();
+}
+
+void Browser::makeSecond() {
+    if (m_view == FolderViews::DualPane && !m_second && m_here.page == Folder) {
+        m_second = new Browser(m_backend, this);
+        m_second->goPath(location());
+        emit secondChanged();
+    }
 }
 
 void Browser::sortBy(const QString &key) {

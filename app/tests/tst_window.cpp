@@ -182,6 +182,32 @@ private slots:
         QTRY_COMPARE(tabs.current()->view(), 2);
         QTest::keyClick(window, Qt::Key_1, Qt::ControlModifier);
         QTRY_COMPARE(tabs.current()->view(), 0);
+        // Compact List and Gallery show the folder; Gallery previews the item the keyboard is on.
+        QTest::keyClick(window, Qt::Key_4, Qt::ControlModifier);
+        QTRY_COMPARE(tabs.current()->view(), 3);
+        auto *compact = window->findChild<QQuickItem *>(QStringLiteral("fileCompact"));
+        QVERIFY(compact);
+        QTRY_COMPARE(compact->property("count").toInt(), 3);
+        QTest::keyClick(window, Qt::Key_5, Qt::ControlModifier);
+        QTRY_COMPARE(tabs.current()->view(), 4);
+        auto *strip = window->findChild<QQuickItem *>(QStringLiteral("fileStrip"));
+        QVERIFY(strip);
+        QTRY_COMPARE(strip->property("count").toInt(), 3);
+        // Dual Pane: a second pane; F5 copies the selection into its folder.
+        QTest::keyClick(window, Qt::Key_6, Qt::ControlModifier);
+        QTRY_COMPARE(tabs.current()->view(), 5);
+        QTRY_VERIFY(tabs.current()->second() != nullptr);
+        Browser *other = tabs.current()->second();
+        other->goPath(dir.filePath("folder"));
+        QTRY_COMPARE(other->location(), dir.filePath("folder"));
+        QTRY_VERIFY(window->findChild<QQuickItem *>(QStringLiteral("rightPane")));
+        QTRY_VERIFY(folders.rowOfName("b.txt") >= 0);
+        folders.select(folders.rowOfName("b.txt"));
+        QTest::keyClick(window, Qt::Key_F5);
+        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(dir.filePath("folder/b.txt")), 10000);
+        QVERIFY(QFile::exists(dir.filePath("b.txt")));
+        QTest::keyClick(window, Qt::Key_1, Qt::ControlModifier);
+        QTRY_COMPARE(tabs.current()->view(), 0);
 
         // Customize: a colour and an icon show in the list at once, and Reset takes them away.
         auto *customize = window->findChild<QObject *>(QStringLiteral("customizeDialog"));

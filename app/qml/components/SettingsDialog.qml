@@ -35,8 +35,11 @@ Popup {
         { title: qsTr("About"), detail: qsTr("Version, diagnostics") }
     ]
     readonly property var viewOptions: [
-        { label: qsTr("List"), value: 0 }, { label: qsTr("Icons"), value: 1 }, { label: qsTr("Columns"), value: 2 }
+        { label: qsTr("List"), value: 0 }, { label: qsTr("Icons"), value: 1 }, { label: qsTr("Columns"), value: 2 },
+        { label: qsTr("Compact"), value: 3 }, { label: qsTr("Gallery"), value: 4 }, { label: qsTr("Dual Pane"), value: 5 }
     ]
+    // Dual Pane's panes open items as List does.
+    readonly property var clickViews: viewOptions.slice(0, 5)
     readonly property var clickOptions: [{ label: qsTr("Single"), value: 1 }, { label: qsTr("Double"), value: 2 }]
 
     parent: Overlay.overlay
@@ -209,7 +212,7 @@ Popup {
             SettingsGroup {
                 title: qsTr("Opening items")
                 Repeater {
-                    model: dialog.viewOptions
+                    model: dialog.clickViews
                     SettingRow {
                         id: clicksRow
                         required property int index

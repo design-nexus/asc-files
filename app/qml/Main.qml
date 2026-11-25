@@ -49,7 +49,14 @@ ApplicationWindow {
     /// questions show in one window only).
     readonly property bool foremost: windows === null || windows.current === window
 
-    readonly property var browser: tabs.current
+    /// The tab's browser, which holds its view; `browser` is the pane in use (Dual Pane's
+    /// other pane when that one is), which the crumbs, menus and operations follow.
+    readonly property var tabBrowser: tabs.current
+    readonly property bool dualPane: tabBrowser !== null && tabBrowser.page === 0 && tabBrowser.view === 5 && tabBrowser.second !== null
+    property bool rightActive: false
+    onTabBrowserChanged: rightActive = false
+    readonly property var browser: dualPane && rightActive ? tabBrowser.second : tabBrowser
+    readonly property bool gallery: tabBrowser !== null && tabBrowser.page === 0 && tabBrowser.view === 4
     readonly property var folderModel: browser ? browser.folderModel : null
 
     width: 1600
@@ -61,12 +68,13 @@ ApplicationWindow {
     // The view the current tab shows, by its page (Browser.Folder, Overview, Recent, Favorites,
     // Trash, in that order).
     readonly property int page: browser ? browser.page : 0
-    readonly property var view: pages.children[page]
+    readonly property var view: page === 0 ? (dualPane && rightActive && rightPaneLoader.item ? rightPaneLoader.item : folderView) : pages.children[page]
     // The preview drawer: shown as a Popup over the window (as legacy's default) or a Panel beside
     // the folder, and following the item the keyboard is on.
     property bool previewOpen: false
     readonly property bool previewAsPanel: AppSettings.previewStyle === "panel"
-    readonly property string previewPath: previewOpen && view ? view.currentPath : ""
+    // Gallery shows the preview large in the folder.
+    readonly property string previewPath: (previewOpen || gallery) && view ? view.currentPath : ""
     onPreviewPathChanged: preview.show(previewPath)
 
     // The sidebar as chosen, railed when the window is too narrow for it in full.
@@ -136,9 +144,20 @@ ApplicationWindow {
                     id: views
                     anchors.centerIn: parent
                     spacing: 2
-                    IconButton { width: 30; height: 30; label: qsTr("List (Ctrl+1)"); checked: window.browser !== null && window.page === 0 && window.browser.view === 0; onClicked: window.browser.view = 0; iconPath: "M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01" }
-                    IconButton { width: 30; height: 30; label: qsTr("Icons (Ctrl+2)"); checked: window.browser !== null && window.page === 0 && window.browser.view === 1; onClicked: window.browser.view = 1; iconPath: "M3.5 2.5h2.5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1zM10 2.5h2.5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1zM3.5 9h2.5a1 1 0 0 1 1 1v2.5a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1zM10 9h2.5a1 1 0 0 1 1 1v2.5a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1z" }
-                    IconButton { width: 30; height: 30; label: qsTr("Columns (Ctrl+3)"); checked: window.browser !== null && window.page === 0 && window.browser.view === 2; onClicked: window.browser.view = 2; iconPath: "M3.5 3h9A1.5 1.5 0 0 1 14 4.5v7a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7A1.5 1.5 0 0 1 3.5 3zM8 3v10" }
+                    IconButton { width: 30; height: 30; label: qsTr("List (Ctrl+1)"); checked: window.browser !== null && window.page === 0 && window.tabBrowser.view === 0; onClicked: window.tabBrowser.view = 0; iconPath: "M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01" }
+                    IconButton { width: 30; height: 30; label: qsTr("Icons (Ctrl+2)"); checked: window.browser !== null && window.page === 0 && window.tabBrowser.view === 1; onClicked: window.tabBrowser.view = 1; iconPath: "M3.5 2.5h2.5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1zM10 2.5h2.5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1zM3.5 9h2.5a1 1 0 0 1 1 1v2.5a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1zM10 9h2.5a1 1 0 0 1 1 1v2.5a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1z" }
+                    IconButton { width: 30; height: 30; label: qsTr("Columns (Ctrl+3)"); checked: window.browser !== null && window.page === 0 && window.tabBrowser.view === 2; onClicked: window.tabBrowser.view = 2; iconPath: "M3.5 3h9A1.5 1.5 0 0 1 14 4.5v7a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7A1.5 1.5 0 0 1 3.5 3zM8 3v10" }
+                    IconButton {
+                        id: moreViews
+                        width: 30; height: 30
+                        label: qsTr("More views")
+                        checked: window.tabBrowser !== null && window.page === 0 && window.tabBrowser.view >= 3
+                        iconPath: window.tabBrowser !== null && window.tabBrowser.view === 4 ? "M2.5 3h11v7h-11zM2.5 12.5h2M7 12.5h2M11.5 12.5h2"
+                                : window.tabBrowser !== null && window.tabBrowser.view === 5 ? "M2.5 3h11v10h-11zM8 3v10"
+                                : window.tabBrowser !== null && window.tabBrowser.view === 3 ? "M2.5 4h4M2.5 8h4M2.5 12h4M9.5 4h4M9.5 8h4M9.5 12h4"
+                                : "m4 6 4 4 4-4"
+                        onClicked: viewsMenu.popup(moreViews, 0, moreViews.height + 4)
+                    }
                 }
             }
             Button { id: newButton; Layout.leftMargin: 12; text: qsTr("New"); menu: true; onClicked: newMenu.popup(newButton, 0, newButton.height + 4); iconPath: "M2 4.2c0-.6.5-1.2 1.2-1.2h3.3l1.5 1.5h4.8c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3.2c-.7 0-1.2-.5-1.2-1.2zM8 7v4M6 9h4" }
@@ -339,16 +358,60 @@ ApplicationWindow {
                         Layout.fillHeight: true
                         currentIndex: window.page
 
-                        FolderView {
-                            id: folderView
-                            browser: window.browser
-                            transfers: window.transfers
-                            ops: window.ops
-                            onNotice: (message) => notice.show(message)
-                            onContextRequested: (row) => row >= 0 ? itemMenu.show(row) : spaceMenu.show()
-                            onFileActivated: (path) => window.ops.open(path)
-                            onPathMenuRequested: (path, isFolder) => pathMenu.show(path, isFolder)
-                            onDropped: (result, target) => window.dropped(result, target)
+                        // The folder: one pane, or two side by side (Dual Pane).
+                        RowLayout {
+                            spacing: 0
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                Layout.preferredWidth: 1
+                                spacing: 0
+                                PaneBar { visible: window.dualPane; browser: window.tabBrowser; active: !window.rightActive }
+                                FolderView {
+                                    id: folderView
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    browser: window.tabBrowser
+                                    forcedMode: window.dualPane ? 0 : -1
+                                    preview: window.preview
+                                    transfers: window.transfers
+                                    ops: window.ops
+                                    onActiveFocusChanged: if (activeFocus) window.rightActive = false
+                                    onNotice: (message) => notice.show(message)
+                                    onContextRequested: (row) => { window.rightActive = false; row >= 0 ? itemMenu.show(row) : spaceMenu.show() }
+                                    onFileActivated: (path) => window.ops.open(path)
+                                    onPathMenuRequested: (path, isFolder) => pathMenu.show(path, isFolder)
+                                    onDropped: (result, target) => window.dropped(result, target)
+                                }
+                            }
+                            Rectangle { visible: window.dualPane; Layout.fillHeight: true; width: 1; color: Theme.rule }
+                            ColumnLayout {
+                                visible: window.dualPane
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                Layout.preferredWidth: 1
+                                spacing: 0
+                                PaneBar { browser: window.tabBrowser ? window.tabBrowser.second : null; active: window.rightActive }
+                                Loader {
+                                    id: rightPaneLoader
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    active: window.dualPane
+                                    sourceComponent: FolderView {
+                                        objectName: "rightPane"
+                                        browser: window.tabBrowser.second
+                                        forcedMode: 0
+                                        transfers: window.transfers
+                                        ops: window.ops
+                                        onActiveFocusChanged: if (activeFocus) window.rightActive = true
+                                        onNotice: (message) => notice.show(message)
+                                        onContextRequested: (row) => { window.rightActive = true; row >= 0 ? itemMenu.show(row) : spaceMenu.show() }
+                                        onFileActivated: (path) => window.ops.open(path)
+                                        onPathMenuRequested: (path, isFolder) => pathMenu.show(path, isFolder)
+                                        onDropped: (result, target) => window.dropped(result, target)
+                                    }
+                                }
+                            }
                         }
                         OverviewPage {
                             browser: window.browser
@@ -783,6 +846,13 @@ ApplicationWindow {
     }
 
     // The header's New menu.
+    // The views beyond the three in the header.
+    ContextMenu {
+        id: viewsMenu
+        MenuItem { text: qsTr("Compact List (Ctrl+4)"); checkable: true; checked: window.tabBrowser !== null && window.tabBrowser.view === 3; onTriggered: window.tabBrowser.view = 3 }
+        MenuItem { text: qsTr("Gallery (Ctrl+5)"); checkable: true; checked: window.tabBrowser !== null && window.tabBrowser.view === 4; onTriggered: window.tabBrowser.view = 4 }
+        MenuItem { text: qsTr("Dual Pane (Ctrl+6)"); checkable: true; checked: window.tabBrowser !== null && window.tabBrowser.view === 5; onTriggered: window.tabBrowser.view = 5 }
+    }
     ContextMenu {
         id: newMenu
         MenuItem { text: qsTr("New Folder"); enabled: window.inFolder; onTriggered: window.ops.create(window.folderModel, true) }
@@ -964,7 +1034,23 @@ ApplicationWindow {
         onActivated: propertiesDialog.show(window.folderModel.selectedPaths()[0])
     }
     Shortcut { sequence: "Ctrl+K"; onActivated: { searchField.forceActiveFocus(); searchField.selectAll() } }
-    Shortcut { sequence: "Ctrl+1"; onActivated: window.browser.view = 0 }
-    Shortcut { sequence: "Ctrl+2"; onActivated: window.browser.view = 1 }
-    Shortcut { sequence: "Ctrl+3"; onActivated: window.browser.view = 2 }
+    Shortcut { sequence: "Ctrl+1"; onActivated: window.tabBrowser.view = 0 }
+    Shortcut { sequence: "Ctrl+2"; onActivated: window.tabBrowser.view = 1 }
+    Shortcut { sequence: "Ctrl+3"; onActivated: window.tabBrowser.view = 2 }
+    Shortcut { sequence: "Ctrl+4"; onActivated: window.tabBrowser.view = 3 }
+    Shortcut { sequence: "Ctrl+5"; onActivated: window.tabBrowser.view = 4 }
+    Shortcut { sequence: "Ctrl+6"; onActivated: window.tabBrowser.view = 5 }
+    // Dual Pane: F5 copies the selection to the other pane's folder, F6 moves it there.
+    Shortcut {
+        sequence: "F5"
+        enabled: window.dualPane && window.selectionCount > 0
+        onActivated: window.ops.transferPaths(window.folderModel.selectedPaths(),
+                                              (window.rightActive ? window.tabBrowser : window.tabBrowser.second).location, false)
+    }
+    Shortcut {
+        sequence: "F6"
+        enabled: window.dualPane && window.selectionCount > 0
+        onActivated: window.ops.transferPaths(window.folderModel.selectedPaths(),
+                                              (window.rightActive ? window.tabBrowser : window.tabBrowser.second).location, true)
+    }
 }

@@ -267,6 +267,16 @@ void Operations::trash(FolderModel *folder) {
     }
 }
 
+void Operations::transferPaths(const QStringList &paths, const QString &folder, bool move) {
+    QList<QByteArray> sources;
+    for (const QString &path : paths) {
+        sources.append(QFile::encodeName(path));
+    }
+    if (!sources.isEmpty() && !folder.isEmpty()) {
+        transfer(sources, QFile::encodeName(folder), move);
+    }
+}
+
 void Operations::trashPaths(const QStringList &paths) {
     QList<QByteArray> raw;
     for (const QString &path : paths) {

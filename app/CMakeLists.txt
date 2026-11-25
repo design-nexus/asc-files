@@ -86,6 +86,7 @@ qt_add_qml_module(asc_files_qml
         qml/components/OpenWithMenu.qml
         qml/components/PropertiesDialog.qml
         qml/components/Notice.qml
+        qml/components/PaneBar.qml
         qml/components/PlaceItem.qml
         qml/components/PreviewContent.qml
         qml/components/RubberBand.qml

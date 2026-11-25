@@ -22,6 +22,9 @@ class Browser : public QObject {
     Q_PROPERTY(FolderModel *folderModel READ folderModel CONSTANT)
     /// The columns Columns view shows; kept up to date while that view is chosen.
     Q_PROPERTY(ColumnsModel *columns READ columns CONSTANT)
+    /// Dual Pane's other pane: a browser of its own, made the first time the view is chosen,
+    /// opening where this one is. Null until then.
+    Q_PROPERTY(Browser *second READ second NOTIFY secondChanged)
     Q_PROPERTY(bool canGoBack READ canGoBack NOTIFY historyChanged)
     Q_PROPERTY(bool canGoForward READ canGoForward NOTIFY historyChanged)
     Q_PROPERTY(bool canGoUp READ canGoUp NOTIFY locationChanged)
@@ -54,6 +57,7 @@ public:
     Q_INVOKABLE void goColumnRow(FolderModel *column, int row);
     QByteArray rawLocation() const;
     QString location() const;
+    Browser *second() const { return m_second; }
     QString title() const;
     bool canGoBack() const { return !m_back.isEmpty(); }
     bool canGoForward() const { return !m_forward.isEmpty(); }
@@ -79,6 +83,7 @@ signals:
     void historyChanged();
     void locationChanged();
     void viewChanged();
+    void secondChanged();
 
 private:
     struct Place {
@@ -87,12 +92,16 @@ private:
         bool operator==(const Place &other) const { return page == other.page && path == other.path; }
     };
     void go(const Place &place);
+    /// Dual Pane's other pane, made when the view is first chosen.
+    void makeSecond();
     void show(const Place &place);
     /// The raw paths the crumbs stand for, in the same order as crumbs().
     QList<QByteArray> crumbPaths() const;
 
     FolderModel *m_folders;
     ColumnsModel *m_columns;
+    BackendClient *m_backend;
+    Browser *m_second = nullptr;
     void updateColumns();
     Place m_here;
     QList<Place> m_back;

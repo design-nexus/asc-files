@@ -11,7 +11,9 @@
 /// sort (Settings › Browsing), and the view the tab is in.
 class FolderViews {
 public:
-    enum View { List, Icons, Columns };
+    /// The views a folder can be shown in; Compact List, Gallery and Dual Pane are new in 2.0.
+    enum View { List, Icons, Columns, Compact, Gallery, DualPane };
+    static constexpr int LastView = DualPane;
     struct Choice {
         int view = List;
         QString sortKey = QStringLiteral("name");

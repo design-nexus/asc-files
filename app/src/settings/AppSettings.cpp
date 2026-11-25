@@ -110,7 +110,7 @@ void AppSettings::setClicks(int view, bool files, int count) {
 
 QVariantMap AppSettings::clickCounts() const {
     QVariantMap counts;
-    for (int view = FolderViews::List; view <= FolderViews::Columns; ++view) {
+    for (int view = FolderViews::List; view <= FolderViews::LastView; ++view) {
         counts.insert(QStringLiteral("%1/files").arg(view), clicks(view, true));
         counts.insert(QStringLiteral("%1/folders").arg(view), clicks(view, false));
     }
@@ -120,8 +120,10 @@ QVariantMap AppSettings::clickCounts() const {
 bool AppSettings::rememberFolderViews() const { return value("browsing/rememberFolderViews", true).toBool(); }
 void AppSettings::setRememberFolderViews(bool remember) { set("browsing/rememberFolderViews", remember); }
 
-int AppSettings::defaultView() const { return qBound(0, value("browsing/defaultView", int(FolderViews::List)).toInt(), 2); }
-void AppSettings::setDefaultView(int view) { set("browsing/defaultView", qBound(0, view, 2)); }
+int AppSettings::defaultView() const {
+    return qBound(0, value("browsing/defaultView", int(FolderViews::List)).toInt(), int(FolderViews::LastView));
+}
+void AppSettings::setDefaultView(int view) { set("browsing/defaultView", qBound(0, view, int(FolderViews::LastView))); }
 
 QString AppSettings::defaultSort() const {
     const QString key = value("browsing/defaultSort", SortKeys.first()).toString();

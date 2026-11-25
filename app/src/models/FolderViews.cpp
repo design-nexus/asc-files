@@ -34,7 +34,7 @@ FolderViews::FolderViews() {
         if (path.isEmpty()) {
             continue;
         }
-        m_choices.insert(path, {qBound(int(List), folder.value(QStringLiteral("view")).toInt(), int(Columns)),
+        m_choices.insert(path, {qBound(int(List), folder.value(QStringLiteral("view")).toInt(), LastView),
                                 folder.value(QStringLiteral("sort")).toString(QStringLiteral("name")),
                                 folder.value(QStringLiteral("descending")).toBool()});
         m_order.append(path);

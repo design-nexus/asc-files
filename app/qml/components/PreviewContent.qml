@@ -13,6 +13,8 @@ ColumnLayout {
     required property var preview
     property bool wrap: true
     property bool rendered: true
+    /// Whether it offers to close (Gallery's doesn't: it is the view).
+    property bool closable: true
     signal closeRequested()
 
     spacing: 0
@@ -49,6 +51,7 @@ ColumnLayout {
             onClicked: content.rendered = !content.rendered
         }
         IconButton {
+            visible: content.closable
             width: 28; height: 28
             label: qsTr("Close preview (Space)")
             iconPath: "m4.5 4.5 7 7M11.5 4.5l-7 7"

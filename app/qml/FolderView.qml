@@ -6,10 +6,11 @@ import QtQuick.Layouts
 import AscFiles
 import AscFiles.System
 
-// A folder, in the view the tab has chosen for it: List (columns you can sort by), Icons, or
-// Columns. Clicks select (Ctrl adds or removes, Shift extends), a box dragged from empty space
-// selects what it covers, and a double click or Enter opens a folder.
-Item {
+// A folder, in the view the tab has chosen for it: List (columns you can sort by), Icons,
+// Columns, Compact List or Gallery (Dual Pane is two of these). Clicks select (Ctrl adds or
+// removes, Shift extends), a box dragged from empty space selects what it covers, and a double
+// click or Enter opens a folder. A focus scope: in Dual Pane each pane keeps its own focus.
+FocusScope {
     id: view
 
     required property var browser
@@ -18,7 +19,13 @@ Item {
     /// A right click: on `row` (selected now if it was not), or on empty space (-1).
     signal contextRequested(int row)
     readonly property var folderModel: browser ? browser.folderModel : null
-    readonly property int mode: browser ? browser.view : 0
+    /// The view: the tab's, or one a Dual Pane pane is held to (-1: the tab's).
+    property int forcedMode: -1
+    readonly property int mode: forcedMode >= 0 ? forcedMode : browser ? browser.view : 0
+    /// The window's preview, which Gallery shows large.
+    property var preview: null
+    /// The list the keyboard and selection go by in this view.
+    readonly property var current: mode === 1 ? grid : mode === 3 ? compact : mode === 4 ? strip : list
     readonly property int selectionCount: folderModel ? folderModel.selectionCount : 0
     readonly property string status: {
         const items = qsTr("%n items", "", list.count)
@@ -26,11 +33,10 @@ Item {
     }
     // The item the keyboard is on, for the preview; read again as the folder or selection changes.
     readonly property string currentPath: folderModel ? (folderModel.generation, folderModel.selectionCount,
-        folderModel.pathAt(mode === 1 ? grid.currentIndex : list.currentIndex)) : ""
+        folderModel.pathAt(current.currentIndex)) : ""
     // Moves to the next or previous item (`delta` rows), as the preview's arrows do.
     function step(delta) {
-        const target = mode === 1 ? grid : list
-        if (target.count > 0) moveBy(target, delta, 0)
+        if (current.count > 0) moveBy(current, delta, 0)
     }
 
     // The row whose name is being edited, or -1.
@@ -44,9 +50,8 @@ Item {
     signal pathMenuRequested(string path, bool isFolder)
 
     function startRename() {
-        const target = mode === 1 ? grid : list
-        if (folderModel.selectionCount === 1 && target.currentIndex >= 0 && folderModel.isSelected(target.currentIndex))
-            renamingRow = target.currentIndex
+        if (folderModel.selectionCount === 1 && current.currentIndex >= 0 && folderModel.isSelected(current.currentIndex))
+            renamingRow = current.currentIndex
     }
     // Starts a drag of the selection (or `row`) from `item`, carrying file URIs.
     function startDrag(item, row) {
@@ -87,9 +92,8 @@ Item {
                 tries = 0
                 view.pendingRename = ""
                 view.folderModel.select(row)
-                const target = view.mode === 1 ? grid : list
-                target.currentIndex = row
-                target.positionViewAtIndex(row, view.mode === 1 ? GridView.Contain : ListView.Contain)
+                view.current.currentIndex = row
+                view.current.positionViewAtIndex(row, ListView.Contain)
                 view.renamingRow = row
             } else if (++tries > 60) {
                 stop()
@@ -107,8 +111,10 @@ Item {
     readonly property bool showMode: list.width >= 720
     readonly property bool showKind: list.width >= 600
 
+    // A view chosen takes the keyboard.
+    onModeChanged: Qt.callLater(focusList)
     function focusList() {
-        (mode === 1 ? grid : mode === 2 ? columnsView : list).forceActiveFocus()
+        (mode === 2 ? columnsView : current).forceActiveFocus()
     }
     // A click on a row: it selects, and opens what Settings says opens with one click (files or
     // folders, in each view). A double click opens the rest.
@@ -137,7 +143,7 @@ Item {
         target.currentIndex = next
         if (modifiers & Qt.ShiftModifier) folderModel.extendTo(next)
         else folderModel.select(next)
-        target.positionViewAtIndex(next, target === grid ? GridView.Contain : ListView.Contain)
+        target.positionViewAtIndex(next, ListView.Contain)
     }
     function openCurrent(target) {
         activate(target.currentIndex)
@@ -461,6 +467,170 @@ Item {
             }
             onSelected: (rows, add) => view.folderModel.selectRows(rows, add)
             onCleared: view.folderModel.clearSelection()
+        }
+    }
+
+    // Compact List: small icons and names in columns that fill top to bottom, scrolled sideways.
+    GridView {
+        id: compact
+        objectName: "fileCompact"
+        anchors.fill: parent
+        anchors.margins: 12
+        visible: view.mode === 3
+        clip: true
+        focus: view.mode === 3
+        flow: GridView.FlowTopToBottom
+        boundsBehavior: Flickable.StopAtBounds
+        model: visible ? view.folderModel : null
+        cellWidth: 260
+        cellHeight: Theme.rowHeight - 4
+        currentIndex: -1
+        ScrollBar.horizontal: ScrollBar {}
+        readonly property int perColumn: Math.max(1, Math.floor(height / cellHeight))
+        delegate: Rectangle {
+            id: compactItem
+            required property int index
+            required property string name
+            required property bool isFolder
+            required property bool loaded
+            required property bool selected
+            required property string customColor
+            required property string customIcon
+            readonly property bool editing: index === view.renamingRow
+            width: GridView.view.cellWidth - 6
+            height: GridView.view.cellHeight - 2
+            radius: Theme.radius
+            color: selected ? Theme.selection : compactHover.hovered ? Theme.hover : "transparent"
+            Drag.dragType: Drag.Automatic
+            Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
+            HoverHandler { id: compactHover }
+            DragHandler {
+                target: null
+                enabled: !compactItem.editing
+                onActiveChanged: active ? view.startDrag(compactItem, compactItem.index) : (compactItem.Drag.active = false)
+            }
+            DropArea {
+                anchors.fill: parent
+                enabled: compactItem.isFolder
+                onDropped: (drop) => {
+                    const result = view.transfers.dropInto(drop.urls, view.folderModel, compactItem.index)
+                    if (result !== Transfers.Refused) { drop.accept(); view.dropped(result, view.folderModel.pathAt(compactItem.index)) }
+                }
+                Rectangle { anchors.fill: parent; radius: Theme.radius; color: "transparent"; border.width: parent.containsDrag ? 1 : 0; border.color: Theme.accent }
+            }
+            TapHandler {
+                onTapped: (point) => { compact.currentIndex = compactItem.index; view.rowClicked(view.folderModel, compactItem.index, point.modifiers); compact.forceActiveFocus() }
+                onDoubleTapped: view.rowDoubleClicked(view.folderModel, compactItem.index)
+            }
+            TapHandler {
+                acceptedButtons: Qt.RightButton
+                onTapped: { compact.currentIndex = compactItem.index; view.requestContext(compactItem.index) }
+            }
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 8
+                anchors.rightMargin: 8
+                spacing: 8
+                Icon {
+                    visible: !compactItem.customIcon.startsWith("emoji:")
+                    size: 14
+                    color: compactItem.customColor.length > 0 ? compactItem.customColor : compactItem.isFolder ? Theme.accent : Theme.folderIcon
+                    path: compactItem.customIcon.length > 0 ? compactItem.customIcon
+                        : compactItem.isFolder ? "M2 4.5h4l1.5 1.5H14v6.5H2z" : "M4 2h5l3 3v9H4zM9 2v3h3"
+                }
+                Text {
+                    visible: compactItem.customIcon.startsWith("emoji:")
+                    text: compactItem.customIcon.substring(6)
+                    font.pixelSize: 12
+                }
+                Text {
+                    visible: !compactItem.editing
+                    Layout.fillWidth: true
+                    text: compactItem.loaded ? compactItem.name : ""
+                    elide: Text.ElideMiddle
+                    color: Theme.text
+                    font.family: Theme.family
+                    font.pointSize: Theme.body
+                }
+                NameEditor {
+                    visible: compactItem.editing
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 24
+                    original: compactItem.name
+                    isFolder: compactItem.isFolder
+                    onVisibleChanged: if (visible) begin()
+                    onCommitted: (name) => view.finishRename(name)
+                    onCancelled: { view.renamingRow = -1; view.focusList() }
+                }
+            }
+        }
+        Keys.onUpPressed: (event) => view.moveBy(compact, -1, event.modifiers)
+        Keys.onDownPressed: (event) => view.moveBy(compact, 1, event.modifiers)
+        Keys.onLeftPressed: (event) => view.moveBy(compact, -compact.perColumn, event.modifiers)
+        Keys.onRightPressed: (event) => view.moveBy(compact, compact.perColumn, event.modifiers)
+        Keys.onReturnPressed: view.openCurrent(compact)
+        Keys.onEnterPressed: view.openCurrent(compact)
+    }
+
+    // Gallery: the item the keyboard is on, large, over a strip of the folder's items.
+    ColumnLayout {
+        anchors.fill: parent
+        anchors.margins: 12
+        visible: view.mode === 4
+        spacing: 10
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            radius: Theme.radius + 4
+            color: Theme.window
+            border.width: 1
+            border.color: Theme.panelEdge
+            clip: true
+            Loader {
+                anchors.fill: parent
+                active: view.mode === 4 && view.preview !== null
+                sourceComponent: PreviewContent { preview: view.preview; closable: false }
+            }
+        }
+        ListView {
+            id: strip
+            objectName: "fileStrip"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 116
+            orientation: ListView.Horizontal
+            clip: true
+            spacing: 6
+            focus: view.mode === 4
+            boundsBehavior: Flickable.StopAtBounds
+            model: view.mode === 4 ? view.folderModel : null
+            currentIndex: -1
+            ScrollBar.horizontal: ScrollBar {}
+            delegate: FileTile {
+                id: stripItem
+                width: 104
+                height: 104
+                iconSize: 48
+                editing: index === view.renamingRow
+                Drag.dragType: Drag.Automatic
+                Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
+                DragHandler {
+                    target: null
+                    enabled: !stripItem.editing
+                    onActiveChanged: active ? view.startDrag(stripItem, stripItem.index) : (stripItem.Drag.active = false)
+                }
+                TapHandler {
+                    acceptedButtons: Qt.RightButton
+                    onTapped: { strip.currentIndex = stripItem.index; view.requestContext(stripItem.index) }
+                }
+                onRenameAccepted: (name) => view.finishRename(name)
+                onRenameCancelled: { view.renamingRow = -1; view.focusList() }
+                onClicked: (modifiers) => { strip.currentIndex = index; view.rowClicked(view.folderModel, index, modifiers); strip.forceActiveFocus() }
+                onActivated: view.rowDoubleClicked(view.folderModel, index)
+            }
+            Keys.onLeftPressed: (event) => view.moveBy(strip, -1, event.modifiers)
+            Keys.onRightPressed: (event) => view.moveBy(strip, 1, event.modifiers)
+            Keys.onReturnPressed: view.openCurrent(strip)
+            Keys.onEnterPressed: view.openCurrent(strip)
         }
     }
 
