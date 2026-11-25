@@ -30,6 +30,7 @@ qt_add_library(asc_files_core STATIC
     src/ops/Operations.cpp src/ops/Operations.h
     src/render/Preview.cpp src/render/Preview.h
     src/render/Sandbox.cpp src/render/Sandbox.h
+    src/app/Windows.cpp src/app/Windows.h
     src/theme/SystemTheme.cpp src/theme/SystemTheme.h
     src/thumbnails/Thumbnails.cpp src/thumbnails/Thumbnails.h)
 target_include_directories(asc_files_core PUBLIC src)

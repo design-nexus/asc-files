@@ -32,6 +32,9 @@ class SystemTheme : public QObject {
 public:
     explicit SystemTheme(QObject *parent = nullptr);
 
+    /// Makes `SystemTheme` the singleton of `import AscFiles.System`: one for each engine.
+    static void registerType();
+
     /// `$XDG_RUNTIME_DIR/nyx/theme`, else the cache's fallback folder, as nyx-theme-core has it.
     static QString runtimeDir();
     static QString suitePath();

@@ -184,7 +184,12 @@ Item {
             Button { text: qsTr("Review…"); onClicked: leftoversDialog.review() }
         }
     }
-    LeftoversDialog { id: leftoversDialog; ops: view.ops; folderModel: view.folderModel }
+    LeftoversDialog {
+        id: leftoversDialog
+        ops: view.ops
+        folderModel: view.folderModel
+        listening: view.Window.window === null || view.Window.window.foremost !== false
+    }
 
     // The filter typed over the folder.
     Rectangle {

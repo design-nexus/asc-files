@@ -6,8 +6,10 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QLocale>
 #include <QMimeDatabase>
+#include <QMutex>
 #include <QStringDecoder>
 
 namespace {
@@ -20,12 +22,31 @@ bool isMarkdown(const QString &path) {
 
 } // namespace
 
-Preview::Preview(QObject *parent) : QObject(parent) {}
+namespace {
+
+/// The previews alive, by id, for the image provider (which the QML engine calls on its own
+/// thread).
+QMutex previewsLock;
+QHash<int, Preview *> previews;
+int nextPreview = 1;
+
+} // namespace
+
+Preview::Preview(QObject *parent) : QObject(parent) {
+    const QMutexLocker lock(&previewsLock);
+    m_id = nextPreview++;
+    previews.insert(m_id, this);
+}
+
+Preview::~Preview() {
+    const QMutexLocker lock(&previewsLock);
+    previews.remove(m_id);
+}
 
 QString Preview::name() const { return QFileInfo(m_path).fileName(); }
 
 QString Preview::imageSource() const {
-    return m_image.isNull() ? QString() : QStringLiteral("image://preview/%1").arg(m_serial);
+    return m_image.isNull() ? QString() : QStringLiteral("image://preview/%1/%2").arg(m_id).arg(m_serial);
 }
 
 QString Preview::kindOf(const QString &path) {
@@ -184,8 +205,14 @@ void Preview::setDetails() {
     m_details.insert(QStringLiteral("where"), info.path());
 }
 
-QImage PreviewImageProvider::requestImage(const QString &, QSize *size, const QSize &) {
-    const QImage image = m_preview->image();
+QImage PreviewImageProvider::requestImage(const QString &id, QSize *size, const QSize &) {
+    QImage image;
+    {
+        const QMutexLocker lock(&previewsLock);
+        if (const Preview *preview = previews.value(id.section(u'/', 0, 0).toInt())) {
+            image = preview->image();
+        }
+    }
     if (size) {
         *size = image.size();
     }

@@ -18,8 +18,11 @@ Popup {
     function review() {
         ops.reviewLeftovers(folderModel)
     }
+    /// Whether this window answers (only the window used last does).
+    property bool listening: true
     Connections {
         target: dialog.ops
+        enabled: dialog.listening
         function onLeftoversReviewed(leftovers) {
             dialog.leftovers = leftovers
             dialog.open()

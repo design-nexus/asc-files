@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QtQml/qqml.h>
 #include <QStandardPaths>
 #include <QTimer>
 
@@ -65,6 +66,11 @@ SystemTheme::SystemTheme(QObject *parent) : QObject(parent) {
     connect(&m_watch, &QFileSystemWatcher::directoryChanged, this, &SystemTheme::reload);
     connect(&m_watch, &QFileSystemWatcher::fileChanged, this, &SystemTheme::reload);
     reload();
+}
+
+void SystemTheme::registerType() {
+    qmlRegisterSingletonType<SystemTheme>("AscFiles.System", 1, 0, "SystemTheme",
+                                          [](QQmlEngine *, QJSEngine *) { return new SystemTheme; });
 }
 
 QString SystemTheme::runtimeDir() {

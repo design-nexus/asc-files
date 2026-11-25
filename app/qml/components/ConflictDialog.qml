@@ -14,6 +14,8 @@ Popup {
 
     required property var ops
     property var conflicts: ops.conflicts
+    /// Whether this window asks (only the window used last does).
+    property bool listening: true
     property int at: 0
     property var choices: []
     property bool forRest: false
@@ -46,7 +48,7 @@ Popup {
         at = 0
         choices = []
         forRest = false
-        if (conflicts.length > 0) open()
+        if (conflicts.length > 0 && listening) open()
     }
 
     parent: Overlay.overlay
@@ -56,7 +58,7 @@ Popup {
     focus: true
     padding: 22
     closePolicy: Popup.CloseOnEscape
-    onClosed: if (at < conflicts.length) ops.resolve([])
+    onClosed: if (at < conflicts.length && listening) ops.resolve([])
     Overlay.modal: Rectangle { color: Theme.scrim }
     background: Rectangle { radius: 14; color: Theme.raised; border.width: 1; border.color: Theme.panelEdge }
 

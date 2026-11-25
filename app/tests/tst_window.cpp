@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "TestSupport.h"
+#include "app/Windows.h"
 #include "backend/BackendClient.h"
 #include "models/Browser.h"
 #include "models/FavoritesModel.h"
@@ -18,11 +19,11 @@
 
 #include <QFile>
 #include <QQmlApplicationEngine>
-#include <QtQml/qqml.h>
 #include <QQmlExtensionPlugin>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 
@@ -34,6 +35,7 @@ private slots:
     void initTestCase() {
         TestSupport::requirePrivateHome();
         QQuickStyle::setStyle(QStringLiteral("Basic"));
+        SystemTheme::registerType();
     }
 
     void theWindowShowsAFolderWithoutWarnings() {
@@ -61,11 +63,9 @@ private slots:
         tabs.openTab(dir.path());
         FolderModel &folders = *tabs.current()->folderModel();
         QSignalSpy opened(&folders, &FolderModel::opened);
-        SystemTheme systemTheme;
-        qmlRegisterSingletonInstance("AscFiles.System", 1, 0, "SystemTheme", &systemTheme);
         QQmlApplicationEngine engine;
         engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
-        engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider(&preview));
+        engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider);
         engine.setInitialProperties({{"tabs", QVariant::fromValue(&tabs)},
                                      {"places", QVariant::fromValue(&places)},
                                      {"recent", QVariant::fromValue(&recent)},
@@ -174,6 +174,63 @@ private slots:
         places.stepMode();
         QTRY_VERIFY(sidebar->isVisible());
         QTRY_COMPARE(sidebar->width(), 229.0);
+    }
+
+    void windowsKeepTheirOwnTabs() {
+        QTest::failOnWarning(QRegularExpression(QStringLiteral(".*")));
+        QTemporaryDir first;
+        QTemporaryDir second;
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        PlacesModel places;
+        RecentModel recent;
+        FavoritesModel favorites;
+        TrashModel trash(&backend);
+        FolderModel downloads(&backend);
+        JobModel jobs(&backend);
+        Transfers transfers(&jobs);
+        Operations ops(&backend, &jobs);
+        QQmlApplicationEngine engine;
+        engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
+        engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider);
+        Windows windows(&engine, {{"places", QVariant::fromValue(&places)},
+                                  {"recent", QVariant::fromValue(&recent)},
+                                  {"favorites", QVariant::fromValue(&favorites)},
+                                  {"trash", QVariant::fromValue(&trash)},
+                                  {"downloads", QVariant::fromValue(&downloads)},
+                                  {"jobModel", QVariant::fromValue(&jobs)},
+                                  {"transfers", QVariant::fromValue(&transfers)},
+                                  {"ops", QVariant::fromValue(&ops)},
+                                  {"backend", QVariant::fromValue(&backend)}});
+        QQuickWindow *one = windows.open({first.path()});
+        QQuickWindow *two = windows.open({second.path(), first.path()});
+        QVERIFY(one && two);
+        QCOMPARE(windows.count(), 2);
+        auto tabsOf = [](QQuickWindow *window) { return window->property("tabs").value<TabModel *>(); };
+        QCOMPARE(tabsOf(one)->rowCount(), 1);
+        QCOMPARE(tabsOf(two)->rowCount(), 2);
+        QCOMPARE(tabsOf(two)->current()->location(), second.path());
+        // Only the window used last answers for the shared operations.
+        QCOMPARE(windows.current(), one);
+        QVERIFY(one->property("foremost").toBool());
+        QVERIFY(!two->property("foremost").toBool());
+
+        // The first window keeps the session; the second doesn't.
+        tabsOf(one)->openTab(second.path());
+        QTRY_VERIFY_WITH_TIMEOUT(QSettings(QSettings::IniFormat, QSettings::UserScope, "asc-files", "asc-files")
+                                         .value("session/tabs").toStringList().size() == 2, 5000);
+        tabsOf(two)->openTab(second.path());
+        QTest::qWait(800);
+        QCOMPARE(QSettings(QSettings::IniFormat, QSettings::UserScope, "asc-files", "asc-files").value("session/tabs").toStringList().size(), 2);
+
+        // A closed window goes, with its tabs.
+        QPointer<TabModel> closedTabs = tabsOf(two);
+        two->close();
+        QTRY_COMPARE(windows.count(), 1);
+        QTRY_VERIFY(closedTabs.isNull());
+        QCOMPARE(windows.current(), one);
+        one->close();
+        QTRY_COMPARE(windows.count(), 0);
     }
 };
 

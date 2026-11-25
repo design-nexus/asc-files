@@ -32,6 +32,7 @@ public:
     static constexpr int ImageSize = 1600;
 
     explicit Preview(QObject *parent = nullptr);
+    ~Preview() override;
 
     /// Shows `path` (text, as a listing gives it); empty clears it.
     Q_INVOKABLE void show(const QString &path);
@@ -70,18 +71,17 @@ private:
     bool m_truncated = false;
     QImage m_image;
     quint64 m_serial = 0;
+    /// Which preview an image URL names: each window has its own.
+    int m_id = 0;
     int m_page = 0;
     int m_pageCount = 0;
     QVariantMap m_details;
     QObject *m_work = nullptr;
 };
 
-/// Serves the preview's current image as `image://preview/<serial>`.
+/// Serves each preview's current image as `image://preview/<preview>/<serial>`.
 class PreviewImageProvider : public QQuickImageProvider {
 public:
-    explicit PreviewImageProvider(Preview *preview) : QQuickImageProvider(QQuickImageProvider::Image), m_preview(preview) {}
+    PreviewImageProvider() : QQuickImageProvider(QQuickImageProvider::Image) {}
     QImage requestImage(const QString &id, QSize *size, const QSize &requestedSize) override;
-
-private:
-    Preview *m_preview;
 };

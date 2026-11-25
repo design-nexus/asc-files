@@ -23,7 +23,7 @@ TabModel::TabModel(BackendClient *backend, QObject *parent) : QAbstractListModel
 }
 
 void TabModel::saveSoon() {
-    if (!m_restoring) {
+    if (!m_restoring && m_keepsSession) {
         m_save.start();
     }
 }

@@ -24,6 +24,11 @@ ApplicationWindow {
     required property var preview
     required property var search
     required property var backend
+    /// The app's windows (absent in a test of one window).
+    property var windows: null
+    /// Whether operations answer here: the window used last does (their notices, clashes and
+    /// questions show in one window only).
+    readonly property bool foremost: windows === null || windows.current === window
 
     readonly property var browser: tabs.current
     readonly property var folderModel: browser ? browser.folderModel : null
@@ -424,6 +429,7 @@ ApplicationWindow {
 
     Connections {
         target: window.ops
+        enabled: window.foremost
         function onNotice(message) { notice.show(message) }
         function onTrashChanged() { window.trash.reload() }
         function onUndoBlocked(names) {
@@ -432,7 +438,7 @@ ApplicationWindow {
                         qsTr("Move to Trash and Undo"), () => window.ops.undo(true))
         }
     }
-    ConflictDialog { ops: window.ops }
+    ConflictDialog { ops: window.ops; listening: window.foremost }
     ConfirmDialog { id: confirm }
 
     // A right click on items.
@@ -449,6 +455,12 @@ ApplicationWindow {
             visible: itemMenu.single && itemMenu.folder
             height: visible ? implicitHeight : 0
             onTriggered: window.tabs.openTab(itemMenu.path)
+        }
+        MenuItem {
+            text: qsTr("Open in New Window")
+            visible: itemMenu.single && itemMenu.folder && window.windows !== null
+            height: visible ? implicitHeight : 0
+            onTriggered: window.windows.open([itemMenu.path])
         }
         MenuSeparator {}
         MenuItem { text: qsTr("Cut"); onTriggered: window.ops.copy(window.folderModel, true) }
@@ -501,6 +513,7 @@ ApplicationWindow {
         MenuItem { text: qsTr("New File"); enabled: window.inFolder; onTriggered: window.ops.create(window.folderModel, false) }
         MenuSeparator {}
         MenuItem { text: qsTr("New Tab"); onTriggered: window.tabs.openTab() }
+        MenuItem { text: qsTr("New Window"); enabled: window.windows !== null; onTriggered: window.windows.open([window.browser.location]) }
     }
 
     Popup {
@@ -652,7 +665,9 @@ ApplicationWindow {
     Shortcut { sequence: "Alt+Up"; onActivated: window.browser.up() }
     Shortcut { sequence: "Ctrl+L"; onActivated: breadcrumb.edit() }
     Shortcut { sequence: "Ctrl+T"; onActivated: window.tabs.openTab() }
-    Shortcut { sequence: "Ctrl+W"; onActivated: window.tabs.closeTab(window.tabs.currentIndex) }
+    Shortcut { sequence: "Ctrl+W"; onActivated: window.tabs.count > 1 ? window.tabs.closeTab(window.tabs.currentIndex) : window.close() }
+    Shortcut { sequence: "Ctrl+N"; enabled: window.windows !== null; onActivated: window.windows.open([window.browser.location]) }
+    Shortcut { sequence: "Ctrl+Shift+W"; onActivated: window.close() }
     Shortcut { sequence: "Ctrl+Tab"; onActivated: window.tabs.next() }
     Shortcut { sequence: "Ctrl+Shift+Tab"; onActivated: window.tabs.previous() }
     Shortcut { sequence: "Ctrl+B"; onActivated: window.places.stepMode() }

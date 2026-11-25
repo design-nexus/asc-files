@@ -37,6 +37,8 @@ public:
 
     /// Opens the tabs the last session left, where they were; false when it left fewer than two.
     bool restoreSession();
+    /// Whether this window's tabs are the session kept for next time (the first window's are).
+    void setKeepsSession(bool keeps) { m_keepsSession = keeps; }
 
     int rowCount(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role) const override;
@@ -54,6 +56,7 @@ private:
     BackendClient *m_backend;
     QTimer m_save;
     bool m_restoring = false;
+    bool m_keepsSession = true;
     QList<Browser *> m_tabs;
     int m_current = -1;
 };
