@@ -606,6 +606,40 @@ private slots:
         tabs.current()->goPath(dir.path());
         QTRY_COMPARE(tabs.current()->location(), dir.path());
         QTRY_VERIFY(list->isVisible());
+        // l on a file gives the preview (a panel) the keys: j scrolls it, h gives them back.
+        AppSettings::shared().setPreviewStyle(QStringLiteral("panel"));
+        {
+            QFile file(dir.filePath("long.txt"));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            for (int line = 0; line < 400; ++line) {
+                file.write(QByteArray("line ") + QByteArray::number(line) + '\n');
+            }
+        }
+        QTRY_VERIFY(folders.rowOfName("long.txt") >= 0);
+        list->forceActiveFocus();
+        press(Qt::Key_Slash);
+        typeText("long");
+        press(Qt::Key_Return);
+        QTRY_COMPARE(folders.pathAt(cursor()), dir.filePath("long.txt"));
+        auto *panel = window->findChild<QQuickItem *>(QStringLiteral("panelPreview"));
+        QVERIFY(panel);
+        press(Qt::Key_L);
+        QTRY_VERIFY(panel->property("owning").toBool());
+        QTRY_VERIFY(panel->hasActiveFocus());
+        auto scrolled = [&] {
+            auto *scroller = qvariant_cast<QObject *>(panel->property("scroller"));
+            return scroller ? scroller->property("contentY").toDouble() : -1.0;
+        };
+        QTRY_VERIFY(qvariant_cast<QObject *>(panel->property("scroller")) != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT([&] { press(Qt::Key_J); return scrolled() > 0; }(), 5000);
+        const int before = cursor();
+        press(Qt::Key_H);
+        QTRY_VERIFY(list->hasActiveFocus());
+        QVERIFY(!panel->property("owning").toBool());
+        QCOMPARE(cursor(), before);
+        QVERIFY(window->property("previewOpen").toBool());
+        window->setProperty("previewOpen", false);
+        AppSettings::shared().setPreviewStyle(QStringLiteral("popup"));
         // ; lists what it runs; e on something that isn't an archive says so.
         QTRY_VERIFY(folders.isLoaded(cursor()));
         list->forceActiveFocus();

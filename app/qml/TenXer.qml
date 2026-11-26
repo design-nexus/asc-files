@@ -196,6 +196,13 @@ Item {
         case "l": icons ? move(view, cursor + 1) : enter(view); return true
         case "G": move(view, view.rowCount() - 1); return true
         case "H": keys.window.browser.back(); return true
+        // The open preview scrolls from here, the keys staying in the files.
+        case "J":
+            if (keys.window.previewOpen && keys.window.previewView) keys.window.previewView.scroll(3)
+            return true
+        case "K":
+            if (keys.window.previewOpen && keys.window.previewView) keys.window.previewView.scroll(-3)
+            return true
         case "L": keys.window.browser.forward(); return true
         case "o": openItem(view); return true
         case "i": peekAt(view); return true
@@ -351,8 +358,19 @@ Item {
     function enter(view) {
         const cursor = view.cursorRow()
         if (cursor < 0) { say(qsTr("Nothing to preview")); return }
-        if (isFolderAt(view, cursor)) openFolder(view, cursor)
-        else keys.window.previewOpen = true
+        if (isFolderAt(view, cursor)) {
+            openFolder(view, cursor)
+            return
+        }
+        // Opened if it isn't, and given the keys (where the preview is a panel; a popup has them).
+        keys.window.previewOpen = true
+        Qt.callLater(() => {
+            const preview = keys.window.previewView
+            if (preview && keys.window.previewAsPanel) {
+                preview.owning = true
+                preview.forceActiveFocus()
+            }
+        })
     }
     function leave(view) {
         if (keys.window.previewOpen) { keys.window.previewOpen = false; return }

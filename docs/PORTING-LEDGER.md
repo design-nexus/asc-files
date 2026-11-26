@@ -550,9 +550,12 @@ targets, refused with "Selection changed" if the targets moved; ; t a terminal i
 folder), O (Open With), R (said not to apply outside the Trash, which folder views never are), the
 window's search field hidden while the mode is on, and the file chooser's rules (refused verbs say so,
 one-item requests refuse ranges, Enter / o on a file chooses it, Save requests save, Esc cancels once
-nothing is left to dismiss). Not built: the shortcut reference (F1, dropped by the user), preview
-keyboard ownership (the preview's own keys), find highlights, the folder peek popover, and the
-in-place s results (they show in the Search page). Tested in `tst_window` (`tenxerMovesACursorApartFromTheSelection`).
+nothing is left to dismiss). Later added: find highlights (the matched part of
+each name in the accent colour until Esc), the folder peek (i on a folder), 10xer's keys on search
+results and the other item lists (s's results show in the Search page rather than in place), and the
+preview taking the keys (l on a previewed file in the panel: j / k, paging, g g / G scroll it; h,
+Shift+Tab or Esc give them back; J / K scroll it from the files). Not built: the shortcut reference
+(F1, dropped by the user), and the per-kind preview keys legacy had for media and archive trees. Tested in `tst_window` (`tenxerMovesACursorApartFromTheSelection`).
 
 ## Smaller features (item 10)
 

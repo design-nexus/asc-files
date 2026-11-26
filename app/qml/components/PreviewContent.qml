@@ -17,6 +17,86 @@ ColumnLayout {
     /// Whether it offers to close (Gallery's doesn't: it is the view).
     property bool closable: true
     signal closeRequested()
+
+    // 10xer: the preview can take the keyboard (l on a previewed file): j / k and paging scroll it,
+    // g g / G go to its ends, h, Shift+Tab or Esc give the keys back (Esc closing it). An accent
+    // bar across its top says it has them.
+    property bool owning: false
+    signal released()
+    onActiveFocusChanged: if (!activeFocus) owning = false
+    readonly property var scroller: textScroll.visible ? textScroll.contentItem : docScroll.visible ? docScroll.contentItem : null
+    /// Scrolls by `lines` lines (a PDF turns pages instead).
+    function scroll(lines) {
+        if (content.preview.kind === "pdf") {
+            const page = content.preview.page + (lines > 0 ? 1 : -1)
+            if (page >= 1 && page <= content.preview.pageCount) content.preview.goToPage(page)
+            return
+        }
+        if (!scroller) return
+        const most = Math.max(0, scroller.contentHeight - scroller.height)
+        scroller.contentY = Math.max(0, Math.min(most, scroller.contentY + lines * 20))
+    }
+    function scrollPages(pages) { scroll(Math.round(pages * (scroller ? scroller.height : 400) / 20)) }
+    function toEnd(end) {
+        if (content.preview.kind === "pdf") {
+            content.preview.goToPage(end ? content.preview.pageCount : 1)
+            return
+        }
+        if (scroller) scroller.contentY = end ? Math.max(0, scroller.contentHeight - scroller.height) : 0
+    }
+    property bool chordG: false
+    function ownedKey(event) {
+        const mods = event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)
+        if ([Qt.Key_Shift, Qt.Key_Control, Qt.Key_Alt, Qt.Key_Meta].includes(event.key)) return false
+        const text = (event.modifiers & Qt.ShiftModifier) ? event.text.toUpperCase() : event.text
+        const give = () => { owning = false; released() }
+        if (chordG) {
+            chordG = false
+            if (text === "g") toEnd(false)
+            return true
+        }
+        if (event.key === Qt.Key_Backtab) { give(); return true }
+        if (mods === Qt.ControlModifier) {
+            if (event.key === Qt.Key_D) scrollPages(0.5)
+            else if (event.key === Qt.Key_U) scrollPages(-0.5)
+            else if (event.key === Qt.Key_F) scrollPages(1)
+            else if (event.key === Qt.Key_B) scrollPages(-1)
+            else return false
+            return true
+        }
+        if (mods !== Qt.NoModifier) return false
+        switch (event.key) {
+        case Qt.Key_Down: scroll(1); return true
+        case Qt.Key_Up: scroll(-1); return true
+        case Qt.Key_PageDown: scrollPages(1); return true
+        case Qt.Key_PageUp: scrollPages(-1); return true
+        case Qt.Key_Home: toEnd(false); return true
+        case Qt.Key_End: toEnd(true); return true
+        case Qt.Key_Left: give(); return true
+        case Qt.Key_Escape: give(); closeRequested(); return true
+        }
+        switch (text) {
+        case "j": scroll(1); return true
+        case "k": scroll(-1); return true
+        case "J": scroll(3); return true
+        case "K": scroll(-3); return true
+        case "G": toEnd(true); return true
+        case "g": chordG = true; return true
+        case "h": give(); return true
+        case "i": give(); closeRequested(); return true
+        }
+        // Everything else stays here, so nothing moves the listing behind it.
+        return true
+    }
+    Keys.onPressed: (event) => { if (owning && AppSettings.tenxer) event.accepted = ownedKey(event) }
+    Keys.onShortcutOverride: (event) => { event.accepted = owning && AppSettings.tenxer && event.key !== Qt.Key_M }
+    Rectangle {
+        z: 5
+        visible: content.owning
+        width: parent.width
+        height: 2
+        color: Theme.accent
+    }
     // A solid colour as #rrggbb, as rich text takes one.
     function hex(colour) {
         return "#" + [colour.r, colour.g, colour.b].map(v => Math.round(v * 255).toString(16).padStart(2, "0")).join("")
@@ -82,6 +162,7 @@ ColumnLayout {
             mipmap: true
         }
         ScrollView {
+            id: textScroll
             anchors.fill: parent
             visible: content.preview.kind === "text" || (content.preview.kind === "document" && content.preview.hasSource && !content.rendered)
             clip: true
@@ -106,6 +187,7 @@ ColumnLayout {
             }
         }
         ScrollView {
+            id: docScroll
             anchors.fill: parent
             visible: content.preview.kind === "document" && (content.rendered || !content.preview.hasSource)
             clip: true

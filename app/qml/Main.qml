@@ -549,6 +549,8 @@ ApplicationWindow {
                             TapHandler { onDoubleTapped: AppSettings.previewWidth = 380 }
                         }
                         PreviewContent {
+                            id: panelPreview
+                            objectName: "panelPreview"
                             anchors.fill: parent
                             anchors.leftMargin: 1
                             preview: window.preview
@@ -789,6 +791,13 @@ ApplicationWindow {
     ConfirmDialog { id: confirm }
     // 10xer mode's keys, which the views send their keys to first while it is on.
     readonly property var tenxer: tenxerKeys
+    /// The preview shown: in the panel, or the popup.
+    readonly property var previewView: previewAsPanel ? panelPreview : popupPreview
+    Connections {
+        target: panelPreview
+        // The keys come back to the files.
+        function onReleased() { if (window.view) window.view.focusList() }
+    }
     TenXer { id: tenxerKeys; window: window; confirm: confirm; compress: compressDialog; openWith: openWithDialog; peek: folderPeek }
     FolderPeek { id: folderPeek; objectName: "folderPeek"; showHidden: window.folderModel ? window.folderModel.showHidden : false }
     Shortcut {
@@ -1180,6 +1189,7 @@ ApplicationWindow {
         onClosed: window.previewOpen = false
         background: Rectangle { radius: 16; color: Theme.raised; border.width: 1; border.color: Theme.panelEdge }
         contentItem: PreviewContent {
+            id: popupPreview
             preview: window.preview
             onCloseRequested: window.previewOpen = false
             focus: true
