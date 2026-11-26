@@ -319,16 +319,30 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
     let bulk = bulk_runs(&request, &measured);
     let mut finished: std::collections::HashMap<usize, (Outcome, Vec<Step>)> = Default::default();
     for (index, item) in request.items.iter().enumerate() {
-        if let Some(run) = bulk.iter().find(|run| run.start == index)
+        if let Some(run) = bulk.iter().find(|run| run.items.start == index)
             && !cancel.is_cancelled()
         {
-            finished.extend(run_bulk(
-                job,
-                &request,
-                run.clone(),
-                (cancel, &deadline),
-                &send,
-            ));
+            if run.moving {
+                for batch in run.items.clone().step_by(BULK_MOVE_BATCH) {
+                    let end = (batch + BULK_MOVE_BATCH).min(run.items.end);
+                    finished.extend(run_bulk_moves(
+                        job,
+                        &request,
+                        batch..end,
+                        run.workers,
+                        cancel,
+                        &send,
+                    ));
+                }
+            } else {
+                finished.extend(run_bulk(
+                    job,
+                    &request,
+                    (run.items.clone(), run.workers),
+                    (cancel, &deadline),
+                    &send,
+                ));
+            }
         }
         let ran = finished.remove(&index);
         let refused = measured[index]
@@ -411,10 +425,7 @@ const BULK_WORKERS: usize = 4;
 /// whose names no other item of the batch shares even in case: legacy's bulk path, which copied
 /// many small items at once (a share's latency, a small file's open and close, overlap). Not on a
 /// spinning disk, where reading several at once only makes it seek.
-fn bulk_runs(
-    request: &Request,
-    measured: &[Result<Option<ops::Measured>, Error>],
-) -> Vec<std::ops::Range<usize>> {
+fn bulk_runs(request: &Request, measured: &[Result<Option<ops::Measured>, Error>]) -> Vec<Bulk> {
     use crate::adapters::local_operations::deletion::local_device_is_rotational;
     let folded = |item: &Item| {
         item.source
@@ -425,26 +436,42 @@ fn bulk_runs(
     for name in request.items.iter().filter_map(folded) {
         *seen.entry(name).or_default() += 1;
     }
-    let eligible = |index: usize| {
+    // Copies, or moves onto another drive (a rename needs no flush to share).
+    let kind = |index: usize| -> Option<bool> {
         let item = &request.items[index];
-        matches!(item.action, Action::Copy(Conflict::Fail))
-            && item.name.is_none()
+        let moving = match item.action {
+            Action::Copy(Conflict::Fail) => false,
+            Action::Move if crosses_device(&item.source, &request.into) => true,
+            _ => return None,
+        };
+        (item.name.is_none()
             && matches!(&measured[index], Ok(Some(measured)) if measured.files == 1 && measured.bytes <= BULK_ITEM_BYTES)
             && std::fs::symlink_metadata(&item.source).is_ok_and(|meta| meta.is_file())
-            && folded(item).is_some_and(|name| seen.get(&name) == Some(&1))
+            && folded(item).is_some_and(|name| seen.get(&name) == Some(&1)))
+            .then_some(moving)
     };
     let mut runs = Vec::new();
-    let mut start = None;
+    let mut start: Option<(usize, bool)> = None;
     for index in 0..=request.items.len() {
-        match (index < request.items.len() && eligible(index), start) {
-            (true, None) => start = Some(index),
-            (false, Some(from)) => {
-                if index - from >= BULK_MIN_RUN {
-                    runs.push(from..index);
+        let here = if index < request.items.len() {
+            kind(index)
+        } else {
+            None
+        };
+        match (here, start) {
+            (Some(moving), Some((_, was))) if moving == was => {}
+            (here, open) => {
+                if let Some((from, moving)) = open
+                    && index - from >= BULK_MIN_RUN
+                {
+                    runs.push(Bulk {
+                        items: from..index,
+                        moving,
+                        workers: BULK_WORKERS,
+                    });
                 }
-                start = None;
+                start = here.map(|moving| (index, moving));
             }
-            _ => {}
         }
     }
     let spins = || {
@@ -453,10 +480,183 @@ fn bulk_runs(
             .and_then(local_device_is_rotational)
             .unwrap_or(false)
     };
-    if runs.is_empty() || spins() {
-        return Vec::new();
+    // On a spinning disk copies go one at a time (reading several at once only makes it seek);
+    // moves still share their flush.
+    if !runs.is_empty() && spins() {
+        runs.retain(|run| run.moving);
+        for run in &mut runs {
+            run.workers = 1;
+        }
     }
     runs
+}
+
+/// A run of items that go the bulk path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Bulk {
+    items: std::ops::Range<usize>,
+    /// Moves across drives, sharing a flush; else copies.
+    moving: bool,
+    workers: usize,
+}
+
+/// Whether `source` and `into` are on different filesystems.
+fn crosses_device(source: &Path, into: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::symlink_metadata(source), std::fs::metadata(into)) {
+        (Ok(source), Ok(into)) => source.dev() != into.dev(),
+        _ => false,
+    }
+}
+
+/// Moves across drives finished together: up to this many share one flush.
+const BULK_MOVE_BATCH: usize = 64;
+
+/// Moves `batch`'s items onto another drive with one flush between them (legacy's batches): each
+/// is copied (`workers` at a time), the copies all reach the drive at once, then each source still
+/// what its copy read is deleted, and the item reports. Where the drive does not confirm the
+/// writes, no source is deleted and every staged item fails with that error.
+fn run_bulk_moves(
+    job: JobId,
+    request: &Request,
+    batch: std::ops::Range<usize>,
+    workers: usize,
+    cancel: &Cancel,
+    send: &(impl Fn(Event) + Sync),
+) -> Vec<(usize, (Outcome, Vec<Step>))> {
+    let into = request.into.as_path();
+    let fail = |error: Error| {
+        (
+            Outcome::Failed {
+                error,
+                changes: Changes::default(),
+            },
+            Vec::new(),
+        )
+    };
+    let moved = |source: &Path, moved: ops::Moved| match moved.stopped {
+        // The copy is in place but deleting the sources stopped: nothing is filed, as an undo
+        // would meet what is left of them.
+        Some(error) => (
+            Outcome::Failed {
+                error,
+                changes: moved.changes,
+            },
+            Vec::new(),
+        ),
+        None => {
+            let step = Step::moved(source, (into, &moved)).filter(|_| !moved.changes.left_out);
+            (
+                Outcome::Done {
+                    name: into.join(&moved.name),
+                    changes: moved.changes,
+                },
+                Vec::from_iter(step),
+            )
+        }
+    };
+    let mut done = Vec::new();
+    let batch_handle = match ops::MoveBatch::open(into) {
+        Ok(handle) => handle,
+        Err(error) => {
+            for index in batch {
+                let outcome = fail(error.clone());
+                send(Event::ItemDone {
+                    job,
+                    index,
+                    outcome: outcome.0.clone(),
+                });
+                done.push((index, outcome));
+            }
+            return done;
+        }
+    };
+    let progress = Progress::new();
+    let next = std::sync::atomic::AtomicUsize::new(batch.start);
+    let results = std::sync::Mutex::new(Vec::new());
+    // Copied several at a time; renames and links left where they are finish at once.
+    thread::scope(|scope| {
+        for _ in 0..workers.min(batch.len()).max(1) {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    if index >= batch.end {
+                        break;
+                    }
+                    let staged = if cancel.is_cancelled() {
+                        None
+                    } else {
+                        let own = Progress::new();
+                        let staged = batch_handle.stage(
+                            &request.items[index].source,
+                            request.names,
+                            cancel,
+                            &own,
+                        );
+                        send(Event::Progress {
+                            job,
+                            item: index,
+                            progress: own.snapshot(),
+                        });
+                        Some(staged)
+                    };
+                    results
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .push((index, staged));
+                }
+            });
+        }
+    });
+    let mut results = results
+        .into_inner()
+        .unwrap_or_else(|error| error.into_inner());
+    results.sort_by_key(|(index, _)| *index);
+    let mut waiting = Vec::new();
+    for (index, staged) in results {
+        let source = request.items[index].source.as_path();
+        let outcome = match staged {
+            None => (Outcome::NotAttempted, Vec::new()),
+            Some(Err(error)) => fail(error),
+            Some(Ok(ops::Staging::Done(done_now))) => moved(source, done_now),
+            Some(Ok(ops::Staging::Staged(staged))) => {
+                waiting.push((index, *staged));
+                continue;
+            }
+        };
+        send(Event::ItemDone {
+            job,
+            index,
+            outcome: outcome.0.clone(),
+        });
+        done.push((index, outcome));
+    }
+    // One flush for every copy, then each source goes.
+    let (indices, staged): (Vec<usize>, Vec<ops::StagedMove>) = waiting.into_iter().unzip();
+    if !staged.is_empty() {
+        send(Event::Flushing { job });
+    }
+    let outcomes: Vec<(usize, (Outcome, Vec<Step>))> =
+        match batch_handle.finish(staged, cancel, &progress) {
+            Ok(all) => indices
+                .into_iter()
+                .zip(all)
+                .map(|(index, finished)| (index, moved(&request.items[index].source, finished)))
+                .collect(),
+            Err(error) => indices
+                .into_iter()
+                .map(|index| (index, fail(error.clone())))
+                .collect(),
+        };
+    for (index, outcome) in outcomes {
+        send(Event::ItemDone {
+            job,
+            index,
+            outcome: outcome.0.clone(),
+        });
+        done.push((index, outcome));
+    }
+    done
 }
 
 /// Copies `run`'s items several at a time, each as [`run_item`] copies one, reporting each as it
@@ -464,7 +664,7 @@ fn bulk_runs(
 fn run_bulk(
     job: JobId,
     request: &Request,
-    run: std::ops::Range<usize>,
+    (run, workers): (std::ops::Range<usize>, usize),
     (cancel, deadline): (
         &Cancel,
         &crate::adapters::local_operations::leftovers::Deadline,
@@ -474,7 +674,7 @@ fn run_bulk(
     let next = std::sync::atomic::AtomicUsize::new(run.start);
     let done = std::sync::Mutex::new(Vec::new());
     thread::scope(|scope| {
-        for _ in 0..BULK_WORKERS.min(run.len()) {
+        for _ in 0..workers.min(run.len()) {
             scope.spawn(|| {
                 loop {
                     let index = next.fetch_add(1, Ordering::Relaxed);
@@ -1062,6 +1262,115 @@ mod bulk_tests {
             return;
         }
         // 0–9; then 10–19 (index 11–20) and 21–29 (index 22–30), around the twin "20.txt".
-        assert_eq!(runs, [0..10, 11..21, 22..31]);
+        let items: Vec<_> = runs.iter().map(|run| run.items.clone()).collect();
+        assert_eq!(items, [0..10, 11..21, 22..31]);
+        assert!(runs.iter().all(|run| !run.moving));
+    }
+
+    /// Many small files moved onto another drive share one flush, then their sources go; undo
+    /// brings them back.
+    #[test]
+    fn moves_onto_another_drive_share_one_flush() {
+        let Some((home, other)) =
+            crate::test_support::distinct_device_dirs("moves_onto_another_drive_share_one_flush")
+        else {
+            return;
+        };
+        let (source, into) = (other.path().join("source"), home.path().join("into"));
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&into).unwrap();
+        let items: Vec<_> = (0..20)
+            .map(|i| {
+                let path = source.join(format!("{i:02}.txt"));
+                fs::write(&path, format!("file {i}")).unwrap();
+                Item::new(path, Action::Move)
+            })
+            .collect();
+        let journal = crate::undo::Journal::at(&home.path().join("journal")).unwrap();
+        let quirks = crate::adapters::local_operations::tests::fs_quirks::FsQuirks::install(
+            &into,
+            crate::adapters::local_operations::tests::fs_quirks::Quirks::default(),
+        );
+        let (send, events) = std::sync::mpsc::channel();
+        start(
+            Request {
+                into: into.clone(),
+                items,
+                names: NameMode::Keep,
+                record: Some(Record {
+                    journal: journal.clone(),
+                    label: "Move 20 items".into(),
+                }),
+                durable: Some(false),
+            },
+            send,
+        )
+        .join();
+        let events: Vec<_> = events.into_iter().collect();
+        assert!(
+            matches!(
+                events.last(),
+                Some(Event::Finished {
+                    done: 20,
+                    failed: 0,
+                    ..
+                })
+            ),
+            "{events:?}"
+        );
+        // One flush for the batch, where each move used to flush on its own.
+        let flushes = events
+            .iter()
+            .filter(|event| matches!(event, Event::Flushing { .. }))
+            .count();
+        assert_eq!(flushes, 1);
+        for i in 0..20 {
+            assert_eq!(
+                fs::read_to_string(into.join(format!("{i:02}.txt"))).unwrap(),
+                format!("file {i}")
+            );
+            assert!(!source.join(format!("{i:02}.txt")).exists());
+        }
+        journal.undo(&Cancel::new(), &Progress::new()).unwrap();
+        assert_eq!(fs::read_dir(&source).unwrap().count(), 20);
+        assert_eq!(fs::read_dir(&into).unwrap().count(), 0);
+    }
+
+    /// Where the drive does not confirm the batch's writes, no source is deleted.
+    #[test]
+    fn a_batch_whose_flush_fails_deletes_nothing() {
+        use crate::adapters::local_operations::tests::fs_quirks::{FsQuirks, Quirks};
+        let Some((home, other)) =
+            crate::test_support::distinct_device_dirs("a_batch_whose_flush_fails_deletes_nothing")
+        else {
+            return;
+        };
+        let (source, into) = (other.path().join("source"), home.path().join("into"));
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&into).unwrap();
+        let quirks = FsQuirks::install(&into, Quirks::default());
+        let batch = ops::MoveBatch::open(&into).unwrap();
+        let mut staged = Vec::new();
+        for i in 0..3 {
+            let path = source.join(format!("{i}.txt"));
+            fs::write(&path, b"x").unwrap();
+            match batch
+                .stage(&path, NameMode::Keep, &Cancel::new(), &Progress::new())
+                .unwrap()
+            {
+                ops::Staging::Staged(one) => staged.push(*one),
+                ops::Staging::Done(_) => panic!("a move across drives is staged"),
+            }
+        }
+        // A writeback lost after the copies: the flush reports it.
+        quirks.writeback_loser()();
+        assert!(
+            batch
+                .finish(staged, &Cancel::new(), &Progress::new())
+                .is_err()
+        );
+        for i in 0..3 {
+            assert!(source.join(format!("{i}.txt")).exists(), "source {i} kept");
+        }
     }
 }

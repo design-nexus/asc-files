@@ -5,7 +5,7 @@
 
 use std::{
     ffi::{OsStr, OsString},
-    os::fd::AsFd,
+    os::fd::{AsFd, OwnedFd},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -679,7 +679,7 @@ fn moving(
     cancel: &Cancel,
     progress: &Progress,
 ) -> Result<Moved, Error> {
-    use super::{Barrier, Published, manifest};
+    use super::Barrier;
     use crate::adapters::local_operations::{
         fs_ops::Entry,
         placement::{self, PlaceError},
@@ -745,6 +745,51 @@ fn moving(
 
     // Opened before anything is written beneath `into`, so reaching it covers the whole copy.
     let barrier = Barrier::open(fs(), into)?;
+    match stage(
+        source_path,
+        (source_parent, source_name),
+        (target_parent, target_name),
+        names,
+        cancel,
+        progress,
+    )? {
+        Staging::Done(moved) => Ok(moved),
+        Staging::Staged(staged) => {
+            reach(&barrier, progress)?;
+            Ok(staged.finish(cancel, progress))
+        }
+    }
+}
+
+/// A move across drives whose copy is in place and whose source waits for the copy to reach the
+/// destination's drive before it is deleted (see [`MoveBatch`]).
+pub struct StagedMove {
+    source_path: PathBuf,
+    source_parent: Arc<OwnedFd>,
+    root: Arc<super::manifest::Folder>,
+    copy: Arc<Copy>,
+    target_parent: Arc<OwnedFd>,
+    published_name: OsString,
+    ownership: super::manifest::Ownership,
+}
+
+/// What staging a move did: all of it (a rename, or a link left where it is), or the copy, its
+/// source waiting.
+pub enum Staging {
+    Done(Moved),
+    Staged(Box<StagedMove>),
+}
+
+/// The copy half of a move across drives, under `target_name` in `target_parent`.
+fn stage(
+    source_path: PathBuf,
+    (source_parent, source_name): (Arc<OwnedFd>, OsString),
+    (target_parent, target_name): (Arc<OwnedFd>, OsString),
+    names: NameMode,
+    cancel: &Cancel,
+    progress: &Progress,
+) -> Result<Staging, Error> {
+    use super::manifest;
     let root = manifest::Folder::root();
     let source = Source {
         parent: source_parent,
@@ -774,7 +819,7 @@ fn moving(
     ) {
         // A link the destination cannot hold stays where it is, reported as kept there.
         Err(failure) if left_out_link(&failure) => {
-            return Ok(Moved {
+            return Ok(Staging::Done(Moved {
                 changes: Changes {
                     kept: vec![Kept {
                         path: source_path.clone(),
@@ -790,54 +835,165 @@ fn moving(
                 kept: Vec::new(),
                 progress: progress.snapshot(),
                 stopped: None,
-            });
+            }));
         }
         published => published.map_err(|failure| failure.into_error(&source.name))?,
     };
-    {
-        if barrier.flushes() {
-            progress.0.begin_flush();
-        }
-        barrier.reach(fs(), crate::drives::is_removable(&barrier.path))
-    }.map_err(|error| {
-        crate::error::io_error(rust_i18n::t!(
-            "The device could not finish writing: %{error}. Earlier writes may still be pending; wait for safe eject before unplugging.",
-            error = crate::adapters::local_operations::native_fs::os_error_text(error)
-        ))
-    })?;
-    let mut sources = manifest::of(source.parent.clone(), root);
-    sources.copied_to(Published::proven(
+    Ok(Staging::Staged(Box::new(StagedMove {
+        source_path,
+        source_parent: source.parent,
+        root,
+        copy,
         target_parent,
-        published_name.clone(),
+        published_name,
         ownership,
-    ));
-    let (kept, deleted) = manifest::delete(
-        fs(),
-        sources,
-        Arc::new(super::Unlinks::default()),
-        cancel.0.clone(),
-    );
-    let mut changes = Changes::of(&copy, &published_name);
-    let folder = source_path.parent().unwrap_or(Path::new("/"));
-    changes.kept = kept
-        .iter()
-        .map(|(path, cause)| Kept {
-            path: if path.is_absolute() {
-                path.clone()
-            } else {
-                folder.join(path)
-            },
-            cause: cause.clone(),
+    })))
+}
+
+/// Reaches `barrier`: what was written beneath it is on its drive.
+fn reach(barrier: &super::Barrier, progress: &Progress) -> Result<(), Error> {
+    if barrier.flushes() {
+        progress.0.begin_flush();
+    }
+    barrier
+        .reach(fs(), crate::drives::is_removable(&barrier.path))
+        .map_err(|error| {
+            crate::error::io_error(rust_i18n::t!(
+                "The device could not finish writing: %{error}. Earlier writes may still be pending; wait for safe eject before unplugging.",
+                error = crate::adapters::local_operations::native_fs::os_error_text(error)
+            ))
         })
-        .collect();
-    Ok(Moved {
-        changes,
-        stopped: deleted.err(),
-        name: published_name,
-        copied: true,
-        kept,
-        progress: progress.snapshot(),
-    })
+}
+
+impl StagedMove {
+    /// The name the copy was given.
+    pub fn name(&self) -> &OsStr {
+        &self.published_name
+    }
+
+    /// Deletes the source entries that are still what the copy read, once the copy is on the
+    /// destination's drive; anything else is kept and reported.
+    fn finish(self, cancel: &Cancel, progress: &Progress) -> Moved {
+        use super::{Published, manifest};
+        let Self {
+            source_path,
+            source_parent,
+            root,
+            copy,
+            target_parent,
+            published_name,
+            ownership,
+        } = *Box::new(self);
+        let mut sources = manifest::of(source_parent, root);
+        sources.copied_to(Published::proven(
+            target_parent,
+            published_name.clone(),
+            ownership,
+        ));
+        let (kept, deleted) = manifest::delete(
+            fs(),
+            sources,
+            Arc::new(super::Unlinks::default()),
+            cancel.0.clone(),
+        );
+        let mut changes = Changes::of(&copy, &published_name);
+        let folder = source_path.parent().unwrap_or(Path::new("/"));
+        changes.kept = kept
+            .iter()
+            .map(|(path, cause)| Kept {
+                path: if path.is_absolute() {
+                    path.clone()
+                } else {
+                    folder.join(path)
+                },
+                cause: cause.clone(),
+            })
+            .collect();
+        Moved {
+            changes,
+            stopped: deleted.err(),
+            name: published_name,
+            copied: true,
+            kept,
+            progress: progress.snapshot(),
+        }
+    }
+}
+
+/// Moves across drives sharing one flush, as legacy's batches did: each item's copy is staged
+/// ([`MoveBatch::stage`]), then [`MoveBatch::finish`] puts them all on the destination's drive at
+/// once and only then deletes each source that is still what its copy read. Where the drive does
+/// not confirm the writes, no source is deleted.
+pub struct MoveBatch {
+    barrier: super::Barrier,
+    into: PathBuf,
+}
+
+impl MoveBatch {
+    /// Opened before anything is written into `into`, so finishing covers every copy.
+    pub fn open(into: &Path) -> Result<Self, Error> {
+        Ok(Self {
+            barrier: super::Barrier::open(fs(), into)?,
+            into: into.to_path_buf(),
+        })
+    }
+
+    /// Moves `source` into the batch's folder under its own name: a rename where one can place
+    /// it (done at once), else the copy, its source left until [`MoveBatch::finish`].
+    pub fn stage(
+        &self,
+        source: &Path,
+        names: NameMode,
+        cancel: &Cancel,
+        progress: &Progress,
+    ) -> Result<Staging, Error> {
+        let name = source
+            .file_name()
+            .ok_or_else(|| crate::error::translated_io_error("The item has no name"))?;
+        // A rename needs no flush: `moving` places what it can, and stages nothing then.
+        if !crosses_device(source, &self.into) {
+            return move_as(source, (&self.into, name), names, cancel, progress).map(Staging::Done);
+        }
+        plain_name(name)?;
+        let (source_parent, source_name) = split(source)?;
+        let (target_parent, target_name) = split(&self.into.join(name))?;
+        stage(
+            source.to_path_buf(),
+            (source_parent, source_name),
+            (target_parent, target_name),
+            names,
+            cancel,
+            progress,
+        )
+    }
+
+    /// Puts every staged copy on the drive with one flush, then deletes their sources: each
+    /// finished move in the order given. Where the flush fails, nothing is deleted and that error
+    /// comes back instead, the copies staying beside their sources.
+    pub fn finish(
+        self,
+        staged: Vec<StagedMove>,
+        cancel: &Cancel,
+        progress: &Progress,
+    ) -> Result<Vec<Moved>, Error> {
+        if staged.is_empty() {
+            return Ok(Vec::new());
+        }
+        reach(&self.barrier, progress)?;
+        Ok(staged
+            .into_iter()
+            .map(|staged| staged.finish(cancel, progress))
+            .collect())
+    }
+}
+
+/// Whether `source` and `into` are on different filesystems, so a move must copy.
+fn crosses_device(source: &Path, into: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::symlink_metadata(source), std::fs::metadata(into)) {
+        (Ok(source), Ok(into)) => source.dev() != into.dev(),
+        _ => true,
+    }
 }
 
 /// What [`put_back`] did.
