@@ -98,7 +98,7 @@ an item instead (meant for undo). Notifications: `job.started {job, total, total
 history entry, or `null` when nothing it did can be undone (with `undoError` if the history could not be
 written), and for a durable batch `settled` says whether the drive confirmed everything was written
 (`settleError` if not): only then is a removable drive safe to unplug. Every item gets
-exactly one `job.itemDone`; its outcome is `{status: "done", path, renamed, skipped, kept, originalDeleted}`,
+exactly one `job.itemDone` (items usually finish in order; a run of many small plain files copied under their own names is copied several at a time, so theirs can come out of order, each naming its `index`); its outcome is `{status: "done", path, renamed, skipped, kept, originalDeleted}`,
 `{status: "failed", error, renamed, skipped, kept, originalDeleted}` or `{status: "notAttempted"}`, where `renamed` is
 `[{requested, savedAs, cause}]`, `skipped` `[{path, kind}]`, and `kept` `[{path, cause: {reason, …}}]`: source
 entries a move left in place (changed after the copy read them, undeletable, still open elsewhere, …), and an

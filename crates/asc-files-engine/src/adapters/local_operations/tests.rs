@@ -740,7 +740,7 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
                         });
                     }
                     if undoable {
-                        completed.push(Location::local(&items[index].source));
+                        completed.push((index, Location::local(&items[index].source)));
                     }
                 }
                 Outcome::Failed { error, changes } => {
@@ -768,6 +768,12 @@ fn run_paste_events(request: PasteRequest) -> Vec<OperationEvent> {
         total_bytes,
         created_location: None,
     });
+    // In the order of the paste, as legacy listed them (a bulk run finishes out of order).
+    completed.sort_by_key(|(index, _)| *index);
+    let completed: Vec<Location> = completed
+        .into_iter()
+        .map(|(_, location)| location)
+        .collect();
     events.push(match failure {
         None => OperationEvent::Pasted {
             request_id: id,

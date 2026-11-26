@@ -136,7 +136,7 @@ pub struct Record {
 }
 
 /// How one item ended.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Outcome {
     /// Done; `name` is what the item is called in the destination, or in the Trash. `changes`
     /// lists what was written under another name or left out.
@@ -315,12 +315,30 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
     let folds = case_variants::folds(&request.into);
     // One wait for files still open elsewhere covers the whole batch, as legacy's did.
     let deadline = crate::adapters::local_operations::leftovers::Deadline::default();
+    // Runs of many small plain files are copied several at a time (see `bulk_runs`).
+    let bulk = bulk_runs(&request, &measured);
+    let mut finished: std::collections::HashMap<usize, (Outcome, Vec<Step>)> = Default::default();
     for (index, item) in request.items.iter().enumerate() {
+        if let Some(run) = bulk.iter().find(|run| run.start == index)
+            && !cancel.is_cancelled()
+        {
+            finished.extend(run_bulk(
+                job,
+                &request,
+                run.clone(),
+                (cancel, &deadline),
+                &send,
+            ));
+        }
+        let ran = finished.remove(&index);
         let refused = measured[index]
             .as_ref()
             .err()
             .filter(|error| error.kind() != crate::error::ErrorKind::Cancelled);
-        let (outcome, step) = if cancel.is_cancelled() {
+        let in_bulk = ran.is_some();
+        let (outcome, step) = if let Some(ran) = ran {
+            ran
+        } else if cancel.is_cancelled() {
             (Outcome::NotAttempted, Vec::new())
         } else if let Some(error) = refused {
             (
@@ -353,11 +371,14 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
             Outcome::Failed { .. } => failed += 1,
             Outcome::NotAttempted => not_attempted += 1,
         }
-        send(Event::ItemDone {
-            job,
-            index,
-            outcome,
-        });
+        // A bulk item was reported as it finished.
+        if !in_bulk {
+            send(Event::ItemDone {
+                job,
+                index,
+                outcome,
+            });
+        }
     }
     if settle.is_some() {
         send(Event::Flushing { job });
@@ -377,6 +398,115 @@ fn run(job: JobId, request: Request, cancel: &Cancel, events: &Sender<Event>) {
         undo,
         settled,
     });
+}
+
+/// Items at most this large count as small for the bulk path.
+const BULK_ITEM_BYTES: u64 = 1024 * 1024;
+/// A run this long or longer goes the bulk path.
+const BULK_MIN_RUN: usize = 8;
+/// Items copied at once on the bulk path.
+const BULK_WORKERS: usize = 4;
+
+/// Consecutive items that are plain small files copied under their own names, failing on a clash,
+/// whose names no other item of the batch shares even in case: legacy's bulk path, which copied
+/// many small items at once (a share's latency, a small file's open and close, overlap). Not on a
+/// spinning disk, where reading several at once only makes it seek.
+fn bulk_runs(
+    request: &Request,
+    measured: &[Result<Option<ops::Measured>, Error>],
+) -> Vec<std::ops::Range<usize>> {
+    use crate::adapters::local_operations::deletion::local_device_is_rotational;
+    let folded = |item: &Item| {
+        item.source
+            .file_name()
+            .map(|name| name.to_string_lossy().to_lowercase())
+    };
+    let mut seen = std::collections::HashMap::<String, usize>::new();
+    for name in request.items.iter().filter_map(folded) {
+        *seen.entry(name).or_default() += 1;
+    }
+    let eligible = |index: usize| {
+        let item = &request.items[index];
+        matches!(item.action, Action::Copy(Conflict::Fail))
+            && item.name.is_none()
+            && matches!(&measured[index], Ok(Some(measured)) if measured.files == 1 && measured.bytes <= BULK_ITEM_BYTES)
+            && std::fs::symlink_metadata(&item.source).is_ok_and(|meta| meta.is_file())
+            && folded(item).is_some_and(|name| seen.get(&name) == Some(&1))
+    };
+    let mut runs = Vec::new();
+    let mut start = None;
+    for index in 0..=request.items.len() {
+        match (index < request.items.len() && eligible(index), start) {
+            (true, None) => start = Some(index),
+            (false, Some(from)) => {
+                if index - from >= BULK_MIN_RUN {
+                    runs.push(from..index);
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    let spins = || {
+        std::fs::File::open(&request.into)
+            .ok()
+            .and_then(local_device_is_rotational)
+            .unwrap_or(false)
+    };
+    if runs.is_empty() || spins() {
+        return Vec::new();
+    }
+    runs
+}
+
+/// Copies `run`'s items several at a time, each as [`run_item`] copies one, reporting each as it
+/// finishes; what each did, by index, for the batch to count and file in order.
+fn run_bulk(
+    job: JobId,
+    request: &Request,
+    run: std::ops::Range<usize>,
+    (cancel, deadline): (
+        &Cancel,
+        &crate::adapters::local_operations::leftovers::Deadline,
+    ),
+    send: &(impl Fn(Event) + Sync),
+) -> Vec<(usize, (Outcome, Vec<Step>))> {
+    let next = std::sync::atomic::AtomicUsize::new(run.start);
+    let done = std::sync::Mutex::new(Vec::new());
+    thread::scope(|scope| {
+        for _ in 0..BULK_WORKERS.min(run.len()) {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    if index >= run.end {
+                        break;
+                    }
+                    let ran = if cancel.is_cancelled() {
+                        (Outcome::NotAttempted, Vec::new())
+                    } else {
+                        // Its name is its own, shared with no other item: nothing earlier aliases it.
+                        run_item(
+                            job,
+                            index,
+                            &request.items[index],
+                            (&request.into, request.names, (&[], false)),
+                            (cancel, deadline),
+                            send,
+                        )
+                    };
+                    send(Event::ItemDone {
+                        job,
+                        index,
+                        outcome: ran.0.clone(),
+                    });
+                    done.lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .push((index, ran));
+                }
+            });
+        }
+    });
+    done.into_inner().unwrap_or_else(|error| error.into_inner())
 }
 
 /// The drive a batch writes to, or for a batch that only trashes or deletes, the drive of what it
@@ -877,4 +1007,61 @@ fn aliased_changes(source: &Path, saved: &std::ffi::OsStr, changes: Changes) -> 
     }];
     renamed.extend(changes.renamed);
     Changes { renamed, ..changes }
+}
+
+#[cfg(test)]
+mod bulk_tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn runs_of_small_plain_files_with_names_of_their_own_go_the_bulk_path() {
+        let root = tempfile::tempdir().unwrap();
+        let (source, into) = (root.path().join("source"), root.path().join("into"));
+        fs::create_dir_all(source.join("folder")).unwrap();
+        fs::create_dir_all(&into).unwrap();
+        let mut items = Vec::new();
+        for i in 0..10 {
+            let path = source.join(format!("{i}.txt"));
+            fs::write(&path, b"small").unwrap();
+            items.push(Item::new(path, Action::Copy(Conflict::Fail)));
+        }
+        // A folder ends a run; a case twin leaves both its names out; moves never go.
+        items.push(Item::new(
+            source.join("folder"),
+            Action::Copy(Conflict::Fail),
+        ));
+        for i in 10..30 {
+            let path = source.join(format!("{i}.txt"));
+            fs::write(&path, b"small").unwrap();
+            items.push(Item::new(path, Action::Copy(Conflict::Fail)));
+        }
+        fs::write(source.join("20.TXT"), b"twin").unwrap();
+        items.push(Item::new(
+            source.join("20.TXT"),
+            Action::Copy(Conflict::Fail),
+        ));
+        let request = Request {
+            into: into.clone(),
+            items,
+            names: NameMode::Keep,
+            record: None,
+            durable: None,
+        };
+        let measured: Vec<_> = request
+            .items
+            .iter()
+            .map(|item| ops::measure(&item.source, None, &Cancel::new()))
+            .collect();
+        let runs = bulk_runs(&request, &measured);
+        if crate::adapters::local_operations::deletion::local_device_is_rotational(
+            std::fs::File::open(&into).unwrap(),
+        ) == Some(true)
+        {
+            assert!(runs.is_empty(), "never on a spinning disk");
+            return;
+        }
+        // 0–9; then 10–19 (index 11–20) and 21–29 (index 22–30), around the twin "20.txt".
+        assert_eq!(runs, [0..10, 11..21, 22..31]);
+    }
 }

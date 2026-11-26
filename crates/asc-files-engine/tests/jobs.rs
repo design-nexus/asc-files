@@ -346,3 +346,76 @@ fn a_durable_batch_is_synced_before_it_finishes() {
         "a batch that only trashes writes nothing to its destination"
     );
 }
+
+/// Many small files go several at a time (legacy's bulk path), each reported once, all filed for
+/// undo in order; one that clashes fails alone.
+#[test]
+fn many_small_files_are_copied_together_and_undone_as_one() {
+    let root = isolated_home_dir();
+    let (source, dest) = (root.path().join("source"), root.path().join("dest"));
+    fs::create_dir_all(&source).unwrap();
+    fs::create_dir_all(&dest).unwrap();
+    let items: Vec<_> = (0..40)
+        .map(|i| {
+            let path = source.join(format!("{i:02}.txt"));
+            fs::write(&path, format!("file {i}")).unwrap();
+            item(&path, Action::Copy(Conflict::Fail))
+        })
+        .collect();
+    // One already there: it fails, the rest go on.
+    fs::write(dest.join("07.txt"), b"there").unwrap();
+    let journal = asc_files_engine::undo::Journal::at(&root.path().join("journal")).unwrap();
+
+    let events = run(Request {
+        into: dest.clone(),
+        items,
+        names: NameMode::Keep,
+        record: Some(jobs::Record {
+            journal: journal.clone(),
+            label: "Copy 40 items".into(),
+        }),
+        durable: None,
+    });
+
+    let mut indices: Vec<usize> = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::ItemDone { index, .. } => Some(*index),
+            _ => None,
+        })
+        .collect();
+    indices.sort_unstable();
+    assert_eq!(
+        indices,
+        (0..40).collect::<Vec<_>>(),
+        "each item reported once"
+    );
+    assert!(matches!(
+        events.last(),
+        Some(Event::Finished {
+            done: 39,
+            failed: 1,
+            ..
+        })
+    ));
+    assert_eq!(fs::read(dest.join("07.txt")).unwrap(), b"there");
+    for i in (0..40).filter(|i| *i != 7) {
+        assert_eq!(
+            fs::read_to_string(dest.join(format!("{i:02}.txt"))).unwrap(),
+            format!("file {i}")
+        );
+    }
+
+    // Undone as one batch: every copy goes, the file that was there stays.
+    journal
+        .undo(
+            &asc_files_engine::ops::Cancel::new(),
+            &asc_files_engine::ops::Progress::new(),
+        )
+        .unwrap();
+    let left: Vec<_> = fs::read_dir(&dest)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(left, ["07.txt"]);
+}

@@ -354,7 +354,7 @@ pub(super) fn remove_local_delete_directory(
     }
 }
 
-pub(super) fn local_device_is_rotational(fd: impl AsFd) -> Option<bool> {
+pub(crate) fn local_device_is_rotational(fd: impl AsFd) -> Option<bool> {
     fs_ops::assert_off_main_thread();
     let stat = rustix::fs::fstat(fd).ok()?;
     let device = PathBuf::from("/sys/dev/block").join(format!(

@@ -43,7 +43,7 @@ ported with a reason. This list must be empty, or every entry justified, before 
 |---|---|
 | `merge::fat_merge_overwrites_the_names_it_plans_and_keeps_the_names_that_need_no_fix` | **Gap.** A merge finds clashes by source name, not by the name the destination stores: on FAT, `nested?` never meets `nested_`, so every entry is kept as both, even one whose exact name the user chose to replace. Nothing is lost. Legacy planned by stored names (`plan_names`), names needing no fix first; it returns with the paste-planning call. |
 | `copy::a_paste_fixes_the_names_it_brings_onto_fat_and_keeps_those_already_there` | **Gap**, the planning one: a paste's names are not planned together, so an item needing no fix (`a_b`) does not keep its name over an earlier one fixed to it (`a:b`), and fails as taken. Returns with the paste-planning call. |
-| `file_copy::selected_names_of_a_linked_file_on_an_smb_share_are_opened_one_at_a_time` | Needs many small top-level items copied in parallel. Legacy's paste had a bulk path for this; `jobs` copies top-level items one at a time (the engine's parallel walk applies inside folders). **Gap:** a bulk path in `jobs`. |
+| `file_copy::selected_names_of_a_linked_file_on_an_smb_share_are_opened_one_at_a_time` | Needs many small top-level items copied in parallel. `jobs` now has a bulk path (runs of small plain files copied four at a time); the test itself is about GIO's SMB handles, which Files does not use. |
 
 ## Rows skipped inside ported tests
 
@@ -142,7 +142,7 @@ ported with a reason. This list must be empty, or every entry justified, before 
 | `progress::completed_gio_result_wins_a_cancellation_race`, `progress::local_task_batches_wait_for_every_started_task_after_an_operation_error` | GLib task helpers: the engine has neither. |
 | `progress::transfer_progress_aggregates_file_bytes_without_emitting_per_file`, `progress::copy_byte_progress_crosses_worker_threads` | Legacy's `TransferProgressTracker`; the engine counts in shared atomics (`ops::Progress`) that jobs report as `job.progress`, which the other progress tests check. |
 | `progress::fat32_copy_errors_without_english_size_text_skip_an_uncancellable_flush` | Legacy read GIO's error text to tell FAT32's size refusal from others; the engine refuses an oversized file before copying (`fat32_size_check_rejects_oversized_nested_file_before_copy`). |
-| `progress::bulk_copy_reports_bytes_before_each_file_completes` | Legacy's bulk path for many small items, the gap above. |
+| `progress::bulk_copy_reports_bytes_before_each_file_completes` | Legacy's bulk path reported bytes through its own batch; `jobs`' bulk path reports each file's bytes through its item, as every copy does. |
 | `progress::cancelling_between_moves_reports_completed_and_unattempted_sources` | Lock step, as `deletion::cancelling_between_deletions_reports_completed_and_unattempted_items`; covered by `tests/jobs.rs`. |
 | `sync::owed_deletions_close_in_batches`, `sync::a_failed_barrier_deletes_nothing_in_its_batch_and_stops_the_move`, `sync::cancelling_a_move_closes_its_pending_batch`, `sync::many_moved_files_share_a_barrier_and_are_copied_in_parallel_unless_a_disk_spins`, `sync::names_of_one_file_moved_as_separate_items_are_all_deleted`, `sync::a_writeback_lost_during_a_move_keeps_every_source_it_may_hold`, `sync::a_batch_closes_once_its_first_entry_is_five_seconds_old`, `sync::a_failed_barrier_stops_a_bulk_move`, `sync::bytes_already_written_are_flushed_before_transfer_failure` | Legacy's `owed` batches: the sources a paste's moves copied were deleted together, a batch at a time, after one shared flush. The engine moves item by item, each source deleted only after its own copy's flush (`the_barrier_before_deleting_a_moved_source_follows_the_destination_family`), so a failed flush keeps that source and stops nothing else. Sharing one flush across many small moves is part of the bulk-path gap. |
 | `sync::removable_copy_roots_are_synced_once`, `sync::sync_filesystem_on_a_local_directory_succeeds`, `sync::failed_flush_after_cancel_reports_that_writes_may_still_be_pending`, `sync::fat32_limit_failure_does_not_start_an_uncancellable_device_flush` | Legacy's paste helpers (`removable_sync_roots`, `sync_filesystem`, `stop_transfer`). A durable job opens one flush of its drive before it writes and reaches it at the end, whatever happened (`failed_final_flush_reports_that_writes_may_still_be_pending`). |
@@ -302,7 +302,7 @@ ported with a reason. This list must be empty, or every entry justified, before 
 - **Added (B-ops):** undo onto a newer item, once confirmed: `undo.preview` names the places undo would put
   something back where a newer item holds the name, and `undo.undo {overwrite: true}` moves those to the Trash
   first, so nothing is lost. Without the confirmation, such a step is left as before.
-- **Open:** a bulk path for many small items; inner merge clashes by stored names.
+- **Closed in item 11:** the bulk path for many small items; inner merge clashes by stored names.
 
 ## Document previews
 
@@ -597,3 +597,9 @@ Undo of a folder an operation made (copied, created, extracted) on a drive witho
 step records a fingerprint of what the folder held (`undo::tree_print`, up to 100,000 entries), and undo
 deletes the folder whole while that still matches; anything changed inside, or a folder too large to
 fingerprint, stays in place, reported, as before. Journals from before read back without one.
+
+The bulk path: a batch's runs of at least 8 plain files of 1 MiB or less, copied under their own names
+and failing on a clash, whose names no other item shares even in case, are copied four at a time
+(`jobs::bulk_runs`), never on a spinning disk; each still goes through the item copy, so naming,
+refusals, progress and undo are as for one, and items report as they finish. Moves still go one at a
+time, each source deleted after its own flush, rather than legacy's shared flush for a batch of moves.
