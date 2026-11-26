@@ -2,6 +2,7 @@
 #include "ItemListModel.h"
 
 #include "../settings/AppSettings.h"
+#include "../thumbnails/Thumbnails.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -143,6 +144,11 @@ QVariant ItemListModel::data(const QModelIndex &index, int role) const {
         return whenText(row.item.when.isValid() ? row.item.when : row.modified);
     case ExtraRole:
         return row.item.extra;
+    case ThumbnailRole:
+        if (row.isFolder || !Thumbnails::canMake(QFileInfo(row.item.path).fileName())) {
+            return QString();
+        }
+        return QString::fromLatin1(QFile::encodeName(row.item.path).toPercentEncoding());
     default:
         return {};
     }
@@ -152,5 +158,6 @@ QHash<int, QByteArray> ItemListModel::roleNames() const {
     return {{NameRole, "name"},         {PathRole, "path"},         {FolderRole, "folder"},
             {IsFolderRole, "isFolder"}, {ExistsRole, "exists"},     {SizeTextRole, "sizeText"},
             {KindTextRole, "kindText"}, {WhenRole, "when"},         {WhenTextRole, "whenText"},
-            {ExtraRole, "extra"}};
+            {ExtraRole, "extra"},
+            {ThumbnailRole, "thumbnail"}};
 }

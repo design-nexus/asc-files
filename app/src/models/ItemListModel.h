@@ -23,6 +23,8 @@ public:
         WhenRole,
         WhenTextRole,
         ExtraRole,
+        /// The `image://thumbnail/` id of a file Files can make a thumbnail of; empty otherwise.
+        ThumbnailRole,
     };
     Q_ENUM(Role)
 

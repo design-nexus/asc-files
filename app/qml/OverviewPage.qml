@@ -4,6 +4,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
 import AscFiles
+import AscFiles.System
 
 // The Overview: files used lately, pinned folders and favorites, every drive with how full it is,
 // what is new in Downloads, and the Trash. Each card leads to its place.
@@ -70,6 +71,8 @@ Flickable {
         id: line
         property string iconPath
         property color iconColor: Theme.textDim
+        /// A thumbnail to show in the icon's place, when Files can make one.
+        property string thumbnailId
         property string label
         property string detail
         /// What the line stands for, for its right-click menu (none when empty).
@@ -91,7 +94,20 @@ Flickable {
             anchors.leftMargin: 8
             anchors.rightMargin: 8
             spacing: 10
-            Icon { path: line.iconPath; color: line.iconColor }
+            Item {
+                implicitWidth: 22
+                implicitHeight: 22
+                Image {
+                    id: picture
+                    anchors.fill: parent
+                    visible: status === Image.Ready
+                    asynchronous: true
+                    fillMode: Image.PreserveAspectCrop
+                    sourceSize: Qt.size(64, 64)
+                    source: line.thumbnailId.length > 0 && AppSettings.showThumbnails ? "image://thumbnail/" + line.thumbnailId : ""
+                }
+                Icon { anchors.centerIn: parent; visible: !picture.visible; path: line.iconPath; color: line.iconColor }
+            }
             Text { Layout.fillWidth: true; text: line.label; elide: Text.ElideMiddle; color: Theme.text; font.family: Theme.family; font.pointSize: Theme.body }
             Text { text: line.detail; color: Theme.textMute; font.family: Theme.family; font.pointSize: Theme.small; font.features: { "tnum": 1 } }
         }
@@ -122,7 +138,9 @@ Flickable {
                     required property string name
                     required property bool isFolder
                     required property string whenText
+                    required property string thumbnail
                     visible: index < 8
+                    thumbnailId: thumbnail
                     iconPath: isFolder ? page.folderIcon : page.fileIcon
                     label: name
                     detail: whenText
