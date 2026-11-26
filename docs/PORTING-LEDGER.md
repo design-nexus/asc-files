@@ -480,8 +480,11 @@ filters (listed by the backend's new `globs`), answered with URIs, choices and t
 Escape or closing answers cancelled, replacing a file is asked first, and the caller can close the
 request. Tested over the session bus by hand (busctl) and in `tst_portal` without one. Found on the
 way: a filter changed while a folder was opening was dropped, and Return didn't confirm dialogs.
-Legacy's `portal/dbus/tests.rs` and `window_geometry` (Hyprland centring rules) are not ported yet;
-`portal_setup` (making Files the desktop's chooser) comes with Settings › Integrations.
+`window_geometry` (9 tests) is `app/src/portal/Placement.cpp` with all nine (`tst_placement`, against a
+fake compositor socket): the chooser has its own window class, `asc-files-chooser`, which a Hyprland
+rule centres, and a caller with one window lends the chooser its size. Legacy's `portal/dbus/tests.rs`
+tested ashpd's request plumbing, which QtDBus replaces; the requests over a real bus were checked by
+hand with busctl (Open, Save with a replace prompt, Escape).
 
 | `portal_setup/tests.rs` (24) | 13 (`integrations/tests.rs`), one new | the systemd refresh (5), Strata migration (1) and one-time offer (4) tests: those parts are not carried over (Files is new under its own names; no offer yet); `status_*`'s Omarchy shortcuts |
 

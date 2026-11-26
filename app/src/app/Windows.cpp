@@ -49,6 +49,11 @@ QQuickWindow *Windows::openChooser(QObject *job, const QString &folder) {
         }
     });
     connect(job, SIGNAL(finished(uint, QVariantMap)), window, SLOT(close()));
+    // The caller's size, where the compositor told it.
+    const QSize hint = job->property("sizeHint").toSize();
+    if (hint.isValid()) {
+        window->resize(hint);
+    }
     return window;
 }
 

@@ -9,6 +9,7 @@
 #include <QDBusObjectPath>
 #include <QObject>
 #include <QPointer>
+#include <QSize>
 #include <QVariantMap>
 
 Q_DECLARE_METATYPE(Portal::Rule)
@@ -47,6 +48,7 @@ class ChooserJob : public QObject {
     Q_PROPERTY(int currentFilter READ currentFilter CONSTANT)
     /// `[{id, label, options: [{id, label}], initial}]`; no options makes a check box.
     Q_PROPERTY(QVariantList choices READ choices CONSTANT)
+    Q_PROPERTY(QSize sizeHint READ sizeHint CONSTANT)
 public:
     ChooserJob(Request request, QObject *parent = nullptr);
 
@@ -62,6 +64,9 @@ public:
     int currentFilter() const;
     QVariantList choices() const;
     const Request &request() const { return m_request; }
+    /// The caller's window size, where the compositor told it; the chooser opens that size.
+    QSize sizeHint() const { return m_sizeHint; }
+    void setSizeHint(QSize size) { m_sizeHint = size; }
 
     /// Open: answers with `paths` (the selection; none in a folder chooser means `current`), or
     /// says why they won't do.
@@ -79,6 +84,7 @@ signals:
 private:
     void answer(const QList<QByteArray> &paths, const QVariantMap &choices, int filter);
     Request m_request;
+    QSize m_sizeHint;
     bool m_done = false;
 };
 
@@ -106,7 +112,7 @@ signals:
     void chooserWanted(Portal::ChooserJob *job);
 
 private:
-    uint start(const QDBusObjectPath &handle, const Checked &checked);
+    uint start(const QDBusObjectPath &handle, const QString &appId, const QString &parentWindow, const Checked &checked);
     RequestTracker m_tracker;
 };
 

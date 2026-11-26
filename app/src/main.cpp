@@ -7,6 +7,7 @@
 #include "desktop/DesktopBus.h"
 #include "desktop/Integrations.h"
 #include "portal/ChooserService.h"
+#include "portal/Placement.h"
 #include "desktop/DesktopApps.h"
 #include "models/ActionsModel.h"
 #include "models/Customizations.h"
@@ -101,6 +102,11 @@ int main(int argc, char *argv[]) {
     // window per request and ends once idle.
     if (parser.isSet(QStringLiteral("chooser"))) {
         QGuiApplication::setQuitOnLastWindowClosed(false);
+        // Its own window class, which the compositor's rule centres.
+        QGuiApplication::setDesktopFileName(QString::fromLatin1(Portal::Placement::ChooserClass));
+        if (const auto socket = Portal::Placement::hyprlandSocket()) {
+            Portal::Placement::installCenteringRule(*socket, Portal::Placement::QueryTimeout);
+        }
         QDBusConnection bus = QDBusConnection::sessionBus();
         auto *service = new Portal::ChooserService(&app);
         QObject::connect(service, &Portal::ChooserService::chooserWanted, &windows,

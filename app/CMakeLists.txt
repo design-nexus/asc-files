@@ -43,6 +43,7 @@ qt_add_library(asc_files_core STATIC
     src/desktop/Integrations.cpp src/desktop/Integrations.h
     src/portal/Chooser.cpp src/portal/Chooser.h
     src/portal/ChooserService.cpp src/portal/ChooserService.h
+    src/portal/Placement.cpp src/portal/Placement.h
     src/settings/AppSettings.cpp src/settings/AppSettings.h
     src/theme/SystemTheme.cpp src/theme/SystemTheme.h
     src/thumbnails/Thumbnails.cpp src/thumbnails/Thumbnails.h)
@@ -128,7 +129,7 @@ enable_testing()
 set(ASC_FILES_BACKEND "" CACHE FILEPATH "The asc-files-backend binary the tests run")
 set(ASC_FILES_DOCS "" CACHE FILEPATH "The asc-files-docs document reader the tests run")
 set(ASC_FILES_RAR "" CACHE FILEPATH "The asc-files-rar RAR reader the tests run")
-foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search systemtheme appsettings desktopapps properties actions customizations codehighlighter filemanager1 portal)
+foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search systemtheme appsettings desktopapps properties actions customizations codehighlighter filemanager1 portal placement)
     qt_add_executable(tst_${test} tests/tst_${test}.cpp)
     target_link_libraries(tst_${test} PRIVATE asc_files_core Qt6::Test)
     # The repository, for fixtures the Rust crates keep.

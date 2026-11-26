@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "ChooserService.h"
 
+#include "Placement.h"
+
 #include <QDBusConnection>
 #include <QDBusMetaType>
 #include <QFile>
@@ -309,22 +311,22 @@ void ChooserJob::answer(const QList<QByteArray> &paths, const QVariantMap &choic
 
 ChooserService::ChooserService(QObject *parent) : QObject(parent) { registerTypes(); }
 
-uint ChooserService::OpenFile(const QDBusObjectPath &handle, const QString &, const QString &, const QString &title,
+uint ChooserService::OpenFile(const QDBusObjectPath &handle, const QString &appId, const QString &parentWindow, const QString &title,
                               const QVariantMap &options, QVariantMap &) {
-    return start(handle, openRequest(title, optionsFrom(options)));
+    return start(handle, appId, parentWindow, openRequest(title, optionsFrom(options)));
 }
 
-uint ChooserService::SaveFile(const QDBusObjectPath &handle, const QString &, const QString &, const QString &title,
+uint ChooserService::SaveFile(const QDBusObjectPath &handle, const QString &appId, const QString &parentWindow, const QString &title,
                               const QVariantMap &options, QVariantMap &) {
-    return start(handle, saveFileRequest(title, optionsFrom(options)));
+    return start(handle, appId, parentWindow, saveFileRequest(title, optionsFrom(options)));
 }
 
-uint ChooserService::SaveFiles(const QDBusObjectPath &handle, const QString &, const QString &, const QString &title,
+uint ChooserService::SaveFiles(const QDBusObjectPath &handle, const QString &appId, const QString &parentWindow, const QString &title,
                                const QVariantMap &options, QVariantMap &) {
-    return start(handle, saveFilesRequest(title, optionsFrom(options)));
+    return start(handle, appId, parentWindow, saveFilesRequest(title, optionsFrom(options)));
 }
 
-uint ChooserService::start(const QDBusObjectPath &handle, const Checked &checked) {
+uint ChooserService::start(const QDBusObjectPath &handle, const QString &appId, const QString &parentWindow, const Checked &checked) {
     if (const QString *why = std::get_if<QString>(&checked)) {
         sendErrorReply(QStringLiteral("org.freedesktop.portal.Error.InvalidArgument"), *why);
         return 2;
@@ -335,6 +337,9 @@ uint ChooserService::start(const QDBusObjectPath &handle, const Checked &checked
         return 2;
     }
     auto *job = new ChooserJob(std::get<Request>(checked), this);
+    if (const auto size = Placement::parentSizeHint(appId, parentWindow)) {
+        job->setSizeHint(*size);
+    }
     QDBusConnection bus = connection();
     bus.registerObject(handle.path(), new RequestObject(job), QDBusConnection::ExportScriptableSlots);
     setDelayedReply(true);
