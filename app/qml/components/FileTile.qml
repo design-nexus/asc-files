@@ -9,6 +9,12 @@ import AscFiles.System
 Rectangle {
     id: tile
 
+    Accessible.role: Accessible.ListItem
+    Accessible.name: loaded ? name : ""
+    Accessible.description: isFolder ? qsTr("Folder") : ""
+    Accessible.selectable: true
+    Accessible.selected: selected
+
     required property int index
     required property string name
     required property bool isFolder

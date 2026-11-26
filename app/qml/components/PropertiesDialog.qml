@@ -111,6 +111,8 @@ Popup {
     }
 
     contentItem: ColumnLayout {
+        Accessible.role: Accessible.Dialog
+        Accessible.name: dialog.properties.name
         spacing: 14
         RowLayout {
             Layout.fillWidth: true

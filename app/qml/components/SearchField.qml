@@ -11,6 +11,9 @@ TextField {
 
     property string shortcut: "Ctrl+K"
 
+    Accessible.name: placeholderText
+    Accessible.description: qsTr("Shortcut: %1").arg(shortcut)
+
     implicitHeight: Theme.controlSize
     leftPadding: 36
     rightPadding: hint.width + 12

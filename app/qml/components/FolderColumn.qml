@@ -53,6 +53,10 @@ Rectangle {
             required property string customColor
             required property string customIcon
             required property int clipMark
+            Accessible.role: Accessible.ListItem
+            Accessible.name: loaded ? name : ""
+            Accessible.selectable: true
+            Accessible.selected: selected
             readonly property bool open: column.openName.length > 0 && name === column.openName
             width: ListView.view.width
             height: 32

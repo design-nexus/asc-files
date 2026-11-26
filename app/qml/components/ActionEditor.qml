@@ -193,6 +193,8 @@ Popup {
     }
 
     contentItem: ColumnLayout {
+        Accessible.role: Accessible.Dialog
+        Accessible.name: editor.existing ? qsTr("Edit “%1”").arg(editor.name) : qsTr("New action")
         spacing: 12
         RowLayout {
             Layout.fillWidth: true

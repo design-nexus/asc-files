@@ -9,6 +9,10 @@ import AscFiles
 Rectangle {
     id: notice
 
+    // Read out as it shows.
+    Accessible.role: Accessible.AlertMessage
+    Accessible.name: label.text
+
     function show(message) {
         label.text = message
         opacity = 1

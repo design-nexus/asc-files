@@ -95,6 +95,8 @@ Popup {
                             color: dialog.page === pageButton.index ? Theme.selection : pageButton.hovered ? Theme.hover : "transparent"
                         }
                         contentItem: ColumnLayout {
+        Accessible.role: Accessible.Dialog
+        Accessible.name: qsTr("Settings")
                             spacing: 1
                             Text {
                                 Layout.leftMargin: 10

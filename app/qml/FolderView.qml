@@ -444,6 +444,8 @@ FocusScope {
         ListView {
             id: list
             objectName: "fileList"
+            Accessible.role: Accessible.List
+            Accessible.name: view.folderModel ? view.folderModel.folderName : ""
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.leftMargin: 8
@@ -527,6 +529,8 @@ FocusScope {
     GridView {
         id: grid
         objectName: "fileGrid"
+        Accessible.role: Accessible.List
+        Accessible.name: view.folderModel ? view.folderModel.folderName : ""
         anchors.fill: parent
         anchors.margins: 12
         visible: view.mode === 1
@@ -659,6 +663,8 @@ FocusScope {
     GridView {
         id: compact
         objectName: "fileCompact"
+        Accessible.role: Accessible.List
+        Accessible.name: view.folderModel ? view.folderModel.folderName : ""
         anchors.fill: parent
         anchors.margins: 12
         visible: view.mode === 3
@@ -683,6 +689,10 @@ FocusScope {
             required property string customIcon
             required property int clipMark
             readonly property bool editing: index === view.renamingRow
+            Accessible.role: Accessible.ListItem
+            Accessible.name: loaded ? name : ""
+            Accessible.selectable: true
+            Accessible.selected: selected
             width: GridView.view.cellWidth - 6
             height: GridView.view.cellHeight - 2
             radius: Theme.radius
@@ -787,6 +797,8 @@ FocusScope {
         ListView {
             id: strip
             objectName: "fileStrip"
+            Accessible.role: Accessible.List
+            Accessible.name: view.folderModel ? view.folderModel.folderName : ""
             Layout.fillWidth: true
             Layout.preferredHeight: 116
             orientation: ListView.Horizontal
@@ -835,6 +847,8 @@ FocusScope {
     ListView {
         id: columnsView
         objectName: "columns"
+        Accessible.role: Accessible.List
+        Accessible.name: view.folderModel ? view.folderModel.folderName : ""
         anchors.fill: parent
         anchors.topMargin: 6
         visible: view.mode === 2

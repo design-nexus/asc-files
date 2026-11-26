@@ -81,6 +81,8 @@ Popup {
     }
 
     contentItem: ColumnLayout {
+        Accessible.role: Accessible.Dialog
+        Accessible.name: dialog.current ? qsTr("“%1” is already in %2").arg(dialog.current.name).arg(dialog.current.folder) : ""
         spacing: 14
         Text {
             Layout.fillWidth: true

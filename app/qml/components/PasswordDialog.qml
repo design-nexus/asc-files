@@ -41,6 +41,8 @@ Popup {
     background: Rectangle { radius: 14; color: Theme.raised; border.width: 1; border.color: Theme.panelEdge }
 
     contentItem: ColumnLayout {
+        Accessible.role: Accessible.Dialog
+        Accessible.name: qsTr("Archive password")
         spacing: 14
         Text {
             Layout.fillWidth: true

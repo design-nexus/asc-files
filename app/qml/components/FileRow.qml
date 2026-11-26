@@ -10,6 +10,12 @@ import AscFiles.System
 Rectangle {
     id: row
 
+    Accessible.role: Accessible.ListItem
+    Accessible.name: loaded ? name : ""
+    Accessible.description: isFolder ? qsTr("Folder") : kindText
+    Accessible.selectable: true
+    Accessible.selected: selected
+
     required property int index
     required property string name
     required property bool isFolder

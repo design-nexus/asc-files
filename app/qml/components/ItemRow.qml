@@ -9,6 +9,10 @@ import AscFiles
 Rectangle {
     id: row
 
+    Accessible.role: Accessible.ListItem
+    Accessible.name: name
+    Accessible.description: folder
+
     required property int index
     required property string name
     required property string folder

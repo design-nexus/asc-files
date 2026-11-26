@@ -51,6 +51,8 @@ Popup {
     background: Rectangle { radius: 14; color: Theme.raised; border.width: 1; border.color: Theme.panelEdge }
 
     contentItem: ColumnLayout {
+        Accessible.role: Accessible.Dialog
+        Accessible.name: qsTr("Open %1 with").arg(dialog.what)
         spacing: 12
         Text {
             Layout.fillWidth: true

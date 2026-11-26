@@ -26,6 +26,9 @@
 #include "theme/SystemTheme.h"
 #include "thumbnails/Thumbnails.h"
 
+#include <QAccessible>
+#include <QQmlContext>
+#include <QQmlProperty>
 #include <QFile>
 #include <QFileInfo>
 #include <QQmlApplicationEngine>
@@ -38,6 +41,7 @@
 #include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <functional>
 
 Q_IMPORT_QML_PLUGIN(AscFilesPlugin)
 
@@ -116,6 +120,46 @@ private slots:
         auto *sidebar = window->findChild<QQuickItem *>(QStringLiteral("places"));
         QVERIFY(sidebar);
         QVERIFY(sidebar->property("count").toInt() >= 2);
+
+        // Every visible control a screen reader lands on says what it is.
+        QTRY_VERIFY(folders.isLoaded(0));
+        QStringList unnamed;
+        int controls = 0;
+        // The items as they are drawn (delegates are children of their views' items, not objects).
+        QList<QQuickItem *> shown;
+        const std::function<void(QQuickItem *)> collect = [&](QQuickItem *parent) {
+            for (QQuickItem *child : parent->childItems()) {
+                if (child->isVisible() && child->opacity() > 0) {
+                    shown.append(child);
+                    collect(child);
+                }
+            }
+        };
+        collect(window->contentItem());
+        for (QQuickItem *item : std::as_const(shown)) {
+            QQmlContext *context = qmlContext(item);
+            if (!item->isVisible() || item->opacity() == 0 || !context) {
+                continue;
+            }
+            // What the item tells a screen reader (its Accessible attached properties).
+            // Buttons are named by Accessible.name, else their text (as Qt reads them out).
+            const bool button = item->inherits("QQuickAbstractButton");
+            const int role = QQmlProperty(item, QStringLiteral("Accessible.role"), context).read().toInt();
+            if (!button && role != QAccessible::Button && role != QAccessible::CheckBox && role != QAccessible::PageTab &&
+                role != QAccessible::ListItem) {
+                continue;
+            }
+            ++controls;
+            QString name = QQmlProperty(item, QStringLiteral("Accessible.name"), context).read().toString();
+            if (name.trimmed().isEmpty() && button) {
+                name = item->property("text").toString();
+            }
+            if (name.trimmed().isEmpty()) {
+                unnamed.append(QStringLiteral("%1 %2").arg(QString::fromLatin1(item->metaObject()->className()), item->objectName()));
+            }
+        }
+        QVERIFY2(controls > 10, qPrintable(QString::number(controls)));
+        QVERIFY2(unnamed.isEmpty(), qPrintable(unnamed.join(QStringLiteral(", "))));
 
         // A second tab, then back to the first.
         tabs.openTab(QDir::homePath());

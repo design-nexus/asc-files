@@ -8,6 +8,10 @@ import AscFiles
 Item {
     id: row
 
+    Accessible.role: Accessible.Grouping
+    Accessible.name: title
+    Accessible.description: description
+
     property string title
     property string description
     /// The control, on the right.

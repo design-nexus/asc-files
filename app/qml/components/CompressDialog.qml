@@ -50,6 +50,8 @@ Popup {
     }
 
     contentItem: ColumnLayout {
+        Accessible.role: Accessible.Dialog
+        Accessible.name: qsTr("Compress %n items", "", dialog.paths.length)
         spacing: 14
         Text {
             Layout.fillWidth: true

@@ -69,6 +69,8 @@ Popup {
     }
 
     contentItem: ColumnLayout {
+        Accessible.role: Accessible.Dialog
+        Accessible.name: dialog.message.split("\n")[0]
         spacing: 12
         Text {
             Layout.fillWidth: true

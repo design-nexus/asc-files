@@ -39,6 +39,8 @@ Popup {
     background: Rectangle { radius: 14; color: Theme.raised; border.width: 1; border.color: Theme.panelEdge }
 
     contentItem: ColumnLayout {
+        Accessible.role: Accessible.Dialog
+        Accessible.name: qsTr("Items left by an interrupted operation")
         spacing: 12
         Text {
             text: qsTr("Items left by an interrupted operation")
