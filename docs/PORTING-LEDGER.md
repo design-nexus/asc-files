@@ -592,3 +592,8 @@ what landed back through merged folders' stored names. Legacy's
 this gap, passes. Choosing Merge in the paste prompt now asks next about each merged folder's own
 clashes (Replace, Keep Both or Skip each, or for the rest), sent as the merge's `choices`; a clash at a
 path that isn't UTF-8 keeps both, since choices are named by text.
+
+Undo of a folder an operation made (copied, created, extracted) on a drive without a Trash: the
+step records a fingerprint of what the folder held (`undo::tree_print`, up to 100,000 entries), and undo
+deletes the folder whole while that still matches; anything changed inside, or a folder too large to
+fingerprint, stays in place, reported, as before. Journals from before read back without one.

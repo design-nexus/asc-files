@@ -43,9 +43,74 @@ pub struct Identity {
     modified: (i64, u32),
     changed: (i64, u32),
     born: Option<(i64, u32)>,
+    /// For a folder an operation made: what was in it then (see [`tree_print`]), so undo can take
+    /// it away whole on a drive with no Trash only while nothing in it has changed.
+    #[serde(default)]
+    tree: Option<u64>,
+}
+
+/// Entries a made folder's contents are fingerprinted up to; a larger one keeps no fingerprint.
+const MAX_TREE_ENTRIES: usize = 100_000;
+
+/// A fingerprint of everything below `folder`: each entry's path, kind, inode, size and times,
+/// in order, links not followed (FNV-1a). None past [`MAX_TREE_ENTRIES`] or where any entry can't
+/// be read.
+fn tree_print(folder: &Path) -> Option<u64> {
+    use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
+    let mut print: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut mix = |bytes: &[u8]| {
+        for byte in bytes {
+            print ^= u64::from(*byte);
+            print = print.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    let mut entries = 0;
+    let mut pending = vec![PathBuf::new()];
+    while let Some(relative) = pending.pop() {
+        let mut names = fs::read_dir(folder.join(&relative))
+            .ok()?
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        names.sort();
+        for name in names {
+            entries += 1;
+            if entries > MAX_TREE_ENTRIES {
+                return None;
+            }
+            let path = relative.join(&name);
+            let meta = fs::symlink_metadata(folder.join(&path)).ok()?;
+            mix(path.as_os_str().as_bytes());
+            mix(&[0]);
+            for value in [
+                u64::from(meta.mode() & 0o170_000),
+                meta.ino(),
+                meta.size(),
+                meta.mtime() as u64,
+                meta.mtime_nsec() as u64,
+                meta.ctime() as u64,
+                meta.ctime_nsec() as u64,
+            ] {
+                mix(&value.to_le_bytes());
+            }
+            if meta.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+    Some(print)
 }
 
 impl Identity {
+    /// As [`Identity::of`], for an item an operation made: a folder's contents are fingerprinted.
+    pub fn of_made(path: &Path) -> Option<Self> {
+        let mut identity = Self::of(path)?;
+        if identity.is_folder() {
+            identity.tree = tree_print(path);
+        }
+        Some(identity)
+    }
+
     /// The item at `path` itself, not what a link there points to.
     pub fn of(path: &Path) -> Option<Self> {
         use rustix::fs::{AtFlags, CWD, StatxFlags, statx};
@@ -67,6 +132,7 @@ impl Identity {
             modified: (stat.stx_mtime.tv_sec, stat.stx_mtime.tv_nsec),
             changed: (stat.stx_ctime.tv_sec, stat.stx_ctime.tv_nsec),
             born,
+            tree: None,
         })
     }
 
@@ -264,7 +330,7 @@ impl Step {
         let copy = into.join(name);
         Some(Self::Copied {
             source: source.to_path_buf(),
-            identity: Identity::of(&copy)?,
+            identity: Identity::of_made(&copy)?,
             copy,
             conflict,
         })
@@ -294,7 +360,7 @@ impl Step {
     pub fn created(path: &Path) -> Option<Self> {
         Some(Self::Created {
             path: path.to_path_buf(),
-            identity: Identity::of(path)?,
+            identity: Identity::of_made(path)?,
         })
     }
 
@@ -303,7 +369,7 @@ impl Step {
         Some(Self::Extracted {
             archive: archive.to_path_buf(),
             item: item.to_path_buf(),
-            identity: Identity::of(item)?,
+            identity: Identity::of_made(item)?,
         })
     }
 
@@ -387,7 +453,7 @@ impl Step {
                     conflict,
                 } => Some(Self::Copied {
                     source: source.clone(),
-                    identity: Identity::of(copy)?,
+                    identity: Identity::of_made(copy)?,
                     copy: copy.clone(),
                     conflict: *conflict,
                 }),
@@ -804,24 +870,34 @@ fn discard(path: &Path, identity: &Identity) -> Result<(), Error> {
     match trash::put(path) {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == ErrorKind::NotSupported => {
-            let now = Identity::of(path);
-            let unchanged = now.is_some_and(|now| now.unchanged(identity));
-            if unchanged && identity.is_file() {
-                fs::remove_file(path).map_err(crate::error::os_io_error)
-            } else if unchanged && identity.is_folder() {
-                // Fails, leaving it, if anything is in it.
-                fs::remove_dir(path).map_err(|_| {
-                    translated_io_error(
-                        "This drive has no Trash and the folder is not empty, so it was left in place",
-                    )
-                })
-            } else {
-                Err(translated_io_error(
-                    "This drive has no Trash and the item changed since, so it was left in place",
-                ))
-            }
+            remove_without_trash(path, identity)
         }
         Err(error) => Err(error),
+    }
+}
+
+/// Where the drive has no Trash: a file or folder the operation made goes for good while it is as
+/// the operation left it (a folder whole only while nothing in it changed); otherwise it stays.
+fn remove_without_trash(path: &Path, identity: &Identity) -> Result<(), Error> {
+    let now = Identity::of(path);
+    let unchanged = now.is_some_and(|now| now.unchanged(identity));
+    if unchanged && identity.is_file() {
+        fs::remove_file(path).map_err(crate::error::os_io_error)
+    } else if unchanged && identity.is_folder() {
+        // Whole, while everything in it is as the operation left it; else only empty.
+        if fs::remove_dir(path).is_ok() {
+            return Ok(());
+        }
+        if identity.tree.is_some() && tree_print(path) == identity.tree {
+            return fs::remove_dir_all(path).map_err(crate::error::os_io_error);
+        }
+        Err(translated_io_error(
+            "This drive has no Trash and something in the folder changed since, so it was left in place",
+        ))
+    } else {
+        Err(translated_io_error(
+            "This drive has no Trash and the item changed since, so it was left in place",
+        ))
     }
 }
 
@@ -1309,6 +1385,63 @@ fn replay(redo: &Redo, cancel: &Cancel, progress: &Progress) -> Result<Option<St
 
 #[cfg(test)]
 mod tests {
+    /// A folder copied onto a drive with no Trash goes whole on undo while nothing in it changed.
+    #[test]
+    fn a_made_folder_goes_whole_without_a_trash_only_while_unchanged() {
+        let root = tempfile::tempdir().unwrap();
+        let made = |name: &str| {
+            let folder = root.path().join(name);
+            fs::create_dir_all(folder.join("inner/deeper")).unwrap();
+            fs::write(folder.join("a.txt"), b"a").unwrap();
+            fs::write(folder.join("inner/deeper/b.txt"), b"b").unwrap();
+            let identity = Identity::of_made(&folder).unwrap();
+            assert!(identity.tree.is_some());
+            (folder, identity)
+        };
+
+        let (untouched, identity) = made("untouched");
+        super::remove_without_trash(&untouched, &identity).unwrap();
+        assert!(!untouched.exists());
+
+        // Something deep inside written to since: it stays, saying why.
+        let (edited, identity) = made("edited");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(edited.join("inner/deeper/b.txt"), b"bb").unwrap();
+        let error = super::remove_without_trash(&edited, &identity).unwrap_err();
+        assert!(
+            error.message().contains("changed since"),
+            "{}",
+            error.message()
+        );
+        assert!(edited.join("inner/deeper/b.txt").exists());
+
+        // Something added inside a folder below the top: it stays too.
+        let (added, identity) = made("added");
+        fs::write(added.join("inner/new.txt"), b"n").unwrap();
+        assert!(super::remove_without_trash(&added, &identity).is_err());
+        assert!(added.join("inner/new.txt").exists());
+
+        // An identity recorded before (no fingerprint): only an empty folder goes, as before.
+        let (old, mut identity) = made("old");
+        identity.tree = None;
+        assert!(super::remove_without_trash(&old, &identity).is_err());
+        assert!(old.exists());
+        let empty = root.path().join("empty");
+        fs::create_dir(&empty).unwrap();
+        super::remove_without_trash(&empty, &Identity::of(&empty).unwrap()).unwrap();
+        assert!(!empty.exists());
+    }
+
+    /// Journals written before the fingerprint read back, with none.
+    #[test]
+    fn an_identity_without_a_fingerprint_reads_back() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut value = serde_json::to_value(Identity::of(file.path()).unwrap()).unwrap();
+        value.as_object_mut().unwrap().remove("tree");
+        let identity: Identity = serde_json::from_value(value).unwrap();
+        assert_eq!(identity.tree, None);
+    }
+
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
     use super::*;
