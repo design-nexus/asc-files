@@ -18,6 +18,7 @@ pub(crate) enum CoverFormat {
     ThreeMf,
     FreeCad,
     AppImage,
+    Raw,
 }
 
 impl CoverFormat {
@@ -28,6 +29,7 @@ impl CoverFormat {
             "3mf" => Some(Self::ThreeMf),
             "fcstd" => Some(Self::FreeCad),
             "appimage" => Some(Self::AppImage),
+            "raw" => Some(Self::Raw),
             _ => None,
         }
     }
@@ -101,6 +103,10 @@ pub(crate) fn render(input: &Path, format: CoverFormat, edge: i32) -> Result<Vec
     // An AppImage is often large; only its icon is read.
     if format == CoverFormat::AppImage {
         return crate::appimage::render(input, edge);
+    }
+    // A camera RAW's own preview.
+    if format == CoverFormat::Raw {
+        return crate::raw::render(input, edge);
     }
     if fs::metadata(input).map_err(|e| e.to_string())?.len() > MAX_INPUT_BYTES {
         return Err("Cover archive exceeds the input size limit".into());
@@ -321,6 +327,15 @@ fn model_thumbnail(
 
 /// `bytes`, a picture, decoded within the pixel limit and scaled to at most `edge` a side, as a PNG.
 pub(crate) fn render_image(bytes: &[u8], edge: i32) -> Result<Vec<u8>, String> {
+    render_oriented(bytes, edge, 1)
+}
+
+/// As `render_image`, turned upright by an EXIF `orientation` (1–8).
+pub(crate) fn render_oriented(
+    bytes: &[u8],
+    edge: i32,
+    orientation: u16,
+) -> Result<Vec<u8>, String> {
     let reader = || -> Result<_, String> {
         let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
             .with_guessed_format()
@@ -345,6 +360,16 @@ pub(crate) fn render_image(bytes: &[u8], edge: i32) -> Result<Vec<u8>, String> {
         picture.resize(edge, edge, image::imageops::FilterType::Triangle)
     } else {
         picture
+    };
+    let picture = match orientation {
+        2 => picture.fliph(),
+        3 => picture.rotate180(),
+        4 => picture.flipv(),
+        5 => picture.rotate90().fliph(),
+        6 => picture.rotate90(),
+        7 => picture.rotate270().fliph(),
+        8 => picture.rotate270(),
+        _ => picture,
     };
     let mut png = Vec::new();
     picture

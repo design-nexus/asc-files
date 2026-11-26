@@ -570,3 +570,9 @@ the ELF runtime in place with `backhand` (gzip, zstd, lz4) instead of legacy's `
 sandbox could not reach on NixOS and would have been another runtime dependency; `.DirIcon`, else the
 `.desktop` entry's icon, PNG or SVG. Legacy's 5 AppImage tests ported (the unsquashfs listing parser's
 became three over real images made by `backhand`'s writer).
+
+Camera RAW thumbnails: the document reader (`cover raw`) finds the largest JPEG preview the camera
+embedded (TIFF IFDs and sub-IFDs for CR2, NEF, ARW, DNG, ORF, PEF, RW2…; RAF's header; CR3's `PRVW`
+box), decodes it within the pixel limit and turns it upright by IFD0's orientation. Legacy ran dcraw,
+ImageMagick or gdk-pixbuf instead; nothing is demosaiced now, so a RAW without a preview has no
+thumbnail. `raw/tests.rs` covers byte orders, sub-IFDs, orientation, RAF, CR3 and malformed files.

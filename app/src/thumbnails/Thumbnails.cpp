@@ -80,6 +80,15 @@ enum class Source { None, Picture, Video, Pdf, Cover, RarCover };
 
 /// Files that carry their own cover, read by the document reader.
 const QList<QByteArray> covered{"cbz", "epub", "3mf", "fcstd", "appimage"};
+/// Camera RAWs: their own JPEG preview, which the document reader finds (format "raw").
+const QList<QByteArray> cameraRaws{"cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "dng", "orf", "pef", "rw2",
+                                   "raf", "rwl", "srw", "3fr", "erf", "kdc", "mrw", "mos", "iiq", "raw"};
+
+/// The format the document reader is asked for a file's cover in.
+QString coverFormat(const QByteArray &path) {
+    const QString suffix = QFileInfo(QFile::decodeName(path)).suffix().toLower();
+    return cameraRaws.contains(suffix.toLatin1()) ? QStringLiteral("raw") : suffix;
+}
 
 Source sourceOf(const QString &name) {
     static const QList<QByteArray> formats = QImageReader::supportedImageFormats();
@@ -89,6 +98,10 @@ Source sourceOf(const QString &name) {
     const QByteArray suffix = QFileInfo(name).suffix().toLower().toLatin1();
     if (suffix.isEmpty()) {
         return Source::None;
+    }
+    // Before pictures: an image plugin that reads RAWs would develop the whole frame.
+    if (cameraRaws.contains(suffix)) {
+        return Source::Cover;
     }
     if (formats.contains(suffix == "jpeg" ? QByteArray("jpg") : suffix)) {
         return Source::Picture;
@@ -131,7 +144,7 @@ QImage thumbnail(const QByteArray &path, int size) {
     // Decoded in the sandbox, as every untrusted file is.
     QImage image = source == Source::Video   ? Sandbox::videoFrameNow(path, wanted)
                    : source == Source::Pdf   ? Sandbox::pdfPageNow(path, wanted)
-                   : source == Source::Cover ? Sandbox::coverNow(path, QFileInfo(QFile::decodeName(path)).suffix().toLower(), wanted)
+                   : source == Source::Cover ? Sandbox::coverNow(path, coverFormat(path), wanted)
                    : source == Source::RarCover ? Sandbox::rarCoverNow(path, wanted)
                                              : Sandbox::decodeImageNow(path, wanted);
     if (image.isNull()) {

@@ -8,7 +8,7 @@
 //! pulldown-cmark and cleaned with ammonia.
 //!
 //!     asc-files-docs markdown|html|rtf|docx|sheet|csv|tsv <file> [<text colour, #rrggbb>]
-//!     asc-files-docs cover cbz|epub|3mf|fcstd|appimage <file> <edge>   (a cover for a thumbnail, as a PNG)
+//!     asc-files-docs cover cbz|epub|3mf|fcstd|appimage|raw <file> <edge>   (a cover for a thumbnail, as a PNG)
 //!     asc-files-docs archive zip|7z|tar|tar.gz <file>   (an archive's listing, as JSON nodes)
 
 mod appimage;
@@ -18,6 +18,7 @@ mod docx;
 mod html;
 mod markdown;
 mod media;
+mod raw;
 mod rtf;
 mod table;
 
@@ -130,7 +131,7 @@ fn main() -> ExitCode {
         println!("{}", archive::listing(format, Path::new(file)));
         return ExitCode::SUCCESS;
     }
-    // A cover: `cover <cbz|epub|3mf|fcstd|appimage> <file> <edge>`, written out as a PNG.
+    // A cover: `cover <cbz|epub|3mf|fcstd|appimage|raw> <file> <edge>`, written out as a PNG.
     if let [_, mode, format, file, edge] = args.as_slice()
         && mode == "cover"
     {
@@ -159,7 +160,7 @@ fn main() -> ExitCode {
         [_, kind, file, ink] => (kind, file, ink.as_str()),
         _ => {
             eprintln!(
-                "usage: asc-files-docs markdown|html|rtf|docx|sheet|csv|tsv <file> [#rrggbb] | cover cbz|epub|3mf|fcstd|appimage <file> <edge> | archive <format> <file>"
+                "usage: asc-files-docs markdown|html|rtf|docx|sheet|csv|tsv <file> [#rrggbb] | cover cbz|epub|3mf|fcstd|appimage|raw <file> <edge> | archive <format> <file>"
             );
             return ExitCode::from(2);
         }
