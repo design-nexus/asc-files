@@ -5,6 +5,7 @@
 #include "backend/BackendClient.h"
 #include "desktop/AppIcons.h"
 #include "desktop/DesktopBus.h"
+#include "desktop/Cloud.h"
 #include "desktop/Disks.h"
 #include "desktop/Network.h"
 #include "desktop/Integrations.h"
@@ -62,6 +63,9 @@ int main(int argc, char *argv[]) {
     // Servers (SFTP, SMB, …) through gvfs.
     Network network;
     places.setNetwork(&network);
+    // Cloud accounts through Nyx Cloud, where it runs.
+    Cloud cloud;
+    places.setCloud(&cloud);
     RecentModel recent;
     FavoritesModel favorites;
     TrashModel trash(&backend);
@@ -106,6 +110,7 @@ int main(int argc, char *argv[]) {
                               {QStringLiteral("integrations"), QVariant::fromValue(&integrations)},
                               {QStringLiteral("disks"), QVariant::fromValue(&disks)},
                               {QStringLiteral("network"), QVariant::fromValue(&network)},
+                              {QStringLiteral("cloud"), QVariant::fromValue(&cloud)},
                               {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
 
     // The desktop's file chooser: a process of its own, which xdg-desktop-portal starts; it shows a

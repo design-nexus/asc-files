@@ -518,3 +518,9 @@ on the command line mounts it (GIO's password and question prompts as Files dial
 anonymous, how long to remember), and opens it as the folder gvfs shows it as, which the engine browses
 as any other; connected servers are in Storage, with Disconnect. Checked for real through gvfs's local
 test backend (`tst_network` with `ASC_FILES_LIVE_NETWORK=1`) and against sshd (its refusal shown).
+
+Cloud accounts are Nyx Cloud's (`io.github.design_nexus.nyx.Cloud1`, `app/src/desktop/Cloud.cpp`), as
+legacy listed them: every account with storage is in Storage, a click on one not connected mounts it
+(rclone, in the home folder) and opens it, and its menu connects and disconnects. Without the service
+there are none. `tst_cloud` reads `ListRemotes`'s answer; mounting was not run against the real
+account in tests (it is the user's).

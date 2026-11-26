@@ -31,6 +31,8 @@ ApplicationWindow {
     required property var properties
     /// The user's custom actions and their runs (the app's).
     required property var actions
+    /// Cloud accounts through Nyx Cloud (none in tests).
+    property var cloud: null
     /// Servers through gvfs (none in tests).
     property var network: null
     /// The drives UDisks2 knows (none in tests).
@@ -271,6 +273,7 @@ ApplicationWindow {
                             dropTarget: drop.containsDrag
                             onClicked: placeRow.model.page !== 0 ? window.browser.goPage(placeRow.model.page)
                                      : placeRow.model.path.length > 0 ? window.browser.goPath(placeRow.model.path)
+                                     : placeRow.model.cloud.length > 0 ? window.cloud.connectAccount(placeRow.model.cloud)
                                      : window.openVolume(placeRow.model.volume, placeRow.model.locked, placeRow.model.name)
 
                             TapHandler {
@@ -671,6 +674,12 @@ ApplicationWindow {
         id: serverQuestion
         onAnswered: (asked, choice) => window.network.answerQuestion(asked, choice)
         onCancelled: (asked) => window.network.cancel(asked)
+    }
+    Connections {
+        target: window.cloud
+        enabled: window.foremost
+        function onOpened(path) { window.browser.goPath(path) }
+        function onFailed(message) { notice.show(message) }
     }
     Connections {
         target: window.network
@@ -1157,7 +1166,8 @@ ApplicationWindow {
         property var place: ({})
         function show(model, color) {
             place = { key: model.key, name: model.name, section: model.section, path: model.path, hideable: model.hideable,
-                      volume: model.volume, locked: model.locked, ejectable: model.ejectable, removable: model.removable, uri: model.uri }
+                      volume: model.volume, locked: model.locked, ejectable: model.ejectable, removable: model.removable, uri: model.uri,
+                      cloud: model.cloud, connected: model.connected }
             popup()
         }
         MenuItem {
@@ -1187,6 +1197,18 @@ ApplicationWindow {
             visible: !!placeMenu.place.volume && placeMenu.place.ejectable === true
             height: visible ? implicitHeight : 0
             onTriggered: window.disks.eject(placeMenu.place.volume)
+        }
+        MenuItem {
+            text: qsTr("Connect")
+            visible: !!placeMenu.place.cloud && !placeMenu.place.connected
+            height: visible ? implicitHeight : 0
+            onTriggered: window.cloud.connectAccount(placeMenu.place.cloud)
+        }
+        MenuItem {
+            text: qsTr("Disconnect")
+            visible: !!placeMenu.place.cloud && placeMenu.place.connected === true
+            height: visible ? implicitHeight : 0
+            onTriggered: window.cloud.disconnectAccount(placeMenu.place.cloud)
         }
         MenuItem {
             text: qsTr("Disconnect")

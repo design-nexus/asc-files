@@ -44,6 +44,10 @@ public:
         RemovableRole,
         /// A network location's address (it disconnects), or empty.
         UriRole,
+        /// A cloud account's id (it connects and disconnects), or empty.
+        CloudRole,
+        /// The location is connected (a cloud account mounted).
+        ConnectedRole,
     };
     Q_ENUM(Role)
     enum Section { Pages, Folders, Pinned, Storage };
@@ -62,6 +66,8 @@ public:
     void setDisks(class Disks *disks);
     /// The network locations connected, listed in Storage.
     void setNetwork(class Network *network);
+    /// Cloud accounts, listed in Storage whether connected or not.
+    void setCloud(class Cloud *cloud);
     /// Home and the mounted drives the user plugged in or mounted: where a search goes.
     Q_INVOKABLE QStringList searchRoots() const;
 
@@ -113,6 +119,8 @@ private:
         bool ejectable = false;
         bool removable = false;
         QString uri;
+        QString cloud;
+        bool connected = false;
     };
     /// Every default place that can be hidden, in its default order.
     QList<Place> defaults() const;
@@ -130,4 +138,5 @@ private:
     QTimer m_drives;
     class Disks *m_disks = nullptr;
     class Network *m_network = nullptr;
+    class Cloud *m_cloud = nullptr;
 };
