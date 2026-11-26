@@ -52,6 +52,7 @@ Rectangle {
             required property bool selected
             required property string customColor
             required property string customIcon
+            required property int clipMark
             readonly property bool open: column.openName.length > 0 && name === column.openName
             width: ListView.view.width
             height: 32
@@ -77,6 +78,7 @@ Rectangle {
                     path: entry.customIcon.length > 0 ? entry.customIcon
                         : entry.isFolder ? "M2 4.5h4l1.5 1.5H14v6.5H2z" : "M4 2h5l3 3v9H4zM9 2v3h3"
                     color: entry.customColor.length > 0 ? entry.customColor : entry.isFolder ? Theme.accent : Theme.folderIcon
+                    ClipBadge { mark: entry.clipMark; edge: 10; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: -4 }
                 }
                 Text {
                     visible: entry.customIcon.startsWith("emoji:")

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "Operations.h"
 
+#include "ClipboardMarks.h"
+
 #include "../backend/BackendClient.h"
 #include "../backend/Wire.h"
 #include "../models/FolderModel.h"
@@ -37,6 +39,12 @@ QVariantMap sideMap(const QJsonValue &side) {
 Operations::Operations(BackendClient *backend, JobModel *jobs, QObject *parent)
     : QObject(parent), m_backend(backend), m_jobs(jobs) {
     connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this, &Operations::clipboardChanged);
+    // Another program took the clipboard (or Files emptied it): the marks go.
+    connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this, [] {
+        if (!QGuiApplication::clipboard()->ownsClipboard()) {
+            ClipboardMarks::shared().clear();
+        }
+    });
     connect(m_jobs, &JobModel::finished, this, &Operations::refreshHistory);
     connect(m_jobs, &JobModel::itemDone, this, [this](qint64 job, int, const QJsonObject &outcome) { archiveItemDone(job, outcome); });
     connect(m_backend, &BackendClient::ready, this, &Operations::refreshHistory);
@@ -75,6 +83,7 @@ void Operations::clearClipboard() {
     if (clipboard->ownsClipboard()) {
         clipboard->clear();
     }
+    ClipboardMarks::shared().clear();
 }
 
 void Operations::setClipboard(const QList<QByteArray> &paths, bool cut) {
@@ -93,6 +102,7 @@ void Operations::setClipboard(const QList<QByteArray> &paths, bool cut) {
     data->setData(GnomeCopied, gnome);
     data->setData(KdeCut, cut ? "1" : "0");
     QGuiApplication::clipboard()->setMimeData(data);
+    ClipboardMarks::shared().set(paths, cut);
     emit notice(cut ? tr("Cut %n items", "", int(paths.size())) : tr("Copied %n items", "", int(paths.size())));
 }
 
@@ -267,6 +277,7 @@ void Operations::startBatch(const QByteArray &into, const QJsonArray &items, boo
     if (cut && fromClipboard) {
         // A cut is pasted once.
         QGuiApplication::clipboard()->clear();
+        ClipboardMarks::shared().clear();
     }
 }
 

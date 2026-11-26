@@ -681,6 +681,7 @@ FocusScope {
             required property bool selected
             required property string customColor
             required property string customIcon
+            required property int clipMark
             readonly property bool editing: index === view.renamingRow
             width: GridView.view.cellWidth - 6
             height: GridView.view.cellHeight - 2
@@ -722,6 +723,7 @@ FocusScope {
                     color: compactItem.customColor.length > 0 ? compactItem.customColor : compactItem.isFolder ? Theme.accent : Theme.folderIcon
                     path: compactItem.customIcon.length > 0 ? compactItem.customIcon
                         : compactItem.isFolder ? "M2 4.5h4l1.5 1.5H14v6.5H2z" : "M4 2h5l3 3v9H4zM9 2v3h3"
+                    ClipBadge { mark: compactItem.clipMark; edge: 10; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: -4 }
                 }
                 Text {
                     visible: compactItem.customIcon.startsWith("emoji:")

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "FolderModel.h"
 
+#include "../ops/ClipboardMarks.h"
+
 #include "../backend/BackendClient.h"
 #include "../backend/Wire.h"
 #include "../settings/AppSettings.h"
@@ -52,6 +54,12 @@ FolderModel::FolderModel(BackendClient *backend, QObject *parent) : QAbstractLis
     connect(&AppSettings::shared(), &AppSettings::dateFormatChanged, this, [this] {
         if (rowCount() > 0) {
             emit dataChanged(index(0), index(rowCount() - 1), {ModifiedTextRole});
+        }
+    });
+    // Copied or cut items show it, wherever they are listed.
+    connect(&ClipboardMarks::shared(), &ClipboardMarks::changed, this, [this] {
+        if (rowCount() > 0) {
+            emit dataChanged(index(0), index(rowCount() - 1), {ClipMarkRole});
         }
     });
     // An item given a colour or icon shows it at once.
@@ -401,6 +409,8 @@ QVariant FolderModel::data(const QModelIndex &index, int role) const {
         return Customizations::shared().colorOf(pathAt(index.row()));
     case CustomIconRole:
         return Customizations::shared().iconOf(pathAt(index.row()));
+    case ClipMarkRole:
+        return int(ClipboardMarks::shared().markOf(Wire::join(m_folder, rawName(index.row()))));
     case ThumbnailRole: {
         const QJsonValue name = row.value(QStringLiteral("name"));
         if (kind != QLatin1String("file") || !Thumbnails::canMake(Wire::display(name))) {
@@ -430,7 +440,8 @@ QHash<int, QByteArray> FolderModel::roleNames() const {
             {SelectedRole, "selected"},
             {ThumbnailRole, "thumbnail"},
             {CustomColorRole, "customColor"},
-            {CustomIconRole, "customIcon"}};
+            {CustomIconRole, "customIcon"},
+            {ClipMarkRole, "clipMark"}};
 }
 
 void FolderModel::request(int page) const {

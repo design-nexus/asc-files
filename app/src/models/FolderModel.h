@@ -59,6 +59,8 @@ public:
         /// The item's own colour (`#rrggbb`) and icon (path data, or `emoji:…`), from Customize.
         CustomColorRole,
         CustomIconRole,
+        /// On the clipboard from Files: 0 not, 1 copied, 2 cut.
+        ClipMarkRole,
     };
     Q_ENUM(Role)
     static constexpr int PageSize = 200;

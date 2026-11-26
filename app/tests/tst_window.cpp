@@ -439,6 +439,12 @@ private slots:
         press(Qt::Key_H);
         QTRY_COMPARE(tabs.current()->location(), dir.path());
         QTRY_COMPARE(folders.pathAt(cursor()), dir.filePath("folder"));
+        // y marks what it put on the clipboard; Y takes it back.
+        press(Qt::Key_Y);
+        const int marked = cursor();
+        QTRY_COMPARE(folders.data(folders.index(marked), FolderModel::ClipMarkRole).toInt(), 1);
+        press(Qt::Key_Y, Qt::ShiftModifier);
+        QTRY_COMPARE(folders.data(folders.index(marked), FolderModel::ClipMarkRole).toInt(), 0);
         // The footer's prompts: / finds a name from the cursor.
         auto *prompt = window->findChild<QQuickItem *>(QStringLiteral("tenxerPrompt"));
         QVERIFY(prompt);

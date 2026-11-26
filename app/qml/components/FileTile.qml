@@ -18,6 +18,8 @@ Rectangle {
     /// Its own colour and icon (path data, or `emoji:…`), from Customize; empty when none.
     required property string customColor
     required property string customIcon
+    /// On the clipboard: 1 copied, 2 cut.
+    required property int clipMark
     readonly property color tint: customColor.length > 0 ? customColor : isFolder ? Theme.accent : Theme.folderIcon
     property int iconSize: 64
 
@@ -75,6 +77,13 @@ Rectangle {
                 anchors.centerIn: parent
                 text: tile.customIcon.substring(6)
                 font.pixelSize: tile.iconSize * 0.8
+            }
+            ClipBadge {
+                mark: tile.clipMark
+                edge: Math.max(14, tile.iconSize / 4)
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.horizontalCenterOffset: tile.iconSize / 2 - edge / 2
+                anchors.bottom: parent.bottom
             }
         }
         NameEditor {

@@ -23,6 +23,8 @@ Rectangle {
     /// Its own colour and icon (path data, or `emoji:…`), from Customize; empty when none.
     required property string customColor
     required property string customIcon
+    /// On the clipboard: 1 copied, 2 cut.
+    required property int clipMark
     /// The columns after Name, `[{key, width}]` in order; the name takes the rest, up to 600 px.
     property var columns: AppSettings.listColumns
     /// Columns that give way as the list narrows, so the name keeps its room.
@@ -81,6 +83,7 @@ Rectangle {
                     text: row.customIcon.substring(6)
                     font.pixelSize: 12
                 }
+                ClipBadge { mark: row.clipMark; edge: 11; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: -5 }
             }
             NameEditor {
                 id: editor

@@ -36,6 +36,7 @@ qt_add_library(asc_files_core STATIC
     src/models/TabModel.cpp src/models/TabModel.h
     src/models/Transfers.cpp src/models/Transfers.h
     src/ops/Operations.cpp src/ops/Operations.h
+    src/ops/ClipboardMarks.cpp src/ops/ClipboardMarks.h
     src/render/CodeHighlighter.cpp src/render/CodeHighlighter.h
     src/render/Preview.cpp src/render/Preview.h
     src/render/Sandbox.cpp src/render/Sandbox.h
@@ -111,6 +112,7 @@ qt_add_qml_module(asc_files_qml
         qml/components/ServerPasswordDialog.qml
         qml/components/QuestionDialog.qml
         qml/components/TenXerBar.qml
+        qml/components/ClipBadge.qml
         qml/components/TenXerCursor.qml
         qml/components/NameEditor.qml
         qml/components/OpenWithDialog.qml
