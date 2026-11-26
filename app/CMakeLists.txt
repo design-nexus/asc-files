@@ -41,6 +41,7 @@ qt_add_library(asc_files_core STATIC
     src/desktop/DesktopApps.cpp src/desktop/DesktopApps.h
     src/desktop/DesktopBus.cpp src/desktop/DesktopBus.h
     src/portal/Chooser.cpp src/portal/Chooser.h
+    src/portal/ChooserService.cpp src/portal/ChooserService.h
     src/settings/AppSettings.cpp src/settings/AppSettings.h
     src/theme/SystemTheme.cpp src/theme/SystemTheme.h
     src/thumbnails/Thumbnails.cpp src/thumbnails/Thumbnails.h)
@@ -91,6 +92,7 @@ qt_add_qml_module(asc_files_qml
         qml/components/CompressDialog.qml
         qml/components/PasswordDialog.qml
         qml/components/PrimaryButton.qml
+        qml/components/ChooserBar.qml
         qml/components/NameEditor.qml
         qml/components/OpenWithDialog.qml
         qml/components/OpenWithMenu.qml

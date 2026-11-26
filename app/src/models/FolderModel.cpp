@@ -113,7 +113,7 @@ void FolderModel::open(const QByteArray &path) {
         params.insert(QStringLiteral("globs"), QJsonArray::fromStringList(m_globs));
     }
     m_backend->call(QStringLiteral("list.open"), params, this,
-                    [this, opening](const QJsonValue &result, const BackendError &error) {
+                    [this, opening, sentFilter = m_filter, sentGlobs = m_globs](const QJsonValue &result, const BackendError &error) {
                         if (opening != m_opening) {
                             // Opened somewhere else meanwhile: let this listing go.
                             if (error.isNull()) {
@@ -135,6 +135,10 @@ void FolderModel::open(const QByteArray &path) {
                                listing.value(QStringLiteral("count")).toInt());
                         emit folderChanged();
                         emit opened(m_count);
+                        // A filter changed while the folder opened applies now.
+                        if (m_filter != sentFilter || m_globs != sentGlobs) {
+                            reorder();
+                        }
                     });
 }
 

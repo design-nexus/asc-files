@@ -1,0 +1,3 @@
+[portal]
+DBusName=org.freedesktop.impl.portal.desktop.asc_files
+Interfaces=org.freedesktop.impl.portal.FileChooser;

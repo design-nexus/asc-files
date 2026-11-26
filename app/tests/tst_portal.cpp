@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! Legacy's portal tests (`portal/tests.rs`), on the chooser's requests, checks and answers.
 #include "portal/Chooser.h"
+#include "portal/ChooserService.h"
 
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
+#include <QSignalSpy>
 #include <QTest>
 
 using namespace Portal;
@@ -268,6 +270,67 @@ private slots:
         QCOMPARE(saveFiles.names, (QList<QByteArray>{"a.txt", "b.txt"}));
         options.files = {"../escape"};
         QVERIFY(refused(saveFilesRequest({}, options)));
+    }
+
+    // New: a request's options as they come, and the answers a chooser job gives.
+    void optionsAreReadAndAJobAnswersAsThePortalExpects() {
+        registerTypes();
+        QTemporaryDir folder;
+        for (const char *name : {"a.txt", "b.png"}) {
+            QFile file(folder.filePath(name));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+        }
+        QVERIFY(QDir(folder.path()).mkdir("sub"));
+        const Filter text = filter("Text", {{0, "*.txt"}});
+        const Filter images = filter("Images", {{1, "image/png"}});
+        const QVariantMap sent{{"accept_label", "Pick"},
+                               {"multiple", true},
+                               {"filters", QVariant::fromValue(QList<Filter>{text, images})},
+                               {"current_filter", QVariant::fromValue(images)},
+                               {"choices", QVariant::fromValue(QList<Choice>{boolean("ro", "Read only", false)})},
+                               {"current_folder", QByteArray(bytes(folder.path()) + '\0')}};
+        const Options read = optionsFrom(sent);
+        QCOMPARE(read.acceptLabel, std::optional<QString>("Pick"));
+        QCOMPARE(read.multiple, std::optional<bool>(true));
+        QCOMPARE(read.filters, (QList<Filter>{text, images}));
+        QCOMPARE(read.currentFilter, std::optional<Filter>(images));
+        QCOMPARE(read.currentFolder, std::optional<QByteArray>(bytes(folder.path())));
+
+        ChooserJob open(request(openRequest("Open", read)));
+        QCOMPARE(open.kind(), QStringLiteral("open"));
+        QCOMPARE(open.folder(), folder.path());
+        QCOMPARE(open.currentFilter(), 1);
+        QVERIFY(open.filters()[1].toMap().value("globs").toStringList().contains("*.png"));
+        QSignalSpy finished(&open, &ChooserJob::finished);
+        QVERIFY(!open.acceptOpen({folder.filePath("sub")}, folder.path(), {}, 0).isEmpty());
+        QVERIFY(finished.isEmpty());
+        QCOMPARE(open.acceptOpen({folder.filePath("a.txt"), folder.filePath("b.png")}, folder.path(), {{"ro", "true"}}, 0), QString());
+        QCOMPARE(finished.size(), 1);
+        QCOMPARE(finished.first().at(0).toUInt(), 0u);
+        const QVariantMap results = finished.first().at(1).toMap();
+        QCOMPARE(results.value("uris").toStringList(), (QStringList{localUri(bytes(folder.filePath("a.txt"))), localUri(bytes(folder.filePath("b.png")))}));
+        QCOMPARE(results.value("current_filter").value<Filter>(), text);
+        const QList<ChoiceValue> chosen = results.value("choices").value<QList<ChoiceValue>>();
+        QCOMPARE(chosen.size(), 1);
+        QCOMPARE(chosen[0].value, QStringLiteral("true"));
+        open.cancel();
+        QCOMPARE(finished.size(), 1);
+
+        Options save;
+        save.currentFolder = bytes(folder.path());
+        ChooserJob saving(request(saveFileRequest({}, save)));
+        QSignalSpy saved(&saving, &ChooserJob::finished);
+        QVERIFY(saving.acceptSave(folder.path(), "", {}, 0, false).contains("error"));
+        QVERIFY(saving.acceptSave(folder.path(), "sub", {}, 0, false).contains("error"));
+        QCOMPARE(saving.acceptSave(folder.path(), "a.txt", {}, 0, false).value("replace").toStringList(), QStringList{"a.txt"});
+        QVERIFY(saved.isEmpty());
+        QVERIFY(saving.acceptSave(folder.path(), "a.txt", {}, 0, true).isEmpty());
+        QCOMPARE(saved.first().at(1).toMap().value("uris").toStringList(), QStringList{localUri(bytes(folder.filePath("a.txt")))});
+
+        ChooserJob closed(request(openRequest({}, {})));
+        QSignalSpy cancelled(&closed, &ChooserJob::finished);
+        closed.cancel();
+        QCOMPARE(cancelled.first().at(0).toUInt(), 1u);
     }
 };
 

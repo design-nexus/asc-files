@@ -31,6 +31,8 @@ ApplicationWindow {
     required property var properties
     /// The user's custom actions and their runs (the app's).
     required property var actions
+    /// A file chooser's request (another program asked Files to choose), or null.
+    property var chooser: null
     /// Actions offered for what was right-clicked last, by placement.
     readonly property var topActions: actions.offered.filter(action => action.menu === "top")
     readonly property var submenuActions: actions.offered.filter(action => action.menu !== "top")
@@ -65,7 +67,7 @@ ApplicationWindow {
     height: 968
     visible: true
     color: Theme.window
-    title: browser ? browser.title : ""
+    title: chooser ? chooser.title : browser ? browser.title : ""
 
     // The view the current tab shows, by its page (Browser.Folder, Overview, Recent, Favorites,
     // Trash, in that order).
@@ -389,7 +391,7 @@ ApplicationWindow {
                                     onActiveFocusChanged: if (activeFocus) window.rightActive = false
                                     onNotice: (message) => notice.show(message)
                                     onContextRequested: (row) => { window.rightActive = false; row >= 0 ? itemMenu.show(row) : spaceMenu.show() }
-                                    onFileActivated: (path) => window.ops.open(path)
+                                    onFileActivated: (path) => window.openFile(path)
                                     onPathMenuRequested: (path, isFolder) => pathMenu.show(path, isFolder)
                                     onDropped: (result, target) => window.dropped(result, target)
                                 }
@@ -416,7 +418,7 @@ ApplicationWindow {
                                         onActiveFocusChanged: if (activeFocus) window.rightActive = true
                                         onNotice: (message) => notice.show(message)
                                         onContextRequested: (row) => { window.rightActive = true; row >= 0 ? itemMenu.show(row) : spaceMenu.show() }
-                                        onFileActivated: (path) => window.ops.open(path)
+                                        onFileActivated: (path) => window.openFile(path)
                                         onPathMenuRequested: (path, isFolder) => pathMenu.show(path, isFolder)
                                         onDropped: (result, target) => window.dropped(result, target)
                                     }
@@ -430,13 +432,13 @@ ApplicationWindow {
                             favorites: window.favorites
                             trash: window.trash
                             downloads: window.downloads
-                            onFileActivated: (path) => window.ops.open(path)
+                            onFileActivated: (path) => window.openFile(path)
                             onMenuRequested: (path, isFolder) => pathMenu.show(path, isFolder)
                         }
                         ItemsView {
                             browser: window.browser
                             items: window.recent
-                            onFileActivated: (path) => window.ops.open(path)
+                            onFileActivated: (path) => window.openFile(path)
                             onContextRequested: (row) => pathMenu.show(window.recent.pathAt(row), window.recent.isFolderAt(row))
                             whenTitle: qsTr("Used")
                             emptyText: qsTr("Files you open show up here")
@@ -444,7 +446,7 @@ ApplicationWindow {
                         ItemsView {
                             browser: window.browser
                             items: window.favorites
-                            onFileActivated: (path) => window.ops.open(path)
+                            onFileActivated: (path) => window.openFile(path)
                             onContextRequested: (row) => pathMenu.show(window.favorites.pathAt(row), window.favorites.isFolderAt(row))
                             emptyText: qsTr("Star files and folders to keep them at hand")
                         }
@@ -470,7 +472,7 @@ ApplicationWindow {
                             browser: window.browser
                             search: window.search
                             places: window.places
-                            onFileActivated: (path) => window.ops.open(path)
+                            onFileActivated: (path) => window.openFile(path)
                             onContextRequested: (row) => pathMenu.show(window.search.pathAt(row), window.search.isFolderAt(row))
                         }
                     }
@@ -534,6 +536,14 @@ ApplicationWindow {
                 }
             }
         }
+        ChooserBar {
+            id: chooserBar
+            visible: window.chooser !== null
+            Layout.fillWidth: true
+            job: window.chooser ? window.chooser : { kind: "", choices: [], filters: [], names: [], currentFilter: 0, acceptLabel: "", currentName: "" }
+            onAccepted: window.chooserAccept(false)
+            onCancelled: window.chooser.cancel()
+        }
     }
 
     Connections {
@@ -558,6 +568,48 @@ ApplicationWindow {
     function revealItems(paths, properties) {
         folderView.reveal(paths)
         if (properties && paths.length === 1) propertiesDialog.show(paths[0])
+    }
+
+    /// Answers the chooser with what is chosen: the selection (or the folder), or the name typed;
+    /// what stands in the way is said, and replacing a file is asked first.
+    function chooserAccept(replace) {
+        const location = window.browser.location
+        if (window.chooser.kind === "open") {
+            const why = window.chooser.acceptOpen(window.folderModel.selectedPaths(), location, chooserBar.values, chooserBar.filter)
+            if (why.length > 0) notice.show(why)
+            return
+        }
+        const answer = window.chooser.acceptSave(location, chooserBar.name, chooserBar.values, chooserBar.filter, replace)
+        if (answer.error) {
+            notice.show(answer.error)
+        } else if (answer.replace) {
+            confirm.ask(qsTr("Replace %1?").arg(answer.replace.map(name => "“" + name + "”").join(", ")),
+                        qsTr("Saving replaces what is there now."), qsTr("Replace"), () => window.chooserAccept(true))
+        }
+    }
+    /// A file opened: in an Open chooser it is the answer; saving, its name is taken.
+    function openFile(path) {
+        if (window.chooser && window.chooser.kind === "open" && !window.chooser.directory) {
+            const why = window.chooser.acceptOpen([path], window.browser.location, chooserBar.values, chooserBar.filter)
+            if (why.length > 0) notice.show(why)
+        } else if (window.chooser && window.chooser.kind === "saveFile") {
+            chooserBar.setName(path.substring(path.lastIndexOf("/") + 1))
+        } else if (!window.chooser) {
+            window.ops.open(path)
+        }
+    }
+    // Escape cancels a chooser, as a file chooser's does.
+    Shortcut {
+        sequence: "Escape"
+        enabled: window.chooser !== null
+        onActivated: window.chooser.cancel()
+    }
+    // A chooser's filter lists the folder by its globs.
+    Binding {
+        target: window.folderModel
+        property: "globs"
+        when: window.chooser !== null && window.folderModel !== null && window.chooser.filters.length > 0
+        value: window.chooser && window.chooser.filters.length > 0 ? window.chooser.filters[chooserBar.filter].globs : []
     }
 
     function openRow(row) {

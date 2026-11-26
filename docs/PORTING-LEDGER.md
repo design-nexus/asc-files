@@ -473,4 +473,14 @@ kind, count and locality; SaveFiles' destinations (a folder of the name refuses)
 number, cancellable, and the chooser ending once idle. Found on the way: a URI built through a
 string turned a name's byte 0xFF into UTF-8.
 
-The bus activation file (start Files when FileManager1 is called) is installed with packaging (item 12).
+The chooser itself (`app/src/portal/ChooserService.cpp`) is `asc-files --chooser`, a process of its own
+that xdg-desktop-portal starts (`org.freedesktop.impl.portal.desktop.asc_files`, version 4): OpenFile,
+SaveFile and SaveFiles become a Files window with a bar for the name, the caller's choices and
+filters (listed by the backend's new `globs`), answered with URIs, choices and the filter used;
+Escape or closing answers cancelled, replacing a file is asked first, and the caller can close the
+request. Tested over the session bus by hand (busctl) and in `tst_portal` without one. Found on the
+way: a filter changed while a folder was opening was dropped, and Return didn't confirm dialogs.
+Legacy's `portal/dbus/tests.rs` and `window_geometry` (Hyprland centring rules) are not ported yet;
+`portal_setup` (making Files the desktop's chooser) comes with Settings › Integrations.
+
+The registration files (`packaging/dbus/`) are installed with packaging (item 12).

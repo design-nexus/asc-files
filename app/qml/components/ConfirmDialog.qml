@@ -75,6 +75,8 @@ Popup {
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }
+                Keys.onReturnPressed: confirm.clicked()
+                Keys.onEnterPressed: confirm.clicked()
                 onClicked: {
                     dialog.close()
                     if (dialog.confirmHandler) dialog.confirmHandler()

@@ -5,6 +5,7 @@
 #include "backend/BackendClient.h"
 #include "desktop/AppIcons.h"
 #include "desktop/DesktopBus.h"
+#include "portal/ChooserService.h"
 #include "desktop/DesktopApps.h"
 #include "models/ActionsModel.h"
 #include "models/Customizations.h"
@@ -23,12 +24,14 @@
 #include "models/TrashModel.h"
 
 #include <QCommandLineParser>
+#include <QDBusConnection>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QtQml/qqml.h>
 #include <QQmlExtensionPlugin>
 #include <QQuickStyle>
 #include <QStandardPaths>
+#include <QTimer>
 
 Q_IMPORT_QML_PLUGIN(AscFilesPlugin)
 
@@ -41,7 +44,8 @@ int main(int argc, char *argv[]) {
 
     QCommandLineParser parser;
     parser.addHelpOption();
-    parser.addOptions({{QStringLiteral("backend"), QStringLiteral("The backend program to run."), QStringLiteral("path")}});
+    parser.addOptions({{QStringLiteral("backend"), QStringLiteral("The backend program to run."), QStringLiteral("path")},
+                       {QStringLiteral("chooser"), QStringLiteral("Serve the desktop's file chooser (xdg-desktop-portal starts it so).")}});
     parser.addPositionalArgument(QStringLiteral("folder"), QStringLiteral("The folder to open (Home by default)."));
     parser.process(app);
 
@@ -89,6 +93,30 @@ int main(int argc, char *argv[]) {
                               {QStringLiteral("actions"), QVariant::fromValue(&actions)},
                               {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
 
+    // The desktop's file chooser: a process of its own, which xdg-desktop-portal starts; it shows a
+    // window per request and ends once idle.
+    if (parser.isSet(QStringLiteral("chooser"))) {
+        QGuiApplication::setQuitOnLastWindowClosed(false);
+        QDBusConnection bus = QDBusConnection::sessionBus();
+        auto *service = new Portal::ChooserService(&app);
+        QObject::connect(service, &Portal::ChooserService::chooserWanted, &windows,
+                         [&windows](Portal::ChooserJob *job) { windows.openChooser(job, job->folder()); });
+        if (!bus.registerObject(QStringLiteral("/org/freedesktop/portal/desktop"), service,
+                                QDBusConnection::ExportScriptableSlots | QDBusConnection::ExportScriptableProperties) ||
+            !bus.registerService(QStringLiteral("org.freedesktop.impl.portal.desktop.asc_files"))) {
+            qCritical("Files: the file chooser's bus name is taken or there is no session bus");
+            return 1;
+        }
+        QTimer idle;
+        QObject::connect(&idle, &QTimer::timeout, &app, [service] {
+            if (service->tracker().beginShutdownIfIdle(Portal::RequestTracker::Clock::now())) {
+                QCoreApplication::quit();
+            }
+        });
+        idle.start(10'000);
+        backend.start();
+        return app.exec();
+    }
     // One Files per session: a later launch hands its folders to the one running.
     if (!DesktopBus::claim(&windows, parser.positionalArguments())) {
         return 0;

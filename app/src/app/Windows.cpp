@@ -34,7 +34,25 @@ Windows::~Windows() {
     qDeleteAll(m_windows);
 }
 
-QQuickWindow *Windows::open(const QStringList &asked) {
+QQuickWindow *Windows::open(const QStringList &asked) { return openWith(asked, {}); }
+
+QQuickWindow *Windows::openChooser(QObject *job, const QString &folder) {
+    QQuickWindow *window = openWith({folder}, {{QStringLiteral("chooser"), QVariant::fromValue(job)}});
+    if (!window) {
+        QMetaObject::invokeMethod(job, "cancel");
+        return nullptr;
+    }
+    // Closed by the user: the request is cancelled. Answered: the window goes.
+    connect(window, &QWindow::visibleChanged, job, [job](bool visible) {
+        if (!visible) {
+            QMetaObject::invokeMethod(job, "cancel");
+        }
+    });
+    connect(job, SIGNAL(finished(uint, QVariantMap)), window, SLOT(close()));
+    return window;
+}
+
+QQuickWindow *Windows::openWith(const QStringList &asked, const QVariantMap &extra) {
     // A page that isn't a folder (the Overview, Search) gives no folder: the window opens on the
     // start folder.
     QStringList folders = asked;
@@ -50,6 +68,7 @@ QQuickWindow *Windows::open(const QStringList &asked) {
     initial.insert(QStringLiteral("search"), QVariant::fromValue(search));
     initial.insert(QStringLiteral("preview"), QVariant::fromValue(preview));
     initial.insert(QStringLiteral("properties"), QVariant::fromValue(properties));
+    initial.insert(extra);
 
     QQmlComponent component(m_engine, QStringLiteral("AscFiles"), QStringLiteral("Main"));
     QObject *made = component.createWithInitialProperties(initial);
@@ -70,8 +89,9 @@ QQuickWindow *Windows::open(const QStringList &asked) {
         own->setParent(window);
     }
 
-    const bool keepsSession = !m_sessionTaken;
-    m_sessionTaken = true;
+    // A chooser's window never keeps (or takes) the session's tabs.
+    const bool keepsSession = !m_sessionTaken && extra.isEmpty();
+    m_sessionTaken = m_sessionTaken || extra.isEmpty();
     tabs->setKeepsSession(keepsSession);
     if (folders.isEmpty() && !(keepsSession && tabs->restoreSession())) {
         tabs->openTab(AppSettings::shared().startFolderOrHome());
