@@ -195,6 +195,14 @@ bool AppSettings::typeToFilter() const { return value("search/typeToFilter", tru
 void AppSettings::setTypeToFilter(bool filters) { set("search/typeToFilter", filters); }
 bool AppSettings::tenxer() const { return value("browsing/tenxer", false).toBool(); }
 void AppSettings::setTenxer(bool on) { set("browsing/tenxer", on); }
+bool AppSettings::checkUpdates() const { return value("updates/check", true).toBool(); }
+void AppSettings::setCheckUpdates(bool on) { set("updates/check", on); }
+QString AppSettings::updateChannel() const {
+    return value("updates/channel", QStringLiteral("stable")).toString() == QLatin1String("beta") ? QStringLiteral("beta") : QStringLiteral("stable");
+}
+void AppSettings::setUpdateChannel(const QString &channel) { set("updates/channel", channel == QLatin1String("beta") ? channel : QStringLiteral("stable")); }
+QDateTime AppSettings::lastUpdateCheck() const { return value("updates/lastCheck", QDateTime()).toDateTime(); }
+void AppSettings::setLastUpdateCheck(const QDateTime &when) { set("updates/lastCheck", when); }
 
 int AppSettings::searchSeconds() const { return chosenLimit(value("search/seconds", 10).toInt(), SearchSeconds); }
 void AppSettings::setSearchSeconds(int seconds) { set("search/seconds", chosenLimit(seconds, SearchSeconds)); }

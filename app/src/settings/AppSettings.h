@@ -38,6 +38,9 @@ class AppSettings : public QObject {
     Q_PROPERTY(bool typeToFilter READ typeToFilter WRITE setTypeToFilter NOTIFY changed)
     /// 10xer mode: the keyboard-first, Yazi-style key map (Ctrl+Shift+M).
     Q_PROPERTY(bool tenxer READ tenxer WRITE setTenxer NOTIFY changed)
+    /// Look for a newer Files once a day (on by default), and on which channel: `stable` or `beta`.
+    Q_PROPERTY(bool checkUpdates READ checkUpdates WRITE setCheckUpdates NOTIFY changed)
+    Q_PROPERTY(QString updateChannel READ updateChannel WRITE setUpdateChannel NOTIFY changed)
     /// How long a search goes on, in seconds, and how many entries it looks at; 0: no limit.
     Q_PROPERTY(int searchSeconds READ searchSeconds WRITE setSearchSeconds NOTIFY changed)
     Q_PROPERTY(int searchEntries READ searchEntries WRITE setSearchEntries NOTIFY changed)
@@ -103,6 +106,12 @@ public:
     bool typeToFilter() const;
     bool tenxer() const;
     void setTenxer(bool on);
+    bool checkUpdates() const;
+    void setCheckUpdates(bool on);
+    QString updateChannel() const;
+    void setUpdateChannel(const QString &channel);
+    QDateTime lastUpdateCheck() const;
+    void setLastUpdateCheck(const QDateTime &when);
     void setTypeToFilter(bool filters);
     /// Legacy's choices: 10 s to 15 min, or none (0); others go up to the next.
     int searchSeconds() const;

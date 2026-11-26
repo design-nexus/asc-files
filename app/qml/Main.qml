@@ -31,6 +31,13 @@ ApplicationWindow {
     required property var properties
     /// The user's custom actions and their runs (the app's).
     required property var actions
+    /// Whether a newer Files is out (none in tests).
+    property var updates: null
+    Connections {
+        target: window.updates
+        enabled: window.foremost
+        function onFound(version) { notice.show(qsTr("Files %1 is available (Settings › About)").arg(version)) }
+    }
     /// The folders opened, for 10xer's z / Z (none in tests).
     property var visits: null
     Connections {
@@ -800,6 +807,7 @@ ApplicationWindow {
     }
     SettingsDialog {
         id: settingsDialog
+        updates: window.updates
         places: window.places
         theme: SystemTheme
         search: window.search

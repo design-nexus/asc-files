@@ -8,6 +8,7 @@
 #include "desktop/DesktopBus.h"
 #include "desktop/Cloud.h"
 #include "desktop/Disks.h"
+#include "desktop/Updates.h"
 #include "desktop/Network.h"
 #include "desktop/Integrations.h"
 #include "portal/ChooserService.h"
@@ -62,6 +63,9 @@ int main(int argc, char *argv[]) {
     // The drives UDisks2 knows: plugged in, locked, ejectable.
     // The folders opened, for 10xer's z / Z and ranking.
     Visits visits;
+    // A newer Files: looked for a moment after start, at most once a day.
+    Updates updates;
+    QTimer::singleShot(5000, &updates, [&updates] { updates.check(); });
     Disks disks;
     places.setDisks(&disks);
     // Servers (SFTP, SMB, …) through gvfs.
@@ -124,6 +128,7 @@ int main(int argc, char *argv[]) {
                               {QStringLiteral("network"), QVariant::fromValue(&network)},
                               {QStringLiteral("cloud"), QVariant::fromValue(&cloud)},
                               {QStringLiteral("visits"), QVariant::fromValue(&visits)},
+                              {QStringLiteral("updates"), QVariant::fromValue(&updates)},
                               {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
 
     // The desktop's file chooser: a process of its own, which xdg-desktop-portal starts; it shows a

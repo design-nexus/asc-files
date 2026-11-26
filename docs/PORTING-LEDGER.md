@@ -553,3 +553,12 @@ one-item requests refuse ranges, Enter / o on a file chooses it, Save requests s
 nothing is left to dismiss). Not built: the shortcut reference (F1, dropped by the user), preview
 keyboard ownership (the preview's own keys), find highlights, the folder peek popover, and the
 in-place s results (they show in the Search page). Tested in `tst_window` (`tenxerMovesACursorApartFromTheSelection`).
+
+## Smaller features (item 10)
+
+Clipboard badges (`ClipboardMarks`, FolderModel's `clipMark`), thumbnails in Overview's Recent, search
+ranked by the folders opened (`SearchModel::rankByVisits` over 10xer's visits), English plural forms
+through Qt's translations (`app/i18n`, docs/TRANSLATIONS.md), accessible names and roles (checked by
+`tst_window`), and the update check (`app/src/desktop/Updates`, Settings › About › Updates). Legacy
+replaced its own binary from a release; Files only says a newer version is out, since a package
+manager installs it (the update itself comes with item 12's packages).

@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui DBus Qml Quick QuickControls2 Multimedia Test LinguistTools)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui DBus Network Qml Quick QuickControls2 Multimedia Test LinguistTools)
 # Previews' code colours (KDE's syntax definitions).
 find_package(KF6SyntaxHighlighting REQUIRED)
 # GIO, for network locations through gvfs.
@@ -47,6 +47,7 @@ qt_add_library(asc_files_core STATIC
     src/desktop/Disks.cpp src/desktop/Disks.h
     src/desktop/Network.cpp src/desktop/Network.h
     src/desktop/Cloud.cpp src/desktop/Cloud.h
+    src/desktop/Updates.cpp src/desktop/Updates.h
     src/history/Terms.cpp src/history/Terms.h
     src/history/Visits.cpp src/history/Visits.h
     src/history/FolderPicker.cpp src/history/FolderPicker.h
@@ -58,7 +59,7 @@ qt_add_library(asc_files_core STATIC
     src/theme/SystemTheme.cpp src/theme/SystemTheme.h
     src/thumbnails/Thumbnails.cpp src/thumbnails/Thumbnails.h)
 target_include_directories(asc_files_core PUBLIC src)
-target_link_libraries(asc_files_core PUBLIC Qt6::Core Qt6::DBus Qt6::Gui Qt6::Quick KF6::SyntaxHighlighting PkgConfig::GIO)
+target_link_libraries(asc_files_core PUBLIC Qt6::Core Qt6::DBus Qt6::Network Qt6::Gui Qt6::Quick KF6::SyntaxHighlighting PkgConfig::GIO)
 # What About shows: the version, and the commit built (when built from a checkout).
 execute_process(COMMAND git rev-parse --short HEAD WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
                 OUTPUT_VARIABLE ASC_FILES_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
@@ -156,7 +157,7 @@ enable_testing()
 set(ASC_FILES_BACKEND "" CACHE FILEPATH "The asc-files-backend binary the tests run")
 set(ASC_FILES_DOCS "" CACHE FILEPATH "The asc-files-docs document reader the tests run")
 set(ASC_FILES_RAR "" CACHE FILEPATH "The asc-files-rar RAR reader the tests run")
-foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search systemtheme appsettings desktopapps properties actions customizations codehighlighter filemanager1 portal placement disks network cloud history translations)
+foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search systemtheme appsettings desktopapps properties actions customizations codehighlighter filemanager1 portal placement disks network cloud history translations updates)
     qt_add_executable(tst_${test} tests/tst_${test}.cpp)
     target_link_libraries(tst_${test} PRIVATE asc_files_core Qt6::Test)
     # The repository, for fixtures the Rust crates keep.

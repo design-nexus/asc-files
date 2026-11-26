@@ -21,6 +21,8 @@ Popup {
     required property var actions
     /// Files as the desktop's file chooser and file manager (none in tests).
     property var integrations: null
+    /// Whether a newer Files is out (none in tests).
+    property var updates: null
     /// The folder the window shows, offered as the start folder.
     property string currentFolder
     property int page: 0
@@ -681,6 +683,42 @@ Popup {
                     title: qsTr("Version info")
                     description: qsTr("For bug reports.")
                     Button { text: qsTr("Copy"); onClicked: AppSettings.copyAbout() }
+                }
+            }
+            SettingsGroup {
+                title: qsTr("Updates")
+                SettingRow {
+                    divided: false
+                    title: qsTr("Check for updates")
+                    description: qsTr("Once a day, Files asks GitHub for its newest release. Nothing is downloaded.")
+                    ToggleSwitch { checked: AppSettings.checkUpdates; onToggled: AppSettings.checkUpdates = checked }
+                }
+                SettingRow {
+                    title: qsTr("Release channel")
+                    description: qsTr("Beta includes pre-releases.")
+                    Segmented {
+                        options: [{ label: qsTr("Stable"), value: "stable" }, { label: qsTr("Beta"), value: "beta" }]
+                        value: AppSettings.updateChannel
+                        onPicked: (channel) => AppSettings.updateChannel = channel
+                    }
+                }
+                SettingRow {
+                    title: dialog.updates && dialog.updates.available.length > 0 ? qsTr("Files %1 is available").arg(dialog.updates.available)
+                                                                                 : qsTr("Newest version")
+                    description: !dialog.updates ? ""
+                        : dialog.updates.available.length > 0
+                            ? (dialog.updates.packaged ? qsTr("Update it with your system’s package manager.") : qsTr("Install it from its release page."))
+                            : dialog.updates.status
+                    Button {
+                        visible: dialog.updates !== null && dialog.updates.notesUrl.length > 0
+                        text: qsTr("Release notes")
+                        onClicked: Qt.openUrlExternally(dialog.updates.notesUrl)
+                    }
+                    Button {
+                        enabled: dialog.updates !== null && !dialog.updates.checking
+                        text: qsTr("Check now")
+                        onClicked: dialog.updates.check(true)
+                    }
                 }
             }
         }
