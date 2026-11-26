@@ -6,6 +6,7 @@
 #include "desktop/AppIcons.h"
 #include "desktop/DesktopBus.h"
 #include "desktop/Disks.h"
+#include "desktop/Network.h"
 #include "desktop/Integrations.h"
 #include "portal/ChooserService.h"
 #include "portal/Placement.h"
@@ -58,6 +59,9 @@ int main(int argc, char *argv[]) {
     // The drives UDisks2 knows: plugged in, locked, ejectable.
     Disks disks;
     places.setDisks(&disks);
+    // Servers (SFTP, SMB, …) through gvfs.
+    Network network;
+    places.setNetwork(&network);
     RecentModel recent;
     FavoritesModel favorites;
     TrashModel trash(&backend);
@@ -101,6 +105,7 @@ int main(int argc, char *argv[]) {
                               {QStringLiteral("actions"), QVariant::fromValue(&actions)},
                               {QStringLiteral("integrations"), QVariant::fromValue(&integrations)},
                               {QStringLiteral("disks"), QVariant::fromValue(&disks)},
+                              {QStringLiteral("network"), QVariant::fromValue(&network)},
                               {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
 
     // The desktop's file chooser: a process of its own, which xdg-desktop-portal starts; it shows a
@@ -132,14 +137,23 @@ int main(int argc, char *argv[]) {
         backend.start();
         return app.exec();
     }
+    // Server addresses connect and open once connected; the rest are folders.
+    QStringList folders;
+    QStringList addresses;
+    for (const QString &argument : parser.positionalArguments()) {
+        (Network::isAddress(argument) ? addresses : folders).append(argument);
+    }
     // One Files per session: a later launch hands its folders to the one running.
-    if (!DesktopBus::claim(&windows, parser.positionalArguments())) {
+    if (!DesktopBus::claim(&windows, folders)) {
         return 0;
     }
     backend.start();
     // Without folders to open, the tabs the last session left; else Home.
-    if (!windows.open(parser.positionalArguments())) {
+    if (!windows.open(folders)) {
         return 1;
+    }
+    for (const QString &address : addresses) {
+        network.connectTo(address);
     }
     return app.exec();
 }

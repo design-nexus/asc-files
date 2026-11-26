@@ -2,6 +2,7 @@
 #include "PlacesModel.h"
 
 #include "../desktop/Disks.h"
+#include "../desktop/Network.h"
 
 #include "Browser.h"
 
@@ -28,6 +29,7 @@ const QString PicturesIcon = QStringLiteral(
 const QString VideosIcon = QStringLiteral(
     "M3.5 4h6A1.5 1.5 0 0 1 11 5.5v5A1.5 1.5 0 0 1 9.5 12h-6A1.5 1.5 0 0 1 2 10.5v-5A1.5 1.5 0 0 1 3.5 4zM11 7l3-2v6l-3-2");
 const QString PinnedIcon = QStringLiteral("M2 4.5h4l1.5 1.5H14v6.5H2z");
+const QString NetworkIcon = QStringLiteral("M2.5 4.5h11v5h-11zM8 9.5v3M4 12.5h8M5 7h.01");
 const QString LockIcon = QStringLiteral("M4.5 7.5v-2a3.5 3.5 0 0 1 7 0v2M3.5 7.5h9v6h-9z");
 const QString DriveIcon = QStringLiteral(
     "M3.5 4h9A1.5 1.5 0 0 1 14 5.5v5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 10.5v-5A1.5 1.5 0 0 1 3.5 4zM2 8h12M4.5 10h.01");
@@ -119,6 +121,19 @@ QList<PlacesModel::Place> PlacesModel::drives() const {
                 place.ejectable = known.ejectable || known.canPowerOff;
                 place.removable = known.removable;
             }
+            places.append(place);
+        }
+    }
+    // Servers connected, as the folders gvfs shows them as.
+    if (m_network) {
+        for (const QVariant &value : m_network->mounts()) {
+            const QVariantMap mount = value.toMap();
+            if (mount.value(QStringLiteral("path")).toString().isEmpty()) {
+                continue;
+            }
+            Place place{Storage, mount.value(QStringLiteral("name")).toString(), mount.value(QStringLiteral("path")).toString(), NetworkIcon, -1,
+                        tr("Network"), 0, QStringLiteral("network:") + mount.value(QStringLiteral("uri")).toString()};
+            place.uri = mount.value(QStringLiteral("uri")).toString();
             places.append(place);
         }
     }
@@ -386,6 +401,8 @@ QVariant PlacesModel::data(const QModelIndex &index, int role) const {
         return place.ejectable;
     case RemovableRole:
         return place.removable;
+    case UriRole:
+        return place.uri;
     default:
         return {};
     }
@@ -395,11 +412,17 @@ QHash<int, QByteArray> PlacesModel::roleNames() const {
     return {{SectionRole, "section"}, {NameRole, "name"},   {PathRole, "path"},
             {IconRole, "icon"},       {UsedRole, "used"}, {FreeTextRole, "freeText"},
             {PageRole, "page"}, {FirstInSectionRole, "firstInSection"}, {KeyRole, "key"},
-            {HideableRole, "hideable"}, {VolumeRole, "volume"}, {LockedRole, "locked"}, {EjectableRole, "ejectable"}, {RemovableRole, "removable"}};
+            {HideableRole, "hideable"}, {VolumeRole, "volume"}, {LockedRole, "locked"}, {EjectableRole, "ejectable"}, {RemovableRole, "removable"}, {UriRole, "uri"}};
 }
 
 void PlacesModel::setDisks(Disks *disks) {
     m_disks = disks;
     connect(disks, &Disks::changed, this, &PlacesModel::refreshDrives);
+    refreshDrives();
+}
+
+void PlacesModel::setNetwork(Network *network) {
+    m_network = network;
+    connect(network, &Network::changed, this, &PlacesModel::refreshDrives);
     refreshDrives();
 }

@@ -10,6 +10,9 @@ set(CMAKE_AUTOMOC ON)
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui DBus Qml Quick QuickControls2 Multimedia Test)
 # Previews' code colours (KDE's syntax definitions).
 find_package(KF6SyntaxHighlighting REQUIRED)
+# GIO, for network locations through gvfs.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
 qt_standard_project_setup(REQUIRES 6.8)
 
 # The models and the backend client, shared by the app and its tests.
@@ -41,6 +44,7 @@ qt_add_library(asc_files_core STATIC
     src/desktop/DesktopApps.cpp src/desktop/DesktopApps.h
     src/desktop/DesktopBus.cpp src/desktop/DesktopBus.h
     src/desktop/Disks.cpp src/desktop/Disks.h
+    src/desktop/Network.cpp src/desktop/Network.h
     src/desktop/Integrations.cpp src/desktop/Integrations.h
     src/portal/Chooser.cpp src/portal/Chooser.h
     src/portal/ChooserService.cpp src/portal/ChooserService.h
@@ -49,7 +53,7 @@ qt_add_library(asc_files_core STATIC
     src/theme/SystemTheme.cpp src/theme/SystemTheme.h
     src/thumbnails/Thumbnails.cpp src/thumbnails/Thumbnails.h)
 target_include_directories(asc_files_core PUBLIC src)
-target_link_libraries(asc_files_core PUBLIC Qt6::Core Qt6::DBus Qt6::Gui Qt6::Quick KF6::SyntaxHighlighting)
+target_link_libraries(asc_files_core PUBLIC Qt6::Core Qt6::DBus Qt6::Gui Qt6::Quick KF6::SyntaxHighlighting PkgConfig::GIO)
 # What About shows: the version, and the commit built (when built from a checkout).
 execute_process(COMMAND git rev-parse --short HEAD WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
                 OUTPUT_VARIABLE ASC_FILES_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
@@ -99,6 +103,8 @@ qt_add_qml_module(asc_files_qml
         qml/components/UnlockDialog.qml
         qml/components/NameDialog.qml
         qml/components/FormatDialog.qml
+        qml/components/ServerPasswordDialog.qml
+        qml/components/QuestionDialog.qml
         qml/components/NameEditor.qml
         qml/components/OpenWithDialog.qml
         qml/components/OpenWithMenu.qml
@@ -133,7 +139,7 @@ enable_testing()
 set(ASC_FILES_BACKEND "" CACHE FILEPATH "The asc-files-backend binary the tests run")
 set(ASC_FILES_DOCS "" CACHE FILEPATH "The asc-files-docs document reader the tests run")
 set(ASC_FILES_RAR "" CACHE FILEPATH "The asc-files-rar RAR reader the tests run")
-foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search systemtheme appsettings desktopapps properties actions customizations codehighlighter filemanager1 portal placement disks)
+foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search systemtheme appsettings desktopapps properties actions customizations codehighlighter filemanager1 portal placement disks network)
     qt_add_executable(tst_${test} tests/tst_${test}.cpp)
     target_link_libraries(tst_${test} PRIVATE asc_files_core Qt6::Test)
     # The repository, for fixtures the Rust crates keep.

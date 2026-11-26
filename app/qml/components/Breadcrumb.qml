@@ -15,6 +15,8 @@ Item {
     readonly property bool editing: field.visible
 
     signal edited()
+    /// Network locations, which an address typed here connects to (none in tests).
+    property var network: null
     /// A right click on a crumb: the folder it stands for.
     signal menuRequested(string path)
 
@@ -116,7 +118,12 @@ Item {
         placeholderTextColor: Theme.textMute
         background: Rectangle { radius: Theme.radius; color: Theme.field; border.width: 1; border.color: Theme.selectionEdge }
         onAccepted: {
-            if (crumbs.browser.goTyped(text)) {
+            // A server's address connects, then opens it.
+            if (crumbs.network && crumbs.network.isAddress(text)) {
+                crumbs.network.connectTo(text)
+                visible = false
+                crumbs.edited()
+            } else if (crumbs.browser.goTyped(text)) {
                 visible = false
                 crumbs.edited()
             }

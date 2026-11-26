@@ -511,3 +511,10 @@ UDisks2 with a disk image (`tst_disks` with `ASC_FILES_LIVE_DISKS=1`).
 | Legacy tests | Ported | Not ported, why |
 |---|---|---|
 | `ui/window/drive_ops/tests.rs` (7) | 2 (`tst_disks`: label limits and characters) | `formatting_resolves_only_the_selected_volume…`, `missing_or_ambiguous_device_never_formats`, `format_failure_is_not_reported…` tested legacy's device-path resolution, which Files skips (it formats the volume's own UDisks2 object); `tool_path_*` (Qt's `findExecutable`); `mounted_usage_does_not_require_directory_read_permission` (QStorageInfo) |
+
+Network locations are GIO's and gvfs's, as legacy's were (`app/src/desktop/Network.cpp`; GIO is the
+app's, never the engine's or backend's): Connect to Server…, an address typed in the path bar or given
+on the command line mounts it (GIO's password and question prompts as Files dialogs: user, domain,
+anonymous, how long to remember), and opens it as the folder gvfs shows it as, which the engine browses
+as any other; connected servers are in Storage, with Disconnect. Checked for real through gvfs's local
+test backend (`tst_network` with `ASC_FILES_LIVE_NETWORK=1`) and against sshd (its refusal shown).

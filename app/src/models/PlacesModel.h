@@ -42,6 +42,8 @@ public:
         EjectableRole,
         /// The volume is on a removable drive, so it can be formatted.
         RemovableRole,
+        /// A network location's address (it disconnects), or empty.
+        UriRole,
     };
     Q_ENUM(Role)
     enum Section { Pages, Folders, Pinned, Storage };
@@ -58,6 +60,8 @@ public:
     Q_INVOKABLE void refreshDrives();
     /// The drives UDisks2 knows: unmounted and locked volumes show too, and drives can be ejected.
     void setDisks(class Disks *disks);
+    /// The network locations connected, listed in Storage.
+    void setNetwork(class Network *network);
     /// Home and the mounted drives the user plugged in or mounted: where a search goes.
     Q_INVOKABLE QStringList searchRoots() const;
 
@@ -108,6 +112,7 @@ private:
         bool locked = false;
         bool ejectable = false;
         bool removable = false;
+        QString uri;
     };
     /// Every default place that can be hidden, in its default order.
     QList<Place> defaults() const;
@@ -124,4 +129,5 @@ private:
     bool m_trashShown = true;
     QTimer m_drives;
     class Disks *m_disks = nullptr;
+    class Network *m_network = nullptr;
 };

@@ -31,6 +31,8 @@ ApplicationWindow {
     required property var properties
     /// The user's custom actions and their runs (the app's).
     required property var actions
+    /// Servers through gvfs (none in tests).
+    property var network: null
     /// The drives UDisks2 knows (none in tests).
     property var disks: null
     /// Settings › Integrations (none in tests).
@@ -120,6 +122,7 @@ ApplicationWindow {
             Breadcrumb {
                 id: breadcrumb
                 browser: window.browser
+                network: window.network
                 onMenuRequested: (path) => pathMenu.show(path, true, true)
                 Layout.leftMargin: window.width >= 1000 ? 22 : 6
                 Layout.fillWidth: true
@@ -653,6 +656,32 @@ ApplicationWindow {
         id: unlockDialog
         onGiven: (volume, passphrase) => window.disks.unlock(volume, passphrase)
     }
+    NameDialog {
+        id: connectServer
+        title: qsTr("Connect to Server")
+        actionText: qsTr("Connect")
+        onGiven: (key, address) => window.network.connectTo(address)
+    }
+    ServerPasswordDialog {
+        id: serverPassword
+        onGiven: (asked, user, password, domain, anonymous, remember) => window.network.answerPassword(asked, user, password, domain, anonymous, remember)
+        onCancelled: (asked) => window.network.cancel(asked)
+    }
+    QuestionDialog {
+        id: serverQuestion
+        onAnswered: (asked, choice) => window.network.answerQuestion(asked, choice)
+        onCancelled: (asked) => window.network.cancel(asked)
+    }
+    Connections {
+        target: window.network
+        enabled: window.foremost
+        function onOpened(path) { window.browser.goPath(path) }
+        function onFailed(message) { notice.show(message) }
+        function onPasswordWanted(asked, message, user, domain, needsUser, needsDomain, anonymousAllowed, canRemember) {
+            serverPassword.ask(asked, message, user, domain, needsUser, needsDomain, anonymousAllowed, canRemember)
+        }
+        function onQuestionAsked(asked, message, choices) { serverQuestion.ask(asked, message, choices) }
+    }
     FormatDialog {
         id: formatDialog
         types: window.disks ? window.disks.formattable() : []
@@ -1128,7 +1157,7 @@ ApplicationWindow {
         property var place: ({})
         function show(model, color) {
             place = { key: model.key, name: model.name, section: model.section, path: model.path, hideable: model.hideable,
-                      volume: model.volume, locked: model.locked, ejectable: model.ejectable, removable: model.removable }
+                      volume: model.volume, locked: model.locked, ejectable: model.ejectable, removable: model.removable, uri: model.uri }
             popup()
         }
         MenuItem {
@@ -1158,6 +1187,18 @@ ApplicationWindow {
             visible: !!placeMenu.place.volume && placeMenu.place.ejectable === true
             height: visible ? implicitHeight : 0
             onTriggered: window.disks.eject(placeMenu.place.volume)
+        }
+        MenuItem {
+            text: qsTr("Disconnect")
+            visible: !!placeMenu.place.uri
+            height: visible ? implicitHeight : 0
+            onTriggered: window.network.disconnectFrom(placeMenu.place.uri)
+        }
+        MenuItem {
+            text: qsTr("Connect to Server…")
+            visible: placeMenu.place.section === 3 && window.network !== null
+            height: visible ? implicitHeight : 0
+            onTriggered: connectServer.ask("", "sftp://")
         }
         MenuItem {
             text: qsTr("Format…")
