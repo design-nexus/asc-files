@@ -465,7 +465,7 @@ FocusScope {
                 showKind: view.showKind
                 columns: view.columns
                 id: rowItem
-                editing: index === view.renamingRow
+                editing: index >= 0 && index === view.renamingRow
                 Drag.dragType: Drag.Automatic
                 Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
                 DragHandler {
@@ -551,7 +551,7 @@ FocusScope {
             height: GridView.view.cellHeight - 8
             iconSize: grid.iconSize
             id: tileItem
-            editing: index === view.renamingRow
+            editing: index >= 0 && index === view.renamingRow
             Drag.dragType: Drag.Automatic
             Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
             DragHandler {
@@ -688,7 +688,7 @@ FocusScope {
             required property string customColor
             required property string customIcon
             required property int clipMark
-            readonly property bool editing: index === view.renamingRow
+            readonly property bool editing: index >= 0 && index === view.renamingRow
             Accessible.role: Accessible.ListItem
             Accessible.name: loaded ? name : ""
             Accessible.selectable: true
@@ -743,7 +743,10 @@ FocusScope {
                 Text {
                     visible: !compactItem.editing
                     Layout.fillWidth: true
-                    text: compactItem.loaded ? compactItem.name : ""
+                    // 10xer's find marks what matched.
+                    readonly property string found: AppSettings.tenxer && compactItem.Window.window && compactItem.Window.window.tenxer ? compactItem.Window.window.tenxer.found : ""
+                    textFormat: found.length > 0 ? Text.StyledText : Text.PlainText
+                    text: !compactItem.loaded ? "" : found.length > 0 ? Theme.marked(compactItem.name, found) : compactItem.name
                     elide: Text.ElideMiddle
                     color: Theme.text
                     font.family: Theme.family
@@ -814,7 +817,7 @@ FocusScope {
                 width: 104
                 height: 104
                 iconSize: 48
-                editing: index === view.renamingRow
+                editing: index >= 0 && index === view.renamingRow
                 Drag.dragType: Drag.Automatic
                 Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
                 DragHandler {

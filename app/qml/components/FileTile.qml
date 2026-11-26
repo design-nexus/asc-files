@@ -106,7 +106,10 @@ Rectangle {
             visible: !tile.editing
             Layout.fillWidth: true
             Layout.fillHeight: true
-            text: tile.loaded ? tile.name : ""
+            // 10xer's find marks what matched.
+                    readonly property string found: AppSettings.tenxer && tile.Window.window && tile.Window.window.tenxer ? tile.Window.window.tenxer.found : ""
+                    textFormat: found.length > 0 ? Text.StyledText : Text.PlainText
+                    text: !tile.loaded ? "" : found.length > 0 ? Theme.marked(tile.name, found) : tile.name
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WrapAnywhere
             maximumLineCount: 2

@@ -16,6 +16,21 @@ QtObject {
         return Qt.tint(base, Qt.rgba(over.r, over.g, over.b, amount))
     }
     function token(name) { return SystemTheme.color(name) }
+    /// `name` as styled text with each place it holds `found` (any case) in the accent colour,
+    /// bold; plain `name` when there is nothing to mark (10xer's find highlights).
+    function marked(name, found) {
+        const escape = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        if (!found || found.length === 0) return escape(name)
+        const lower = name.toLowerCase()
+        const query = found.toLowerCase()
+        let out = ""
+        let at = 0
+        for (let hit = lower.indexOf(query); hit >= 0; hit = lower.indexOf(query, at)) {
+            out += escape(name.substring(at, hit)) + "<b><font color=\"" + accent + "\">" + escape(name.substring(hit, hit + query.length)) + "</font></b>"
+            at = hit + query.length
+        }
+        return out + escape(name.substring(at))
+    }
     readonly property bool light: SystemTheme.light
 
     // Surfaces

@@ -4,6 +4,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
 import AscFiles
+import AscFiles.System
 
 // One column of Columns view: a folder's entries, the one the next column shows marked. Clicking
 // a folder opens it in the next column; in the last column, a click selects.
@@ -91,7 +92,10 @@ Rectangle {
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: entry.loaded ? entry.name : ""
+                    // 10xer's find marks what matched.
+                    readonly property string found: AppSettings.tenxer && entry.Window.window && entry.Window.window.tenxer ? entry.Window.window.tenxer.found : ""
+                    textFormat: found.length > 0 ? Text.StyledText : Text.PlainText
+                    text: !entry.loaded ? "" : found.length > 0 ? Theme.marked(entry.name, found) : entry.name
                     elide: Text.ElideMiddle
                     color: Theme.text
                     font.family: Theme.family

@@ -105,7 +105,10 @@ Rectangle {
             Text {
                 visible: !row.editing
                 Layout.fillWidth: true
-                text: row.loaded ? row.name : ""
+                // 10xer's find marks what matched.
+                    readonly property string found: AppSettings.tenxer && row.Window.window && row.Window.window.tenxer ? row.Window.window.tenxer.found : ""
+                    textFormat: found.length > 0 ? Text.StyledText : Text.PlainText
+                    text: !row.loaded ? "" : found.length > 0 ? Theme.marked(row.name, found) : row.name
                 elide: Text.ElideMiddle
                 color: Theme.text
                 font.family: Theme.family

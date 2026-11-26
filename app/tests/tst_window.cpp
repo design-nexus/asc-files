@@ -498,6 +498,18 @@ private slots:
         press(Qt::Key_Return);
         QTRY_COMPARE(folders.pathAt(cursor()), dir.filePath("b.txt"));
         QVERIFY(list->hasActiveFocus());
+        // The names show what matched until Esc, which takes that step first.
+        QCOMPARE(keys->property("found").toString(), QStringLiteral("b.t"));
+        const std::function<bool(QQuickItem *)> showsMark = [&](QQuickItem *item) {
+            if (item->property("found").toString() == QLatin1String("b.t") && item->property("text").toString().contains("<b>")) {
+                return true;
+            }
+            const QList<QQuickItem *> children = item->childItems();
+            return std::any_of(children.begin(), children.end(), showsMark);
+        };
+        QTRY_VERIFY(showsMark(list));
+        press(Qt::Key_Escape);
+        QCOMPARE(keys->property("found").toString(), QString());
         // a makes an item by exactly the name typed; a trailing / makes a folder.
         press(Qt::Key_A);
         QTRY_VERIFY(prompt->hasActiveFocus());
@@ -539,6 +551,9 @@ private slots:
         press(Qt::Key_F);
         typeText("txt");
         QTRY_COMPARE(list->property("count").toInt(), 2);
+        // The prompt keeps the keyboard while the rows change (a row being rebuilt once took it).
+        QTest::qWait(300);
+        QVERIFY(prompt->hasActiveFocus());
         press(Qt::Key_Escape);
         QTRY_COMPARE(list->property("count").toInt(), 5);
         // ; lists what it runs; e on something that isn't an archive says so.

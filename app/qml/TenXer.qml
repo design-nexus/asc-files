@@ -41,6 +41,8 @@ Item {
     property var fixed: []
     property int fixedRow: -1
     property string findQuery: ""
+    /// What the names show marked: the last find, until Esc.
+    property string found: ""
     property bool findBackward: false
     readonly property bool picking: ["go", "move", "copy", "extract"].includes(prompt)
     property var listed: []
@@ -86,6 +88,7 @@ Item {
     function reset() {
         closePrompt()
         findQuery = ""
+        found = ""
         chord = ""
         visual = 0
         flash = ""
@@ -322,6 +325,7 @@ Item {
     // Esc: one step back per press.
     function stepBack(view) {
         if (visual !== 0) { visual = 0; return }
+        if (found.length > 0) { found = ""; return }
         if (view.folderModel.filter.length > 0) { view.folderModel.filter = ""; return }
         if (keys.window.previewOpen) { keys.window.previewOpen = false; return }
         if (view.folderModel.selectionCount > 0) { view.folderModel.clearSelection(); return }
@@ -639,6 +643,7 @@ Item {
     // / and ?: the next name holding the text, from the cursor, wrapping.
     function findNext(view, backward) {
         if (findQuery.length === 0) return
+        found = findQuery
         const count = view.rowCount()
         const from = view.cursorRow()
         const query = findQuery.toLowerCase()
