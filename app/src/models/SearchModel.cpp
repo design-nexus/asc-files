@@ -5,7 +5,11 @@
 #include "../backend/Wire.h"
 #include "../settings/AppSettings.h"
 
+#include "../history/Visits.h"
+
 #include <QFile>
+#include <QFileInfo>
+#include <cmath>
 #include <QJsonArray>
 
 namespace {
@@ -31,6 +35,25 @@ void SearchModel::search(const QString &query, const QStringList &roots) {
     m_roots = roots;
     emit stateChanged();
     m_pause.start();
+}
+
+void SearchModel::rankByVisits(QList<Scored> &found, const QHash<QString, double> &frecencies) {
+    if (frecencies.isEmpty()) {
+        return;
+    }
+    // The engine's tiers: terms matched in the name (2^32 each), an exact name (2^31).
+    constexpr qint64 Tier = qint64(1) << 31;
+    const auto lifted = [&](const Scored &one) {
+        const QString &path = one.item.path;
+        const double frecency = std::max(frecencies.value(path), frecencies.value(QFileInfo(path).path()));
+        return double(one.score % Tier) + 16.0 * std::log2(1.0 + frecency);
+    };
+    std::stable_sort(found.begin(), found.end(), [&](const Scored &a, const Scored &b) {
+        if (a.score / Tier != b.score / Tier) {
+            return a.score / Tier > b.score / Tier;
+        }
+        return lifted(a) > lifted(b);
+    });
 }
 
 void SearchModel::addExclusion(const QString &rule) {
@@ -109,9 +132,16 @@ void SearchModel::notification(const QString &method, const QJsonObject &params)
         setItems(m_found);
     } else if (method == QLatin1String("search.finished")) {
         // The best, ranked, in place of what streamed in.
-        m_found.clear();
+        QList<Scored> scored;
         for (const QJsonValue &item : items) {
-            m_found.append(itemOf(item));
+            scored.append({itemOf(item), item.toObject().value(QStringLiteral("score")).toInteger()});
+        }
+        if (m_visits) {
+            rankByVisits(scored, m_visits->frecencies());
+        }
+        m_found.clear();
+        for (const Scored &one : std::as_const(scored)) {
+            m_found.append(one.item);
         }
         setItems(m_found);
         m_running = false;

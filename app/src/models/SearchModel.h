@@ -7,6 +7,7 @@
 #include <QTimer>
 
 class BackendClient;
+class Visits;
 
 /// A search's results (`search.*`): what the backend finds, shown as it streams in, then its
 /// best, ranked. Typing starts a new search a moment after the last key; the last one stops.
@@ -31,6 +32,16 @@ public:
     /// Adds a rule to Settings' search exclusions, as the backend keeps it; one that can't be is
     /// refused, saying why.
     Q_INVOKABLE void addExclusion(const QString &rule);
+    /// Folders opened often and lately lift their results, and the files in them, among similar ones.
+    void setVisits(const Visits *visits) { m_visits = visits; }
+
+    struct Scored {
+        Item item;
+        qint64 score;
+    };
+    /// `found` ranked: by how many terms the name matched (the engine's tier), then the match's
+    /// own score lifted by how often and lately the folder was opened (`frecencies` by path).
+    static void rankByVisits(QList<Scored> &found, const QHash<QString, double> &frecencies);
 
     QString query() const { return m_query; }
     bool running() const { return m_running; }
@@ -46,6 +57,7 @@ private:
     void notification(const QString &method, const QJsonObject &params);
 
     BackendClient *m_backend;
+    const Visits *m_visits = nullptr;
     QTimer m_pause;
     QString m_query;
     QStringList m_roots;

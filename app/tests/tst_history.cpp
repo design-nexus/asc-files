@@ -3,6 +3,7 @@
 #include "history/FolderPicker.h"
 #include "history/Terms.h"
 #include "history/Visits.h"
+#include "models/SearchModel.h"
 
 #include <QDir>
 #include <QSignalSpy>
@@ -44,6 +45,22 @@ private slots:
         // The folder open is left out; Z is the latest first.
         QCOMPARE(visits.recent("", "/home/u/dev").first(), QStringLiteral("/home/u/str"));
         QVERIFY(!visits.recent("", "/home/u/dev").contains("/home/u/dev"));
+    }
+
+    void searchLiftsWhatIsInFoldersOpenedOften() {
+        constexpr qint64 Name = qint64(1) << 32;
+        const auto item = [](const char *path) { return ItemListModel::Item{QString::fromLatin1(path), {}, {}, {}, {}}; };
+        QList<SearchModel::Scored> found{{item("/a/far/notes.md"), Name + 120},
+                                         {item("/a/work/notes.md"), Name + 110},
+                                         {item("/a/notes-old"), 2 * Name + 50},
+                                         {item("/a/deep/x/notes.txt"), 80}};
+        SearchModel::rankByVisits(found, {{"/a/work", 40}});
+        // A name matching more terms stays first; among similar ones the folder opened often
+        // lifts its file; a match in the path only stays last.
+        QCOMPARE(found.at(0).item.path, QStringLiteral("/a/notes-old"));
+        QCOMPARE(found.at(1).item.path, QStringLiteral("/a/work/notes.md"));
+        QCOMPARE(found.at(2).item.path, QStringLiteral("/a/far/notes.md"));
+        QCOMPARE(found.at(3).item.path, QStringLiteral("/a/deep/x/notes.txt"));
     }
 
     void visitsAreKeptBetweenSessions() {

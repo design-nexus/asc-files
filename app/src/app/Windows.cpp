@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "Windows.h"
 
+#include "../history/Visits.h"
+
 #include "backend/BackendClient.h"
 #include "desktop/DesktopApps.h"
 #include "models/Properties.h"
@@ -66,6 +68,8 @@ QQuickWindow *Windows::openWith(const QStringList &asked, const QVariantMap &ext
     // The window's own models live as long as it does: they are its children.
     auto *tabs = new TabModel(backend);
     auto *search = new SearchModel(backend);
+    // Folders opened often and lately lift their results.
+    search->setVisits(m_shared.value(QStringLiteral("visits")).value<Visits *>());
     auto *preview = new Preview;
     auto *properties = new Properties(backend, m_shared.value(QStringLiteral("apps")).value<DesktopApps *>());
     QVariantMap initial = m_shared;
