@@ -39,6 +39,8 @@ public:
     Q_INVOKABLE void copyPaths(const QStringList &paths, bool cut);
     /// Puts the paths themselves on the clipboard, as text.
     Q_INVOKABLE void copyPathText(const QStringList &paths);
+    /// Takes back what Files put on the clipboard (another program's stays).
+    Q_INVOKABLE void clearClipboard();
     /// Copies (or moves) items named by path into `folder`, as a paste does: Dual Pane's F5 and F6.
     Q_INVOKABLE void transferPaths(const QStringList &paths, const QString &folder, bool move);
     /// Moves items named by path to the Trash.

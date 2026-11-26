@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "PlacesModel.h"
 
-#include "../desktop/Disks.h"
 #include "../desktop/Cloud.h"
+#include "../desktop/Disks.h"
 #include "../desktop/Network.h"
 
 #include "Browser.h"
@@ -451,4 +451,35 @@ void PlacesModel::setCloud(Cloud *cloud) {
     m_cloud = cloud;
     connect(cloud, &Cloud::changed, this, &PlacesModel::refreshDrives);
     refreshDrives();
+}
+
+QStringList PlacesModel::pinnedPaths() const {
+    QStringList paths;
+    for (const Place &place : m_places) {
+        if (place.section == Pinned) {
+            paths.append(place.path);
+        }
+    }
+    return paths;
+}
+
+QString PlacesModel::standardFolder(const QString &key) {
+    static const QHash<QString, QStandardPaths::StandardLocation> locations{
+        {QStringLiteral("home"), QStandardPaths::HomeLocation},         {QStringLiteral("config"), QStandardPaths::GenericConfigLocation},
+        {QStringLiteral("desktop"), QStandardPaths::DesktopLocation},   {QStringLiteral("documents"), QStandardPaths::DocumentsLocation},
+        {QStringLiteral("downloads"), QStandardPaths::DownloadLocation}, {QStringLiteral("music"), QStandardPaths::MusicLocation},
+        {QStringLiteral("pictures"), QStandardPaths::PicturesLocation}, {QStringLiteral("videos"), QStandardPaths::MoviesLocation}};
+    if (!locations.contains(key)) {
+        return {};
+    }
+    const QString path = QStandardPaths::writableLocation(locations.value(key));
+    // XDG folders that were never made fall back to Home; those don't count.
+    if (path.isEmpty() || !QFileInfo(path).isDir() || (key != QLatin1String("home") && path == QDir::homePath())) {
+        return {};
+    }
+    return path;
+}
+
+bool PlacesModel::hasOwnPlace(const QString &path) const {
+    return std::any_of(m_places.cbegin(), m_places.cend(), [&](const Place &place) { return place.section != Pinned && place.path == path; });
 }

@@ -239,6 +239,15 @@ Popup {
                 }
             }
             SettingsGroup {
+                title: qsTr("Keyboard")
+                SettingRow {
+                    divided: false
+                    title: AppSettings.tenxer ? qsTr("10xer mode (experimental feature, under active development)") : qsTr("10xer mode")
+                    description: qsTr("Opinionated keyboard-centric mode with Yazi-style navigation. Disables some features. Toggle with Ctrl+Shift+M.")
+                    ToggleSwitch { checked: AppSettings.tenxer; onToggled: AppSettings.tenxer = checked }
+                }
+            }
+            SettingsGroup {
                 title: qsTr("Views and sorting")
                 SettingRow {
                     divided: false
@@ -353,7 +362,7 @@ Popup {
                 SettingRow {
                     divided: false
                     title: qsTr("Type to filter")
-                    description: qsTr("Typing in a folder filters it to the names that match.")
+                    description: AppSettings.tenxer ? qsTr("Not used in 10xer mode.") : qsTr("Typing in a folder filters it to the names that match.")
                     ToggleSwitch { checked: AppSettings.typeToFilter; onToggled: AppSettings.typeToFilter = checked }
                 }
                 SettingRow {

@@ -61,6 +61,13 @@ public:
     Q_INVOKABLE void pin(const QString &path);
     Q_INVOKABLE void unpin(const QString &path);
     Q_INVOKABLE bool isPinned(const QString &path) const;
+    /// The pinned folders the sidebar shows, in its order (10xer's g 1–9).
+    Q_INVOKABLE QStringList pinnedPaths() const;
+    /// A standard folder by its key (`home`, `config`, `documents`, `downloads`, `pictures`,
+    /// `videos`, …), or empty when it doesn't exist.
+    Q_INVOKABLE static QString standardFolder(const QString &key);
+    /// Has its own place in the sidebar (Home, a standard folder), so it isn't pinned.
+    Q_INVOKABLE bool hasOwnPlace(const QString &path) const;
     Q_INVOKABLE void refreshDrives();
     /// The drives UDisks2 knows: unmounted and locked volumes show too, and drives can be ejected.
     void setDisks(class Disks *disks);

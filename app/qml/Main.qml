@@ -535,15 +535,14 @@ ApplicationWindow {
                         Layout.bottomMargin: -26
                         jobs: window.jobModel
                     }
-                    Text {
-                        Layout.alignment: Qt.AlignRight
+                    TenXerBar {
+                        Layout.fillWidth: true
                         Layout.rightMargin: 18
+                        Layout.leftMargin: 18
                         Layout.bottomMargin: 14
                         Layout.topMargin: 6
-                        text: window.view ? window.view.status : ""
-                        color: Theme.textSoft
-                        font.family: Theme.family
-                        font.pointSize: Theme.small
+                        keys: tenxerKeys
+                        status: window.view ? window.view.status : ""
                     }
                 }
             }
@@ -758,6 +757,14 @@ ApplicationWindow {
         function onFailed(message) { notice.show(message) }
     }
     ConfirmDialog { id: confirm }
+    // 10xer mode's keys, which the views send their keys to first while it is on.
+    readonly property var tenxer: tenxerKeys
+    TenXer { id: tenxerKeys; window: window; confirm: confirm }
+    Shortcut {
+        sequence: "Ctrl+Shift+M"
+        context: Qt.WindowShortcut
+        onActivated: AppSettings.tenxer = !AppSettings.tenxer
+    }
     CustomizeDialog { id: customizeDialog }
     PropertiesDialog {
         id: propertiesDialog

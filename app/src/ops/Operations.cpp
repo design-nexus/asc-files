@@ -70,6 +70,13 @@ void Operations::copyPathText(const QStringList &paths) {
     emit notice(tr("Copied the location"));
 }
 
+void Operations::clearClipboard() {
+    QClipboard *clipboard = QGuiApplication::clipboard();
+    if (clipboard->ownsClipboard()) {
+        clipboard->clear();
+    }
+}
+
 void Operations::setClipboard(const QList<QByteArray> &paths, bool cut) {
     if (paths.isEmpty()) {
         return;

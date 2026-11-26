@@ -14,6 +14,9 @@ Rectangle {
     required property string openName
     required property int index
     property bool last: false
+    /// 10xer's cursor in this column, or -1.
+    property int cursor: -1
+    function show(row) { entries.positionViewAtIndex(row, ListView.Contain) }
 
     signal openRow(int row)
     signal clickRow(int row, int modifiers)
@@ -35,6 +38,10 @@ Rectangle {
         reuseItems: true
         interactive: false
         model: column.folderModel
+        currentIndex: column.cursor
+        highlight: TenXerCursor { visible: column.cursor >= 0 }
+        highlightFollowsCurrentItem: true
+        highlightMoveDuration: 0
         ScrollBar.vertical: ScrollBar {}
         delegate: Rectangle {
             id: entry

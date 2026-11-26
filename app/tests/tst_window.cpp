@@ -32,6 +32,7 @@
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QScopeGuard>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -309,6 +310,126 @@ private slots:
         places.stepMode();
         QTRY_VERIFY(sidebar->isVisible());
         QTRY_COMPARE(sidebar->width(), 229.0);
+    }
+
+    // 10xer mode: a cursor apart from the fill, ranges, Esc a step at a time, chords.
+    void tenxerMovesACursorApartFromTheSelection() {
+        QTest::failOnWarning(QRegularExpression(QStringLiteral(".*")));
+        QTemporaryDir dir;
+        for (const char *name : {"a.md", "b.txt", "c.txt"}) {
+            QFile file(dir.filePath(QString::fromLatin1(name)));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write(QByteArray(name[0] == 'c' ? 300 : 3, 'x'));
+        }
+        QDir().mkdir(dir.filePath("folder"));
+        AppSettings::shared().setTenxer(true);
+        const auto off = qScopeGuard([] { AppSettings::shared().setTenxer(false); });
+
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        TabModel tabs(&backend);
+        PlacesModel places;
+        RecentModel recent;
+        FavoritesModel favorites;
+        TrashModel trash(&backend);
+        FolderModel downloads(&backend);
+        JobModel jobs(&backend);
+        Operations ops(&backend, &jobs);
+        Transfers transfers(&ops);
+        DesktopApps apps;
+        ActionsModel actions(&backend);
+        Properties properties(&backend, &apps);
+        Preview preview;
+        SearchModel search(&backend);
+        tabs.openTab(dir.path());
+        FolderModel &folders = *tabs.current()->folderModel();
+        QQmlApplicationEngine engine;
+        engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
+        engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider);
+        engine.addImageProvider(QStringLiteral("appicon"), new AppIconProvider);
+        engine.setInitialProperties({{"tabs", QVariant::fromValue(&tabs)},
+                                     {"places", QVariant::fromValue(&places)},
+                                     {"recent", QVariant::fromValue(&recent)},
+                                     {"favorites", QVariant::fromValue(&favorites)},
+                                     {"trash", QVariant::fromValue(&trash)},
+                                     {"downloads", QVariant::fromValue(&downloads)},
+                                     {"jobModel", QVariant::fromValue(&jobs)},
+                                     {"transfers", QVariant::fromValue(&transfers)},
+                                     {"ops", QVariant::fromValue(&ops)},
+                                     {"apps", QVariant::fromValue(&apps)},
+                                     {"actions", QVariant::fromValue(&actions)},
+                                     {"properties", QVariant::fromValue(&properties)},
+                                     {"preview", QVariant::fromValue(&preview)},
+                                     {"search", QVariant::fromValue(&search)},
+                                     {"backend", QVariant::fromValue(&backend)}});
+        engine.loadFromModule("AscFiles", "Main");
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto *list = window->findChild<QQuickItem *>(QStringLiteral("fileList"));
+        QVERIFY(list);
+        QTRY_COMPARE(list->property("count").toInt(), 4);
+        QTRY_VERIFY(folders.isLoaded(3));
+        auto *keys = qvariant_cast<QObject *>(window->property("tenxer"));
+        QVERIFY(keys);
+        list->forceActiveFocus();
+        const auto cursor = [&] { return list->property("currentIndex").toInt(); };
+        const auto press = [&](Qt::Key key, Qt::KeyboardModifiers modifiers = Qt::NoModifier) { QTest::keyClick(window, key, modifiers); };
+        // The cursor starts on the first item; moving it selects nothing.
+        QTRY_COMPARE(cursor(), 0);
+        press(Qt::Key_J);
+        QCOMPARE(cursor(), 1);
+        QCOMPARE(folders.selectionCount(), 0);
+        // Space adds the item and moves on; v walks a range from the cursor.
+        press(Qt::Key_Space);
+        QCOMPARE(folders.selectionCount(), 1);
+        QCOMPARE(cursor(), 2);
+        press(Qt::Key_V);
+        QCOMPARE(keys->property("visual").toInt(), 1);
+        press(Qt::Key_J);
+        QCOMPARE(folders.selectedRows(), (QList<int>{1, 2, 3}));
+        // Walking back gives back what the range had covered.
+        press(Qt::Key_K);
+        QCOMPARE(folders.selectedRows(), (QList<int>{1, 2}));
+        // Esc leaves the range and keeps the fill, then clears it.
+        press(Qt::Key_Escape);
+        QCOMPARE(keys->property("visual").toInt(), 0);
+        QCOMPARE(folders.selectionCount(), 2);
+        press(Qt::Key_Escape);
+        QCOMPARE(folders.selectionCount(), 0);
+        // g g and G: first and last.
+        press(Qt::Key_G);
+        QCOMPARE(keys->property("chord").toString(), QStringLiteral("g"));
+        press(Qt::Key_G);
+        QCOMPARE(cursor(), 0);
+        press(Qt::Key_G, Qt::ShiftModifier);
+        QCOMPARE(cursor(), 3);
+        // Ctrl+R inverts.
+        press(Qt::Key_R, Qt::ControlModifier);
+        QCOMPARE(folders.selectionCount(), 4);
+        press(Qt::Key_R, Qt::ControlModifier);
+        QCOMPARE(folders.selectionCount(), 0);
+        // , S: by size, largest first.
+        press(Qt::Key_Comma);
+        press(Qt::Key_S, Qt::ShiftModifier);
+        QCOMPARE(folders.sortKey(), QStringLiteral("size"));
+        QVERIFY(folders.sortDescending());
+        // An unknown second key says so.
+        press(Qt::Key_G);
+        press(Qt::Key_X);
+        QCOMPARE(keys->property("flash").toString(), QStringLiteral("Unknown chord"));
+        // l enters the folder under the cursor; h comes back with the cursor on it.
+        press(Qt::Key_G);
+        press(Qt::Key_G);
+        QTRY_COMPARE(folders.pathAt(cursor()), dir.filePath("folder"));
+        press(Qt::Key_L);
+        QTRY_COMPARE(tabs.current()->location(), dir.filePath("folder"));
+        press(Qt::Key_H);
+        QTRY_COMPARE(tabs.current()->location(), dir.path());
+        QTRY_COMPARE(folders.pathAt(cursor()), dir.filePath("folder"));
+        // Ctrl+Shift+M leaves the mode.
+        press(Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
+        QTRY_VERIFY(!AppSettings::shared().tenxer());
     }
 
     void windowsKeepTheirOwnTabs() {

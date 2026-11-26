@@ -128,6 +128,12 @@ public:
     Q_INVOKABLE void selectRows(const QList<int> &rows, bool add);
     Q_INVOKABLE void selectAll();
     Q_INVOKABLE void clearSelection();
+    /// Selects what isn't, and only that.
+    Q_INVOKABLE void invertSelection();
+    /// The rows selected among those here.
+    Q_INVOKABLE QList<int> selectedRows() const;
+    /// Adds `rows` to the selection or takes them out of it, leaving the rest as it is.
+    Q_INVOKABLE void setRowsSelected(const QList<int> &rows, bool selected);
 
     /// Renames the item at `row` to `name`, as typed: refused, with the reason, where its drive
     /// would store another name or the name is taken. The item stays selected under its new name.

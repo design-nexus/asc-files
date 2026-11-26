@@ -207,6 +207,39 @@ FocusScope {
         else folderModel.select(next)
         target.positionViewAtIndex(next, ListView.Contain)
     }
+    // 10xer's cursor, apart from the selection: the focused view's current row, or in Columns
+    // a row of the last column.
+    property int columnsCursor: -1
+    function cursorRow() { return mode === 2 ? columnsCursor : current.currentIndex }
+    function rowCount() { return folderModel ? folderModel.rowCount() : 0 }
+    function setCursorRow(row) {
+        if (mode === 2) {
+            columnsCursor = row
+            const last = columnsView.itemAtIndex(columnsView.count - 1)
+            if (last) last.show(row)
+        } else {
+            current.currentIndex = row
+            current.positionViewAtIndex(row, ListView.Contain)
+        }
+    }
+    /// Rows a page holds: a screenful of rows, or of tiles in Icons.
+    function pageRows() {
+        if (mode === 1) return Math.max(1, Math.floor(grid.height / grid.cellHeight)) * grid.perRow
+        return Math.max(1, Math.floor((mode === 2 ? columnsView.height : current.height) / Theme.rowHeight))
+    }
+    readonly property int perRow: mode === 1 ? grid.perRow : 1
+    Connections {
+        target: view.folderModel
+        function onFolderChanged() { view.columnsCursor = -1 }
+    }
+    function tenxerKey(event) {
+        const keys = view.Window.window ? view.Window.window.tenxer : undefined
+        event.accepted = AppSettings.tenxer && keys !== undefined && keys !== null && keys.key(event, view)
+    }
+    function tenxerClaims(event) {
+        const keys = view.Window.window ? view.Window.window.tenxer : undefined
+        event.accepted = AppSettings.tenxer && keys !== undefined && keys !== null && keys.claims(event)
+    }
     function openCurrent(target) {
         activate(target.currentIndex)
     }
@@ -218,7 +251,7 @@ FocusScope {
 
     Keys.onPressed: (event) => {
         // Typing a name filters the folder to what matches it.
-        if (AppSettings.typeToFilter && mode !== 2 && event.text.length === 1 && event.text >= " " && event.text !== " " &&
+        if (AppSettings.typeToFilter && !AppSettings.tenxer && mode !== 2 && event.text.length === 1 && event.text >= " " && event.text !== " " &&
                 !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
             filterField.text = event.text
             filterField.forceActiveFocus()
@@ -456,6 +489,11 @@ FocusScope {
                 onClicked: (modifiers) => { list.currentIndex = index; view.rowClicked(view.folderModel, index, modifiers); list.forceActiveFocus() }
                 onActivated: view.rowDoubleClicked(view.folderModel, index)
             }
+            Keys.onPressed: (event) => view.tenxerKey(event)
+            Keys.onShortcutOverride: (event) => view.tenxerClaims(event)
+            highlight: TenXerCursor {}
+            highlightFollowsCurrentItem: true
+            highlightMoveDuration: 0
             Keys.onUpPressed: (event) => view.moveBy(list, -1, event.modifiers)
             Keys.onDownPressed: (event) => view.moveBy(list, 1, event.modifiers)
             Keys.onReturnPressed: view.openCurrent(list)
@@ -539,6 +577,11 @@ FocusScope {
             acceptedModifiers: Qt.ControlModifier
             onWheel: (event) => view.browser.zoom(event.angleDelta.y > 0 ? 1 : -1)
         }
+        Keys.onPressed: (event) => view.tenxerKey(event)
+        Keys.onShortcutOverride: (event) => view.tenxerClaims(event)
+        highlight: TenXerCursor {}
+        highlightFollowsCurrentItem: true
+        highlightMoveDuration: 0
         Keys.onLeftPressed: (event) => view.moveBy(grid, -1, event.modifiers)
         Keys.onRightPressed: (event) => view.moveBy(grid, 1, event.modifiers)
         Keys.onUpPressed: (event) => view.moveBy(grid, -grid.perRow, event.modifiers)
@@ -710,6 +753,11 @@ FocusScope {
         Keys.onDownPressed: (event) => view.moveBy(compact, 1, event.modifiers)
         Keys.onLeftPressed: (event) => view.moveBy(compact, -compact.perColumn, event.modifiers)
         Keys.onRightPressed: (event) => view.moveBy(compact, compact.perColumn, event.modifiers)
+        Keys.onPressed: (event) => view.tenxerKey(event)
+        Keys.onShortcutOverride: (event) => view.tenxerClaims(event)
+        highlight: TenXerCursor {}
+        highlightFollowsCurrentItem: true
+        highlightMoveDuration: 0
         Keys.onReturnPressed: view.openCurrent(compact)
         Keys.onEnterPressed: view.openCurrent(compact)
     }
@@ -771,6 +819,11 @@ FocusScope {
             }
             Keys.onLeftPressed: (event) => view.moveBy(strip, -1, event.modifiers)
             Keys.onRightPressed: (event) => view.moveBy(strip, 1, event.modifiers)
+            Keys.onPressed: (event) => view.tenxerKey(event)
+            Keys.onShortcutOverride: (event) => view.tenxerClaims(event)
+            highlight: TenXerCursor {}
+            highlightFollowsCurrentItem: true
+            highlightMoveDuration: 0
             Keys.onReturnPressed: view.openCurrent(strip)
             Keys.onEnterPressed: view.openCurrent(strip)
         }
@@ -788,12 +841,15 @@ FocusScope {
         focus: view.mode === 2
         boundsBehavior: Flickable.StopAtBounds
         model: visible && view.browser ? view.browser.columns : null
+        Keys.onPressed: (event) => view.tenxerKey(event)
+        Keys.onShortcutOverride: (event) => view.tenxerClaims(event)
         ScrollBar.horizontal: ScrollBar {}
         // The newest column stays in view.
         onCountChanged: Qt.callLater(() => positionViewAtEnd())
         delegate: FolderColumn {
             height: ListView.view.height
             last: index === ListView.view.count - 1
+            cursor: last && AppSettings.tenxer ? view.columnsCursor : -1
             onOpenRow: (row) => view.browser.goColumnRow(folderModel, row)
             onClickRow: (row, modifiers) => view.rowClicked(folderModel, row, modifiers)
             onDoubleClickRow: (row) => view.rowDoubleClicked(folderModel, row)

@@ -13,6 +13,9 @@ Popup {
     property string title
     property string message
     property string action: qsTr("Delete")
+    /// A key that confirms besides Return (10xer's d, so d d trashes); none after closing.
+    property int confirmKey: 0
+    onClosed: confirmKey = 0
     signal confirmed()
 
     function ask(title, message, action, onConfirmed) {
@@ -74,6 +77,12 @@ Popup {
                     font.weight: Font.DemiBold
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
+                }
+                Keys.onPressed: (event) => {
+                    if (dialog.confirmKey !== 0 && event.key === dialog.confirmKey && event.modifiers === Qt.NoModifier) {
+                        event.accepted = true
+                        confirm.clicked()
+                    }
                 }
                 Keys.onReturnPressed: confirm.clicked()
                 Keys.onEnterPressed: confirm.clicked()

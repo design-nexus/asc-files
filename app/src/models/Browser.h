@@ -46,6 +46,8 @@ public:
     /// Sorts the folder by `key`; the key it is sorted by already, it turns the other way.
     /// Remembered for the folder.
     Q_INVOKABLE void sortBy(const QString &key);
+    /// Sorts by `key` in that direction, remembered as a heading's choice is.
+    Q_INVOKABLE void sortExactly(const QString &key, bool descending);
     /// Shows a page other than a folder.
     Q_INVOKABLE void goPage(Page page);
     /// Where the tab is, as text a session can be restored from: a path, or `page:<name>`.

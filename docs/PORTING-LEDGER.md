@@ -529,3 +529,14 @@ Send to (the selection's menu) lists each mounted removable drive and up to thre
 were sent, pasted or dropped into lately and are still there, remembered per drive by its
 filesystem's UUID. Legacy's menu had the same shape but never saved those folders (its preference was
 read, never written), so it only ever offered drives' roots.
+
+## 10xer mode (B8)
+
+10xer mode (Ctrl+Shift+M, Settings › Browsing › Keyboard) is legacy's spec (`docs/10xer-mode.md`)
+built in QML (`app/qml/TenXer.qml`): the views send their keys to it first and claim the window
+shortcuts it reuses (Space, Backspace, Delete, Ctrl+B/D/F/U/R/N/A/V). Part 1 has the cursor apart from
+the fill (outlined, Columns included), j/k/h/l and arrows (spatial in Icons), g g / G, paging, H / L,
+Space, v / V ranges that give back what they covered, Ctrl+A / Ctrl+R, Esc a step at a time, y / x / p
+/ P / Y / X, d (d d confirms) / D, the g, t, comma and c chords with their panel, `.`, Q, and the footer's
+VISUAL / chord / 10X pills. Prompts (/ ? n N f s z Z a r M C g Space), the ; actions and the file
+chooser's rules follow. Tested in `tst_window` (`tenxerMovesACursorApartFromTheSelection`).

@@ -605,6 +605,53 @@ void FolderModel::selectAll() {
     selectionTouched();
 }
 
+void FolderModel::invertSelection() {
+    // Rows still waiting for their names are selected; inverted, they are not (their names are
+    // unknown, so "all but these" can't hold them).
+    const QSet<int> pending = m_pendingRows;
+    m_pendingRows.clear();
+    m_allSelected = !m_allSelected;
+    for (const int row : pending) {
+        if (const QByteArray name = rawName(row); !name.isEmpty()) {
+            m_selected.insert(name);
+        }
+    }
+    selectionTouched();
+}
+
+QList<int> FolderModel::selectedRows() const {
+    QList<int> rows;
+    for (int row = 0; row < m_count; ++row) {
+        if (isSelected(row)) {
+            rows.append(row);
+        }
+    }
+    return rows;
+}
+
+void FolderModel::setRowsSelected(const QList<int> &rows, bool selected) {
+    for (const int row : rows) {
+        if (row < 0 || row >= m_count) {
+            continue;
+        }
+        m_pendingRows.remove(row);
+        const QByteArray name = rawName(row);
+        if (name.isEmpty()) {
+            if (selected && !m_allSelected) {
+                m_pendingRows.insert(row);
+            }
+            continue;
+        }
+        // In "all" mode the set holds the rows taken out.
+        if (selected != m_allSelected) {
+            m_selected.insert(name);
+        } else {
+            m_selected.remove(name);
+        }
+    }
+    selectionTouched();
+}
+
 void FolderModel::clearSelection() {
     if (m_selected.isEmpty() && m_pendingRows.isEmpty() && !m_allSelected) {
         return;

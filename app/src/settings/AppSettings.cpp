@@ -193,6 +193,8 @@ int AppSettings::defaultColumnWidth(const QString &key) const {
 
 bool AppSettings::typeToFilter() const { return value("search/typeToFilter", true).toBool(); }
 void AppSettings::setTypeToFilter(bool filters) { set("search/typeToFilter", filters); }
+bool AppSettings::tenxer() const { return value("browsing/tenxer", false).toBool(); }
+void AppSettings::setTenxer(bool on) { set("browsing/tenxer", on); }
 
 int AppSettings::searchSeconds() const { return chosenLimit(value("search/seconds", 10).toInt(), SearchSeconds); }
 void AppSettings::setSearchSeconds(int seconds) { set("search/seconds", chosenLimit(seconds, SearchSeconds)); }

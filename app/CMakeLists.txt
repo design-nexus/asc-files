@@ -74,6 +74,7 @@ qt_add_qml_module(asc_files_qml
     QML_FILES
         qml/Main.qml
         qml/FolderView.qml
+        qml/TenXer.qml
         qml/ItemsView.qml
         qml/OverviewPage.qml
         qml/SearchPage.qml
@@ -106,6 +107,8 @@ qt_add_qml_module(asc_files_qml
         qml/components/FormatDialog.qml
         qml/components/ServerPasswordDialog.qml
         qml/components/QuestionDialog.qml
+        qml/components/TenXerBar.qml
+        qml/components/TenXerCursor.qml
         qml/components/NameEditor.qml
         qml/components/OpenWithDialog.qml
         qml/components/OpenWithMenu.qml

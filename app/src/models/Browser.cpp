@@ -163,6 +163,11 @@ void Browser::sortBy(const QString &key) {
     rememberChoice();
 }
 
+void Browser::sortExactly(const QString &key, bool descending) {
+    m_folders->setSort(key, descending);
+    rememberChoice();
+}
+
 void Browser::rememberChoice() {
     if (m_here.page == Folder && !m_here.path.isEmpty() && AppSettings::shared().rememberFolderViews()) {
         FolderViews::shared().remember(QFile::decodeName(m_here.path),
