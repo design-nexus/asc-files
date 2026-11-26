@@ -4,6 +4,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
 import AscFiles
+import AscFiles.System
 
 // Recent, Favorites or the Trash: items from many folders, each with the folder it is in (for
 // the Trash, the one it was deleted from) and the list's own time.
@@ -46,6 +47,71 @@ ColumnLayout {
         } else if (opensFolders) {
             fileActivated(items.pathAt(row))
         }
+    }
+
+    // 10xer's keys over these items (search results, Recent, Favorites, the Trash): j / k and
+    // paging, g g / G, l / Enter / o open, y / x yank or cut, g f shows the item in its folder,
+    // h / Esc / Backspace go back to where it was opened from.
+    property bool chordG: false
+    function tenxerKey(event) {
+        const mods = event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)
+        if ([Qt.Key_Shift, Qt.Key_Control, Qt.Key_Alt, Qt.Key_Meta].includes(event.key)) return false
+        const text = (event.modifiers & Qt.ShiftModifier) ? event.text.toUpperCase() : event.text
+        const page = Math.max(1, Math.floor(list.height / 32))
+        const to = (row) => {
+            if (list.count === 0) return
+            selectedRow = Math.max(0, Math.min(list.count - 1, row))
+            list.positionViewAtIndex(selectedRow, ListView.Contain)
+        }
+        const w = view.Window.window
+        if (chordG) {
+            chordG = false
+            if (text === "g") to(0)
+            else if (text === "f" && selectedRow >= 0 && w) {
+                // The folder holding it, with it selected.
+                const path = items.pathAt(selectedRow)
+                w.browser.goPath(path.substring(0, path.lastIndexOf("/")) || "/")
+                w.revealItems([path], false)
+            }
+            return true
+        }
+        if (mods === Qt.ControlModifier) {
+            if (event.key === Qt.Key_D) to(selectedRow + Math.floor(page / 2))
+            else if (event.key === Qt.Key_U) to(selectedRow - Math.floor(page / 2))
+            else if (event.key === Qt.Key_F) to(selectedRow + page)
+            else if (event.key === Qt.Key_B) to(selectedRow - page)
+            else return false
+            return true
+        }
+        if (mods !== Qt.NoModifier) return false
+        switch (event.key) {
+        case Qt.Key_Down: to(selectedRow + 1); return true
+        case Qt.Key_Up: to(selectedRow - 1); return true
+        case Qt.Key_PageDown: to(selectedRow + page); return true
+        case Qt.Key_PageUp: to(selectedRow - page); return true
+        case Qt.Key_Home: to(0); return true
+        case Qt.Key_End: to(list.count - 1); return true
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+        case Qt.Key_Right: open(selectedRow); return true
+        case Qt.Key_Escape:
+        case Qt.Key_Left:
+        case Qt.Key_Backspace: browser.back(); return true
+        }
+        switch (text) {
+        case "j": to(selectedRow + 1); return true
+        case "k": to(selectedRow - 1); return true
+        case "G": to(list.count - 1); return true
+        case "g": chordG = true; return true
+        case "l":
+        case "o": open(selectedRow); return true
+        case "h": browser.back(); return true
+        case "y":
+        case "x":
+            if (selectedRow >= 0 && w) w.ops.copyPaths([items.pathAt(selectedRow)], text === "x")
+            return true
+        }
+        return text.length === 1 && text > " "
     }
 
     spacing: 0
@@ -109,6 +175,11 @@ ColumnLayout {
             onClicked: { view.selectedRow = index; list.forceActiveFocus() }
             onActivated: view.open(index)
             onMenuRequested: { view.selectedRow = index; list.forceActiveFocus(); view.contextRequested(index) }
+        }
+        Keys.onPressed: (event) => { event.accepted = AppSettings.tenxer && view.tenxerKey(event) }
+        Keys.onShortcutOverride: (event) => {
+            event.accepted = AppSettings.tenxer && (event.key === Qt.Key_Backspace || event.key === Qt.Key_Escape
+                || ((event.modifiers & Qt.ControlModifier) && [Qt.Key_B, Qt.Key_D, Qt.Key_F, Qt.Key_U].includes(event.key)))
         }
         Keys.onUpPressed: { view.selectedRow = Math.max(0, view.selectedRow - 1); positionViewAtIndex(view.selectedRow, ListView.Contain) }
         Keys.onDownPressed: { view.selectedRow = Math.min(count - 1, view.selectedRow + 1); positionViewAtIndex(view.selectedRow, ListView.Contain) }

@@ -92,12 +92,15 @@ void ActionsModel::offer(const QStringList &paths) {
         m_offered.clear();
         emit offeredChanged();
     }
-    if (paths.isEmpty()) {
-        return;
-    }
     QJsonArray inputs;
     for (const QString &path : paths) {
-        inputs.append(input(path));
+        // A path not known yet (a row still loading) is nothing to offer for.
+        if (!path.isEmpty()) {
+            inputs.append(input(path));
+        }
+    }
+    if (inputs.isEmpty()) {
+        return;
     }
     m_backend->call(QStringLiteral("actions.list"), {{"inputs", inputs}}, this,
                     [this, serial](const QJsonValue &result, const BackendError &error) {

@@ -55,6 +55,8 @@ ApplicationWindow {
         window.browser.goPage(5)
         window.search.search(query, [here])
         window.search.searchNow()
+        // The keyboard goes to the results.
+        Qt.callLater(() => { if (window.view && window.view.focusList) window.view.focusList() })
     }
     /// Cloud accounts through Nyx Cloud (none in tests).
     property var cloud: null

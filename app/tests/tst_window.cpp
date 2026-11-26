@@ -579,7 +579,35 @@ private slots:
         QVERIFY(prompt->hasActiveFocus());
         press(Qt::Key_Escape);
         QTRY_COMPARE(list->property("count").toInt(), 5);
+        // s searches below the folder; the results take 10xer's keys: j, then g f shows the hit
+        // in its folder.
+        list->forceActiveFocus();
+        press(Qt::Key_S);
+        typeText("alpha");
+        press(Qt::Key_Return);
+        QTRY_COMPARE(int(tabs.current()->page()), int(Browser::Search));
+        QTRY_VERIFY_WITH_TIMEOUT(search.rowCount() >= 1 && !search.running(), 10000);
+        // Recent, Favorites and the Trash have such a list too: the one shown.
+        QQuickItem *results = nullptr;
+        QTRY_VERIFY([&] {
+            for (QQuickItem *item : window->findChildren<QQuickItem *>(QStringLiteral("itemList"))) {
+                if (item->isVisible()) {
+                    results = item;
+                }
+            }
+            return results != nullptr;
+        }());
+        QTRY_VERIFY(results->hasActiveFocus());
+        press(Qt::Key_J);
+        const QString hit = search.data(search.index(0), ItemListModel::PathRole).toString();
+        press(Qt::Key_G);
+        press(Qt::Key_F);
+        QTRY_COMPARE(tabs.current()->location(), hit.section(u'/', 0, -2));
+        tabs.current()->goPath(dir.path());
+        QTRY_COMPARE(tabs.current()->location(), dir.path());
+        QTRY_VERIFY(list->isVisible());
         // ; lists what it runs; e on something that isn't an archive says so.
+        QTRY_VERIFY(folders.isLoaded(cursor()));
         list->forceActiveFocus();
         press(Qt::Key_Semicolon);
         QCOMPARE(keys->property("chord").toString(), QStringLiteral(";"));

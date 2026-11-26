@@ -397,7 +397,9 @@ Item {
     function targets(view) {
         if (view.folderModel.selectionCount > 0) return view.folderModel.selectedPaths()
         const cursor = view.cursorRow()
-        return cursor >= 0 ? [view.folderModel.pathAt(cursor)] : []
+        // A row not read yet has no path to act on.
+        const path = cursor >= 0 ? view.folderModel.pathAt(cursor) : ""
+        return path.length > 0 ? [path] : []
     }
     function yank(view, cut) {
         const paths = targets(view)
