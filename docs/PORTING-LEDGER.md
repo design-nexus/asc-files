@@ -524,3 +524,8 @@ legacy listed them: every account with storage is in Storage, a click on one not
 (rclone, in the home folder) and opens it, and its menu connects and disconnects. Without the service
 there are none. `tst_cloud` reads `ListRemotes`'s answer; mounting was not run against the real
 account in tests (it is the user's).
+
+Send to (the selection's menu) lists each mounted removable drive and up to three folders on it that
+were sent, pasted or dropped into lately and are still there, remembered per drive by its
+filesystem's UUID. Legacy's menu had the same shape but never saved those folders (its preference was
+read, never written), so it only ever offered drives' roots.

@@ -33,6 +33,8 @@ struct Volume {
     qint64 size = 0;
     /// Its filesystem ("vfat", "ext4"), for what renaming allows.
     QString type;
+    /// Its filesystem's UUID: which drive it is, wherever it mounts.
+    QString uuid;
     bool operator==(const Volume &) const = default;
 };
 
@@ -69,6 +71,14 @@ public:
     static int maxLabelLength(const QString &type);
     /// The filesystems this system can format (their tools are installed).
     Q_INVOKABLE static QStringList formattable();
+
+    /// Send to: `[{name, path, folders: [path]}]`, each mounted removable drive with the folders on
+    /// it sent, pasted or dropped into lately that are still there (up to three).
+    Q_INVOKABLE QVariantList sendTargets() const;
+    /// Remembers `folder` for Send to if it is on a removable drive (not its root).
+    Q_INVOKABLE void remember(const QString &folder);
+    /// `recent` with `folder` first, once, and no more than six.
+    static QStringList rememberedWith(QStringList recent, const QString &folder);
 
 signals:
     void changed();

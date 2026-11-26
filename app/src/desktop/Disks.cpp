@@ -5,7 +5,10 @@
 #include <QDBusMetaType>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
+#include <QDir>
+#include <QFileInfo>
 #include <QLocale>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTimer>
 #include <unistd.h>
@@ -59,6 +62,7 @@ QList<Volume> Disks::volumesFrom(const ManagedObjects &objects) {
         }
         volume.label = block.value(QStringLiteral("IdLabel")).toString();
         volume.type = block.value(QStringLiteral("IdType")).toString();
+        volume.uuid = block.value(QStringLiteral("IdUUID")).toString();
         volume.size = block.value(QStringLiteral("Size")).toLongLong();
         // An unlocked volume is shown as the filesystem inside it; the drive and hints are the
         // encrypted block's.
@@ -148,6 +152,56 @@ Volume Disks::volumeAt(const QString &path) const {
         }
     }
     return {};
+}
+
+namespace {
+
+QSettings sendToSettings() {
+    return QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("asc-files"), QStringLiteral("send-to"));
+}
+
+/// Which drive a volume is to Send to: its filesystem's UUID, else its device.
+QString sendToKey(const Volume &volume) { return volume.uuid.isEmpty() ? volume.device : volume.uuid; }
+
+} // namespace
+
+QStringList Disks::rememberedWith(QStringList recent, const QString &folder) {
+    recent.removeAll(folder);
+    recent.prepend(folder);
+    return recent.mid(0, 6);
+}
+
+QVariantList Disks::sendTargets() const {
+    QVariantList targets;
+    QSettings settings = sendToSettings();
+    for (const Volume &volume : m_volumes) {
+        if (volume.mountPoint.isEmpty() || !volume.removable) {
+            continue;
+        }
+        const QDir root(volume.mountPoint);
+        QStringList folders;
+        for (const QString &relative : settings.value(QStringLiteral("drives/") + sendToKey(volume)).toStringList()) {
+            const QString path = QDir::cleanPath(root.filePath(relative));
+            // Still there, and still inside the drive.
+            if (folders.size() < 3 && path.startsWith(volume.mountPoint + QLatin1Char('/')) && QFileInfo(path).isDir()) {
+                folders.append(path);
+            }
+        }
+        targets.append(QVariantMap{{"name", volume.name}, {"path", volume.mountPoint}, {"folders", folders}});
+    }
+    return targets;
+}
+
+void Disks::remember(const QString &folder) {
+    const QString path = QDir::cleanPath(folder);
+    for (const Volume &volume : std::as_const(m_volumes)) {
+        if (volume.removable && !volume.mountPoint.isEmpty() && path.startsWith(volume.mountPoint + QLatin1Char('/'))) {
+            QSettings settings = sendToSettings();
+            const QString key = QStringLiteral("drives/") + sendToKey(volume);
+            settings.setValue(key, rememberedWith(settings.value(key).toStringList(), QDir(volume.mountPoint).relativeFilePath(path)));
+            return;
+        }
+    }
 }
 
 Volume Disks::volume(const QString &object) const {

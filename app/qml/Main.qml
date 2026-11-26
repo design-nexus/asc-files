@@ -625,7 +625,13 @@ ApplicationWindow {
     }
 
     /// A volume not mounted: mounted (unlocked first, asking its passphrase), then shown.
-    function openVolume(volume, locked, name) {
+    // Pastes into this folder, remembering it for Send to when it is on a removable drive.
+    function pasteHere() {
+        if (window.disks && window.page === 0)
+            window.disks.remember(window.browser.location)
+        window.ops.paste(window.folderModel)
+    }
+        function openVolume(volume, locked, name) {
         if (!window.disks || volume.length === 0) return
         window.pendingVolume = volume
         if (locked) unlockDialog.ask(volume, name, false)
@@ -785,6 +791,8 @@ ApplicationWindow {
         }
     }
     function afterDrop(target) {
+        if (window.disks && target.length > 0)
+            window.disks.remember(target)
         if (AppSettings.openAfterDrop && target.length > 0 && (window.page !== 0 || target !== window.browser.location))
             window.browser.goPath(target)
     }
@@ -921,6 +929,7 @@ ApplicationWindow {
             const paths = window.folderModel.selectedPaths()
             itemOpenWith.load(paths)
             window.actions.offer(paths)
+            sendTo.targets = window.disks ? window.disks.sendTargets() : []
             popup()
         }
         MenuItem { text: qsTr("Open"); visible: itemMenu.single && itemMenu.folder; height: visible ? implicitHeight : 0; onTriggered: window.openRow(itemMenu.row) }
@@ -980,7 +989,39 @@ ApplicationWindow {
             visible: itemMenu.single && itemMenu.folder
             height: visible ? implicitHeight : 0
             enabled: window.ops.canPaste
-            onTriggered: window.ops.paste(window.folderModel, itemMenu.row)
+            onTriggered: {
+                if (window.disks)
+                    window.disks.remember(window.folderModel.pathAt(itemMenu.row))
+                window.ops.paste(window.folderModel, itemMenu.row)
+            }
+        }
+        // Send to: removable drives, and folders on them used lately.
+        Menu {
+            id: sendTo
+            title: qsTr("Send to")
+            property var targets: []
+            enabled: targets.length > 0
+            Instantiator {
+                model: {
+                    const items = []
+                    for (const target of sendTo.targets) {
+                        items.push({ label: target.name, path: target.path })
+                        for (const folder of target.folders)
+                            items.push({ label: target.name + " › " + folder.slice(target.path.length + 1), path: folder })
+                    }
+                    return items
+                }
+                delegate: MenuItem {
+                    required property var modelData
+                    text: modelData.label
+                    onTriggered: {
+                        window.disks.remember(modelData.path)
+                        window.ops.transferPaths(window.folderModel.selectedPaths(), modelData.path, false)
+                    }
+                }
+                onObjectAdded: (index, item) => sendTo.insertItem(index, item)
+                onObjectRemoved: (index, item) => sendTo.removeItem(item)
+            }
         }
         MenuSeparator {}
         MenuItem { text: qsTr("Compress…"); onTriggered: compressDialog.ask(window.folderModel.selectedPaths()) }
@@ -1037,7 +1078,7 @@ ApplicationWindow {
         MenuItem { text: qsTr("New Folder"); onTriggered: window.ops.create(window.folderModel, true) }
         MenuItem { text: qsTr("New File"); onTriggered: window.ops.create(window.folderModel, false) }
         MenuSeparator {}
-        MenuItem { text: qsTr("Paste"); enabled: window.ops.canPaste; onTriggered: window.ops.paste(window.folderModel) }
+        MenuItem { text: qsTr("Paste"); enabled: window.ops.canPaste; onTriggered: window.pasteHere() }
         MenuItem { text: qsTr("Select All"); onTriggered: window.folderModel.selectAll() }
         MenuSeparator {}
         MenuItem { text: window.ops.undoLabel.length > 0 ? qsTr("Undo %1").arg(window.ops.undoLabel) : qsTr("Undo"); enabled: window.ops.undoLabel.length > 0; onTriggered: window.ops.undo() }
@@ -1302,7 +1343,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+H"; onActivated: window.folderModel.showHidden = !window.folderModel.showHidden }
     Shortcut { sequences: [StandardKey.Copy]; enabled: window.selectionCount > 0; onActivated: window.ops.copy(window.folderModel, false) }
     Shortcut { sequences: [StandardKey.Cut]; enabled: window.selectionCount > 0; onActivated: window.ops.copy(window.folderModel, true) }
-    Shortcut { sequences: [StandardKey.Paste]; enabled: window.inFolder; onActivated: window.ops.paste(window.folderModel) }
+    Shortcut { sequences: [StandardKey.Paste]; enabled: window.inFolder; onActivated: window.pasteHere() }
     Shortcut { sequence: "Delete"; enabled: window.selectionCount > 0; onActivated: window.ops.trash(window.folderModel) }
     Shortcut { sequence: "Shift+Delete"; enabled: window.selectionCount > 0; onActivated: window.deleteSelection() }
     Shortcut { sequences: [StandardKey.Undo]; onActivated: window.ops.undo() }

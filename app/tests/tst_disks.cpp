@@ -132,6 +132,18 @@ private slots:
         QVERIFY(Disks::labelError("ntfs", "BACKUP.2026").isEmpty());
     }
 
+    void sendToRemembersTheLatestFoldersOnce() {
+        QStringList recent;
+        recent = Disks::rememberedWith(recent, "Photos");
+        recent = Disks::rememberedWith(recent, "Music");
+        recent = Disks::rememberedWith(recent, "Photos");
+        QCOMPARE(recent, (QStringList{"Photos", "Music"}));
+        for (int i = 0; i < 10; ++i) {
+            recent = Disks::rememberedWith(recent, QString::number(i));
+        }
+        QCOMPARE(recent, (QStringList{"9", "8", "7", "6", "5", "4"}));
+    }
+
     // By hand (ASC_FILES_LIVE_DISKS=1): what the real UDisks2 shows, and the sidebar's rows.
     void whatTheSystemShows() {
         if (qEnvironmentVariable("ASC_FILES_LIVE_DISKS") != QLatin1String("1")) {
