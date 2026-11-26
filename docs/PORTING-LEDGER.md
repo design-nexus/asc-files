@@ -603,3 +603,12 @@ and failing on a clash, whose names no other item shares even in case, are copie
 (`jobs::bulk_runs`), never on a spinning disk; each still goes through the item copy, so naming,
 refusals, progress and undo are as for one, and items report as they finish. Moves still go one at a
 time, each source deleted after its own flush, rather than legacy's shared flush for a batch of moves.
+
+## Packaging (item 12)
+
+`cmake --install` (bin, libexec/asc-files helpers, desktop entry, icon, AppStream metainfo, the
+chooser's portal and D-Bus service) and `packaging/rpm/asc-files.spec`, built offline by
+`scripts/rpm.sh` from `git archive` and `cargo vendor`, with `asc-files-rar` as a subpackage under the
+UnRAR licence. CI builds the RPMs on Fedora 43, installs them and checks the files and `--version`.
+Becoming the default file manager stays Settings › Integrations' (it writes FileManager1 and the
+folder handler per user), since Nautilus ships a FileManager1 service of its own.

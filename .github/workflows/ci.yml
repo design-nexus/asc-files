@@ -71,7 +71,7 @@ jobs:
           scripts/rpm.sh
       - name: Install them, and check what they installed
         run: |
-          dnf install -y dist/asc-files-0*.x86_64.rpm dist/asc-files-rar-*.x86_64.rpm
+          dnf install -y dist/asc-files-0*.x86_64.rpm dist/asc-files-rar-0*.x86_64.rpm
           test -x /usr/bin/asc-files
           for helper in asc-files-backend asc-files-docs asc-files-render asc-files-rar; do
             test -x /usr/libexec/asc-files/$helper
