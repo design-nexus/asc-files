@@ -13,6 +13,12 @@ Item {
 
     required property var window
     required property var confirm
+    required property var compress
+    required property var openWith
+    /// What `;` was pressed on: its actions run on these.
+    property var actionTargets: []
+    /// The actions offered for them, those at the menu's top first, ten at most.
+    readonly property var numbered: chord === ";" ? window.topActions.concat(window.submenuActions).slice(0, 10) : []
 
     /// The chord armed: "g", "t", ",", "c", or "".
     property string chord: ""
@@ -36,13 +42,13 @@ Item {
     property int fixedRow: -1
     property string findQuery: ""
     property bool findBackward: false
-    readonly property bool picking: ["go", "move", "copy"].includes(prompt)
+    readonly property bool picking: ["go", "move", "copy", "extract"].includes(prompt)
     property var listed: []
     readonly property var candidates: picking ? picker.folders.filter(path => acceptable(path)) : listed
     readonly property string promptLabel: ({ find: "/", findBack: "?", filter: qsTr("filter ›"), search: qsTr("search ›"),
                                              rename: qsTr("rename ›"), create: qsTr("create ›"), move: qsTr("move to ›"),
                                              copy: qsTr("copy to ›"), go: qsTr("go ›"), jump: qsTr("jump ›"),
-                                             recent: qsTr("recent ›") })[prompt] || ""
+                                             recent: qsTr("recent ›"), extract: qsTr("extract to ›") })[prompt] || ""
     readonly property string promptStatus: promptError.length > 0 ? promptError
         : picking && picker.searching && candidates.length === 0 ? qsTr("Searching…")
         : (picking || prompt === "jump" || prompt === "recent") && candidates.length === 0 && (picking ? picker.message : qsTr("No matching folders")).length > 0
@@ -64,6 +70,9 @@ Item {
                            { key: "s", label: qsTr("sort by size") }, { key: "e", label: qsTr("sort by type") },
                            { key: "Shift", label: qsTr("reversed") }]
         : chord === "c" ? [{ key: "c", label: qsTr("copy path") }, { key: "n", label: qsTr("copy name") }]
+        : chord === ";" ? numbered.map((action, index) => ({ key: String((index + 1) % 10), label: action.name })).concat([
+              { key: "t", label: qsTr("terminal here") }, { key: "c", label: qsTr("compress") },
+              { key: "e", label: qsTr("extract here") }, { key: "E", label: qsTr("extract to…") }])
         : []
     readonly property string visualLabel: visual > 0 ? qsTr("VISUAL") : visual < 0 ? qsTr("UNSET") : ""
 
@@ -150,6 +159,7 @@ Item {
             if (event.key !== Qt.Key_Escape) chordKey(armed, event, view)
             return true
         }
+        if (keys.window.chooser !== null && chooserRefuses(event, mods)) return true
         if (mods === Qt.ControlModifier) return control(event, view)
         if (mods !== Qt.NoModifier) return false
         const icons = view.mode === 1
@@ -200,6 +210,16 @@ Item {
         case "t":
         case ",":
         case "c": chord = typed(event); return true
+        case ";":
+            chord = ";"
+            actionTargets = targets(view)
+            keys.window.actions.offer(actionTargets)
+            return true
+        case "O":
+            if (targets(view).length === 0) say(qsTr("Nothing to open"))
+            else openWith.ask(targets(view))
+            return true
+        case "R": say(view.rowCount() === 0 ? qsTr("Nothing to restore") : qsTr("Only items in Trash can be restored")); return true
         case "/": openPrompt(view, "find", ""); return true
         case "?": openPrompt(view, "findBack", ""); return true
         case "n": findNext(view, findBackward); return true
@@ -215,6 +235,25 @@ Item {
         }
         // Other plain letters do nothing here (no typing to filter in this mode).
         return event.text.length === 1 && event.text > " "
+    }
+
+    // The file chooser chooses files: it doesn't copy, move or restore them, change pins, open
+    // them with an application or run actions; one-item requests select one.
+    function chooserRefuses(event, mods) {
+        const text = typed(event)
+        const single = !keys.window.chooser.multiple
+        if (mods === Qt.ControlModifier) {
+            if ([Qt.Key_C, Qt.Key_X, Qt.Key_V].includes(event.key)) { say(qsTr("Not available in the file chooser")); return true }
+            if (single && [Qt.Key_A, Qt.Key_R].includes(event.key)) { say(qsTr("Only one item can be chosen")); return true }
+            return false
+        }
+        if (mods !== Qt.NoModifier) return false
+        if (["y", "x", "p", "P", "Y", "X", "M", "C", "R", "O", ";", "i", "Q"].includes(text)) {
+            say(qsTr("Not available in the file chooser"))
+            return true
+        }
+        if (single && [" ", "v", "V"].includes(text)) { say(qsTr("Only one item can be chosen")); return true }
+        return false
     }
 
     function control(event, view) {
@@ -285,7 +324,9 @@ Item {
         if (visual !== 0) { visual = 0; return }
         if (view.folderModel.filter.length > 0) { view.folderModel.filter = ""; return }
         if (keys.window.previewOpen) { keys.window.previewOpen = false; return }
-        view.folderModel.clearSelection()
+        if (view.folderModel.selectionCount > 0) { view.folderModel.clearSelection(); return }
+        // Nothing left to dismiss: a chooser is cancelled.
+        if (keys.window.chooser !== null) keys.window.chooser.cancel()
     }
 
     // Going in and out.
@@ -312,8 +353,16 @@ Item {
     }
     function openItem(view) {
         const cursor = view.cursorRow()
+        const chooser = keys.window.chooser
+        // A Save request saves the name in this folder, whatever the cursor is on.
+        if (chooser !== null && chooser.kind !== "open") { keys.window.chooserAccept(false); return }
         if (cursor < 0) return
         if (isFolderAt(view, cursor)) openFolder(view, cursor)
+        else if (chooser !== null) {
+            // The fill, or the cursor's file.
+            if (view.folderModel.selectionCount === 0) view.folderModel.select(cursor)
+            keys.window.chooserAccept(false)
+        }
         else view.activate(cursor)
     }
     function peek(view) {
@@ -362,6 +411,7 @@ Item {
         else if (armed === "t") tabChord(text)
         else if (armed === ",") sortChord(text, view)
         else if (armed === "c") copyChord(text, view)
+        else if (armed === ";") actionChord(text, view)
     }
     function goChord(text, view) {
         const folders = { h: "home", d: "downloads", k: "documents", p: "pictures", v: "videos", c: "config" }
@@ -384,7 +434,11 @@ Item {
             else say(qsTr("No pin %1").arg(text))
             return
         }
-        if (text === "+" || text === "-") { pin(view, text === "+"); return }
+        if (text === "+" || text === "-") {
+            if (window.chooser !== null) say(qsTr("Not available in the file chooser"))
+            else pin(view, text === "+")
+            return
+        }
         if (text === " ") { openPrompt(view, "go", ""); return }
         say(qsTr("Unknown chord"))
     }
@@ -518,6 +572,8 @@ Item {
             view.focusList()
         } else if (kind === "move" || kind === "copy") {
             submitTransfer(text, kind === "move")
+        } else if (kind === "extract") {
+            submitExtract(text)
         } else if (kind === "rename") {
             submitRename(text)
         } else if (kind === "create") {
@@ -614,5 +670,54 @@ Item {
             keys.window.view.focusList()
         }
         function onMakeRefused(why) { if (keys.prompt === "create") keys.promptError = why }
+    }
+
+    // ; : the custom actions offered for the targets, a terminal, compressing and extracting.
+    function actionChord(text, view) {
+        if (text >= "0" && text <= "9") {
+            const index = text === "0" ? 9 : Number(text) - 1
+            const action = numberedAt(index)
+            if (action === undefined) { say(qsTr("No action %1").arg(text)); return }
+            if (JSON.stringify(targets(view)) !== JSON.stringify(actionTargets)) { say(qsTr("Selection changed")); return }
+            window.runAction(action, actionTargets, view.browser.location, false)
+        } else if (text === "t") {
+            const why = view.browser.page === 0 ? window.apps.openTerminal(view.browser.location) : qsTr("Can’t open a terminal here")
+            if (why.length > 0) say(why)
+        } else if (text === "c") {
+            const paths = targets(view)
+            if (paths.length === 0) say(qsTr("Nothing to compress"))
+            else compress.ask(paths)
+        } else if (text === "e" || text === "E") {
+            const archive = oneArchive(view)
+            if (archive.length === 0) return
+            if (text === "e") {
+                window.ops.extract(archive)
+            } else {
+                openPrompt(view, "extract", "")
+                fixed = [archive]
+            }
+        } else say(qsTr("Unknown chord"))
+    }
+    // The chord's list was read when ; was pressed; the digit reads it again.
+    function numberedAt(index) {
+        return window.topActions.concat(window.submenuActions).slice(0, 10)[index]
+    }
+    function oneArchive(view) {
+        const paths = targets(view)
+        if (paths.length === 0) { say(qsTr("Nothing to extract")); return "" }
+        if (paths.length > 1) { say(qsTr("Extract one archive at a time")); return "" }
+        if (window.ops.archiveFormat(paths[0]) === "") { say(qsTr("Not an archive")); return "" }
+        return paths[0]
+    }
+    function submitExtract(text) {
+        const typed = picker.resolve(text, window.browser.location)
+        let into = typed.length > 0 && picker.kind(typed) !== "" ? typed : candidates[chosen]
+        if (into === undefined) into = typed
+        if (picker.kind(into) === "") { promptError = qsTr("No such folder"); return }
+        if (picker.kind(into) !== "folder") { promptError = qsTr("Not a folder"); return }
+        const archive = fixed[0]
+        closePrompt()
+        window.ops.extract(archive, into)
+        window.view.focusList()
     }
 }

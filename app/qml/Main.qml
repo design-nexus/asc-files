@@ -154,6 +154,8 @@ ApplicationWindow {
             SearchField {
                 id: searchField
                 objectName: "searchField"
+                // 10xer searches with s; Ctrl+K still shows the field.
+                visible: !AppSettings.tenxer || activeFocus || text.length > 0
                 Layout.fillWidth: true
                 Layout.maximumWidth: 352
                 Layout.minimumWidth: 120
@@ -777,7 +779,7 @@ ApplicationWindow {
     ConfirmDialog { id: confirm }
     // 10xer mode's keys, which the views send their keys to first while it is on.
     readonly property var tenxer: tenxerKeys
-    TenXer { id: tenxerKeys; window: window; confirm: confirm }
+    TenXer { id: tenxerKeys; window: window; confirm: confirm; compress: compressDialog; openWith: openWithDialog }
     Shortcut {
         sequence: "Ctrl+Shift+M"
         context: Qt.WindowShortcut

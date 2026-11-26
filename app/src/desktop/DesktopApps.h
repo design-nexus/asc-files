@@ -36,6 +36,9 @@ public:
     Q_INVOKABLE QVariantList otherApps(const QStringList &paths);
     /// Starts `id` on `paths`; empty, or why it couldn't.
     Q_INVOKABLE QString launch(const QString &id, const QStringList &paths);
+    /// Opens a terminal in `folder`: `$TERMINAL`, else `xdg-terminal-exec`, else a known one.
+    /// Says why it couldn't, or empty.
+    Q_INVOKABLE static QString openTerminal(const QString &folder);
     /// Makes `id` the default for the types of `paths`, in the user's `mimeapps.list`.
     Q_INVOKABLE bool setDefault(const QString &id, const QStringList &paths);
     /// The types of `paths`, once each, as their description says them ("PNG image").

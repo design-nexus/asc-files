@@ -487,6 +487,13 @@ private slots:
         QTRY_COMPARE(list->property("count").toInt(), 2);
         press(Qt::Key_Escape);
         QTRY_COMPARE(list->property("count").toInt(), 5);
+        // ; lists what it runs; e on something that isn't an archive says so.
+        list->forceActiveFocus();
+        press(Qt::Key_Semicolon);
+        QCOMPARE(keys->property("chord").toString(), QStringLiteral(";"));
+        QVERIFY(keys->property("chordOptions").toList().size() >= 4);
+        press(Qt::Key_E);
+        QCOMPARE(keys->property("flash").toString(), QStringLiteral("Not an archive"));
         // Ctrl+Shift+M leaves the mode.
         list->forceActiveFocus();
         press(Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);

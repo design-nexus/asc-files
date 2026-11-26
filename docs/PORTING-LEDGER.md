@@ -544,4 +544,12 @@ Search page rather than in place), z / Z (folders opened, `app/src/history/Visit
 `$XDG_STATE_HOME/asc-files/visits.json`), a (exact name, trailing / for a folder), r / F2 (stem
 selected), M / C and g Space through the folder picker (`FolderPicker`, off the UI thread, search's
 terms, closer and more visited first, path-like text moves where it searches, Tab writes the choice).
-The ; actions and the file chooser's rules follow. Tested in `tst_window` (`tenxerMovesACursorApartFromTheSelection`).
+Part 3 adds ; (the first ten custom actions offered for the
+targets, refused with "Selection changed" if the targets moved; ; t a terminal in the folder through
+`$TERMINAL`, `xdg-terminal-exec` or a known one; ; c compress; ; e / ; E extract here / to a picked
+folder), O (Open With), R (said not to apply outside the Trash, which folder views never are), the
+window's search field hidden while the mode is on, and the file chooser's rules (refused verbs say so,
+one-item requests refuse ranges, Enter / o on a file chooses it, Save requests save, Esc cancels once
+nothing is left to dismiss). Not built: the shortcut reference (F1, dropped by the user), preview
+keyboard ownership (the preview's own keys), find highlights, the folder peek popover, and the
+in-place s results (they show in the Search page). Tested in `tst_window` (`tenxerMovesACursorApartFromTheSelection`).

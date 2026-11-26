@@ -536,3 +536,21 @@ QString DesktopApps::typesText(const QStringList &paths) const {
     }
     return texts.join(QStringLiteral(", "));
 }
+
+QString DesktopApps::openTerminal(const QString &folder) {
+    QStringList candidates;
+    if (const QString chosen = qEnvironmentVariable("TERMINAL"); !chosen.isEmpty()) {
+        candidates.append(chosen);
+    }
+    candidates << QStringLiteral("xdg-terminal-exec") << QStringLiteral("foot") << QStringLiteral("kitty") << QStringLiteral("alacritty")
+               << QStringLiteral("wezterm") << QStringLiteral("ghostty") << QStringLiteral("gnome-terminal") << QStringLiteral("konsole")
+               << QStringLiteral("xterm");
+    for (const QString &terminal : std::as_const(candidates)) {
+        const QString program = QStandardPaths::findExecutable(terminal);
+        // Each opens its shell in the folder it starts in.
+        if (!program.isEmpty() && QProcess::startDetached(program, {}, folder)) {
+            return {};
+        }
+    }
+    return tr("No terminal found");
+}
