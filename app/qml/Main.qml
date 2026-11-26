@@ -31,6 +31,8 @@ ApplicationWindow {
     required property var properties
     /// The user's custom actions and their runs (the app's).
     required property var actions
+    /// The drives UDisks2 knows (none in tests).
+    property var disks: null
     /// Settings › Integrations (none in tests).
     property var integrations: null
     /// A file chooser's request (another program asked Files to choose), or null.
@@ -264,7 +266,9 @@ ApplicationWindow {
                             selected: window.browser !== null && (placeRow.model.page !== 0 ? window.page === placeRow.model.page
                                                                                              : window.page === 0 && window.browser.location === placeRow.model.path)
                             dropTarget: drop.containsDrag
-                            onClicked: placeRow.model.page !== 0 ? window.browser.goPage(placeRow.model.page) : window.browser.goPath(placeRow.model.path)
+                            onClicked: placeRow.model.page !== 0 ? window.browser.goPage(placeRow.model.page)
+                                     : placeRow.model.path.length > 0 ? window.browser.goPath(placeRow.model.path)
+                                     : window.openVolume(placeRow.model.volume, placeRow.model.locked, placeRow.model.name)
 
                             TapHandler {
                                 acceptedButtons: Qt.RightButton
@@ -614,6 +618,15 @@ ApplicationWindow {
         value: window.chooser && window.chooser.filters.length > 0 ? window.chooser.filters[chooserBar.filter].globs : []
     }
 
+    /// A volume not mounted: mounted (unlocked first, asking its passphrase), then shown.
+    function openVolume(volume, locked, name) {
+        if (!window.disks || volume.length === 0) return
+        window.pendingVolume = volume
+        if (locked) unlockDialog.ask(volume, name, false)
+        else window.disks.mount(volume)
+    }
+    property string pendingVolume
+
     function openRow(row) {
         if (window.folderModel.isFolder(row)) window.browser.goRow(row)
     }
@@ -634,6 +647,36 @@ ApplicationWindow {
     CompressDialog {
         id: compressDialog
         onChosen: (paths, name, format, password) => window.ops.compress(paths, name, format, password)
+    }
+    // A locked volume's passphrase, and a volume's new name.
+    UnlockDialog {
+        id: unlockDialog
+        onGiven: (volume, passphrase) => window.disks.unlock(volume, passphrase)
+    }
+    FormatDialog {
+        id: formatDialog
+        types: window.disks ? window.disks.formattable() : []
+        labelError: (type, label) => window.disks ? window.disks.labelError(type, label) : ""
+        onChosen: (volume, type, label, quick) => window.disks.format(volume, type, label, quick)
+    }
+    NameDialog {
+        id: renameVolume
+        title: qsTr("Rename Drive")
+        actionText: qsTr("Rename")
+        onGiven: (volume, name) => window.disks.rename(volume, name)
+    }
+    Connections {
+        target: window.disks
+        enabled: window.foremost
+        function onMounted(volume, path) {
+            if (volume === window.pendingVolume || window.pendingVolume.length > 0) {
+                window.pendingVolume = ""
+                window.browser.goPath(path)
+            }
+        }
+        function onEjected(name) { notice.show(qsTr("“%1” can be unplugged").arg(name)) }
+        function onPassphraseWrong(volume) { unlockDialog.ask(volume, unlockDialog.name, true) }
+        function onFailed(message) { notice.show(message) }
     }
     PasswordDialog {
         id: passwordDialog
@@ -1084,7 +1127,8 @@ ApplicationWindow {
         id: placeMenu
         property var place: ({})
         function show(model, color) {
-            place = { key: model.key, name: model.name, section: model.section, path: model.path, hideable: model.hideable }
+            place = { key: model.key, name: model.name, section: model.section, path: model.path, hideable: model.hideable,
+                      volume: model.volume, locked: model.locked, ejectable: model.ejectable, removable: model.removable }
             popup()
         }
         MenuItem {
@@ -1096,6 +1140,36 @@ ApplicationWindow {
                 if (pages[placeMenu.place.key] !== undefined) browser.goPage(pages[placeMenu.place.key])
                 else browser.goPath(placeMenu.place.path)
             }
+        }
+        MenuItem {
+            text: placeMenu.place.locked ? qsTr("Unlock…") : qsTr("Mount")
+            visible: !!placeMenu.place.volume && placeMenu.place.path.length === 0
+            height: visible ? implicitHeight : 0
+            onTriggered: window.openVolume(placeMenu.place.volume, placeMenu.place.locked, placeMenu.place.name)
+        }
+        MenuItem {
+            text: qsTr("Unmount")
+            visible: !!placeMenu.place.volume && placeMenu.place.path.length > 0
+            height: visible ? implicitHeight : 0
+            onTriggered: window.disks.unmount(placeMenu.place.volume)
+        }
+        MenuItem {
+            text: qsTr("Eject")
+            visible: !!placeMenu.place.volume && placeMenu.place.ejectable === true
+            height: visible ? implicitHeight : 0
+            onTriggered: window.disks.eject(placeMenu.place.volume)
+        }
+        MenuItem {
+            text: qsTr("Format…")
+            visible: !!placeMenu.place.volume && placeMenu.place.removable === true && window.disks !== null && window.disks.formattable().length > 0
+            height: visible ? implicitHeight : 0
+            onTriggered: formatDialog.ask(placeMenu.place.volume, placeMenu.place.name)
+        }
+        MenuItem {
+            text: qsTr("Rename…")
+            visible: !!placeMenu.place.volume && !placeMenu.place.locked
+            height: visible ? implicitHeight : 0
+            onTriggered: renameVolume.ask(placeMenu.place.volume, placeMenu.place.name)
         }
         MenuItem {
             text: qsTr("Hide from Sidebar")

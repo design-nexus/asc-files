@@ -497,3 +497,17 @@ since, and the folder handler before restored (else Nautilus). Only an executabl
 replace is named for activation. Glib's KeyFile became a small line-keeping editor.
 
 The registration files (`packaging/dbus/`) are installed with packaging (item 12).
+
+## Drives (B7)
+
+Drives come from UDisks2 through QtDBus (`app/src/desktop/Disks.cpp`), where legacy used GIO's volume
+monitor and its `drive_ops`: the sidebar's Storage lists unmounted and locked volumes too (the user's
+own disk images, as other file managers do), and their menus mount, unlock (asking the passphrase,
+again if wrong), unmount, eject (everything on the drive unmounted and locked first, then ejected or
+powered off), rename and format (removable drives only, as FAT32, exFAT or NTFS where the tool is
+installed; quick or zeroing). Polkit asks where the system wants it. Checked against the real
+UDisks2 with a disk image (`tst_disks` with `ASC_FILES_LIVE_DISKS=1`).
+
+| Legacy tests | Ported | Not ported, why |
+|---|---|---|
+| `ui/window/drive_ops/tests.rs` (7) | 2 (`tst_disks`: label limits and characters) | `formatting_resolves_only_the_selected_volume…`, `missing_or_ambiguous_device_never_formats`, `format_failure_is_not_reported…` tested legacy's device-path resolution, which Files skips (it formats the volume's own UDisks2 object); `tool_path_*` (Qt's `findExecutable`); `mounted_usage_does_not_require_directory_read_permission` (QStorageInfo) |

@@ -34,6 +34,14 @@ public:
         FirstInSectionRole,
         KeyRole,
         HideableRole,
+        /// A drive's UDisks2 volume (for mounting, ejecting, unlocking, renaming), or empty.
+        VolumeRole,
+        /// The volume is encrypted and locked.
+        LockedRole,
+        /// The volume's drive can be ejected or powered off.
+        EjectableRole,
+        /// The volume is on a removable drive, so it can be formatted.
+        RemovableRole,
     };
     Q_ENUM(Role)
     enum Section { Pages, Folders, Pinned, Storage };
@@ -48,6 +56,8 @@ public:
     Q_INVOKABLE void unpin(const QString &path);
     Q_INVOKABLE bool isPinned(const QString &path) const;
     Q_INVOKABLE void refreshDrives();
+    /// The drives UDisks2 knows: unmounted and locked volumes show too, and drives can be ejected.
+    void setDisks(class Disks *disks);
     /// Home and the mounted drives the user plugged in or mounted: where a search goes.
     Q_INVOKABLE QStringList searchRoots() const;
 
@@ -91,8 +101,13 @@ private:
         QString freeText;
         /// The Browser::Page a page place shows; 0 (a folder) otherwise.
         int page = 0;
-        /// What the settings call it: `home`, `recent`, `trash`, `pinned:<path>`, `drive:<root>`.
+        /// What the settings call it: `home`, `recent`, `trash`, `pinned:<path>`, `drive:<root>`,
+        /// `volume:<object>` (a volume not mounted).
         QString key;
+        QString volume;
+        bool locked = false;
+        bool ejectable = false;
+        bool removable = false;
     };
     /// Every default place that can be hidden, in its default order.
     QList<Place> defaults() const;
@@ -108,4 +123,5 @@ private:
     QList<Place> m_places;
     bool m_trashShown = true;
     QTimer m_drives;
+    class Disks *m_disks = nullptr;
 };

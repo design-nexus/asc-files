@@ -5,6 +5,7 @@
 #include "backend/BackendClient.h"
 #include "desktop/AppIcons.h"
 #include "desktop/DesktopBus.h"
+#include "desktop/Disks.h"
 #include "desktop/Integrations.h"
 #include "portal/ChooserService.h"
 #include "portal/Placement.h"
@@ -54,6 +55,9 @@ int main(int argc, char *argv[]) {
     BackendClient backend(parser.isSet(QStringLiteral("backend")) ? parser.value(QStringLiteral("backend"))
                                                                   : BackendClient::defaultProgram());
     PlacesModel places;
+    // The drives UDisks2 knows: plugged in, locked, ejectable.
+    Disks disks;
+    places.setDisks(&disks);
     RecentModel recent;
     FavoritesModel favorites;
     TrashModel trash(&backend);
@@ -96,6 +100,7 @@ int main(int argc, char *argv[]) {
                               {QStringLiteral("apps"), QVariant::fromValue(&apps)},
                               {QStringLiteral("actions"), QVariant::fromValue(&actions)},
                               {QStringLiteral("integrations"), QVariant::fromValue(&integrations)},
+                              {QStringLiteral("disks"), QVariant::fromValue(&disks)},
                               {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
 
     // The desktop's file chooser: a process of its own, which xdg-desktop-portal starts; it shows a

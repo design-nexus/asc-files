@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "PlacesModel.h"
 
+#include "../desktop/Disks.h"
+
 #include "Browser.h"
 
 #include <QDir>
@@ -26,6 +28,7 @@ const QString PicturesIcon = QStringLiteral(
 const QString VideosIcon = QStringLiteral(
     "M3.5 4h6A1.5 1.5 0 0 1 11 5.5v5A1.5 1.5 0 0 1 9.5 12h-6A1.5 1.5 0 0 1 2 10.5v-5A1.5 1.5 0 0 1 3.5 4zM11 7l3-2v6l-3-2");
 const QString PinnedIcon = QStringLiteral("M2 4.5h4l1.5 1.5H14v6.5H2z");
+const QString LockIcon = QStringLiteral("M4.5 7.5v-2a3.5 3.5 0 0 1 7 0v2M3.5 7.5h9v6h-9z");
 const QString DriveIcon = QStringLiteral(
     "M3.5 4h9A1.5 1.5 0 0 1 14 5.5v5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 10.5v-5A1.5 1.5 0 0 1 3.5 4zM2 8h12M4.5 10h.01");
 
@@ -109,7 +112,28 @@ QList<PlacesModel::Place> PlacesModel::drives() const {
     for (const QStorageInfo &volume : QStorageInfo::mountedVolumes()) {
         if (isUserDrive(volume)) {
             const QString name = volume.displayName().isEmpty() ? QFileInfo(volume.rootPath()).fileName() : volume.displayName();
-            places.append(describe(volume, name));
+            Place place = describe(volume, name);
+            if (m_disks) {
+                const Volume known = m_disks->volumeAt(volume.rootPath());
+                place.volume = known.object;
+                place.ejectable = known.ejectable || known.canPowerOff;
+                place.removable = known.removable;
+            }
+            places.append(place);
+        }
+    }
+    // What UDisks2 has that isn't mounted: a click mounts it (or asks to unlock it first).
+    if (m_disks) {
+        for (const Volume &volume : m_disks->volumes()) {
+            if (volume.mountPoint.isEmpty()) {
+                Place place{Storage, volume.name, {}, volume.locked ? LockIcon : DriveIcon, -1,
+                            volume.locked ? tr("Locked") : tr("Not mounted"), 0, QStringLiteral("volume:") + volume.object};
+                place.volume = volume.object;
+                place.locked = volume.locked;
+                place.ejectable = volume.ejectable || volume.canPowerOff;
+                place.removable = volume.removable;
+                places.append(place);
+            }
         }
     }
     return places;
@@ -276,14 +300,15 @@ void PlacesModel::refreshDrives() {
     const int old = int(m_places.size()) - (m_trashShown ? 1 : 0) - first;
     bool same = old == now.size();
     for (int i = 0; same && i < old; ++i) {
-        same = m_places.at(first + i).path == now.at(i).path;
+        same = m_places.at(first + i).key == now.at(i).key;
     }
     if (same) {
         for (int i = 0; i < old; ++i) {
             m_places[first + i] = now.at(i);
         }
         if (old > 0) {
-            emit dataChanged(index(first), index(first + old - 1), {UsedRole, FreeTextRole, NameRole, FirstInSectionRole});
+            emit dataChanged(index(first), index(first + old - 1),
+                             {UsedRole, FreeTextRole, NameRole, FirstInSectionRole, VolumeRole, LockedRole, EjectableRole, RemovableRole});
         }
         return;
     }
@@ -353,6 +378,14 @@ QVariant PlacesModel::data(const QModelIndex &index, int role) const {
         return place.key;
     case HideableRole:
         return hideable(place.key);
+    case VolumeRole:
+        return place.volume;
+    case LockedRole:
+        return place.locked;
+    case EjectableRole:
+        return place.ejectable;
+    case RemovableRole:
+        return place.removable;
     default:
         return {};
     }
@@ -362,5 +395,11 @@ QHash<int, QByteArray> PlacesModel::roleNames() const {
     return {{SectionRole, "section"}, {NameRole, "name"},   {PathRole, "path"},
             {IconRole, "icon"},       {UsedRole, "used"}, {FreeTextRole, "freeText"},
             {PageRole, "page"}, {FirstInSectionRole, "firstInSection"}, {KeyRole, "key"},
-            {HideableRole, "hideable"}};
+            {HideableRole, "hideable"}, {VolumeRole, "volume"}, {LockedRole, "locked"}, {EjectableRole, "ejectable"}, {RemovableRole, "removable"}};
+}
+
+void PlacesModel::setDisks(Disks *disks) {
+    m_disks = disks;
+    connect(disks, &Disks::changed, this, &PlacesModel::refreshDrives);
+    refreshDrives();
 }
