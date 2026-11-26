@@ -55,6 +55,27 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(player->property("duration").toLongLong() > 900, 10000);
         QVERIFY(!player->property("playing").toBool());
         QCOMPARE(player->property("source").toUrl().toLocalFile(), file.fileName());
+
+        // 10xer's keys, the preview holding them: volume, mute and seeking.
+        const auto key = [&](int code, const QString &text = {}) {
+            QVariant handled;
+            const QVariant event = QVariantMap{{"key", code}, {"text", text}, {"modifiers", 0}};
+            QMetaObject::invokeMethod(view.get(), "key", Q_RETURN_ARG(QVariant, handled), Q_ARG(QVariant, event));
+            return handled.toBool();
+        };
+        AppSettings::shared().setMediaVolume(0.5);
+        QVERIFY(key(Qt::Key_Up));
+        QCOMPARE(qRound(AppSettings::shared().mediaVolume() * 10), 6);
+        QVERIFY(key(Qt::Key_Minus, QStringLiteral("-")));
+        QCOMPARE(qRound(AppSettings::shared().mediaVolume() * 10), 5);
+        QVERIFY(key(Qt::Key_M, QStringLiteral("m")));
+        auto *output = qvariant_cast<QObject *>(player->property("audioOutput"));
+        QVERIFY(output && output->property("muted").toBool());
+        QVERIFY(key(Qt::Key_End));
+        QTRY_VERIFY(player->property("position").toLongLong() > 500);
+        QVERIFY(key(Qt::Key_Home));
+        QTRY_COMPARE(player->property("position").toLongLong(), 0);
+        QVERIFY(!key(Qt::Key_X, QStringLiteral("x")));
     }
 };
 

@@ -26,6 +26,33 @@ ColumnLayout {
         return hours > 0 ? hours + ":" + two(minutes % 60) + ":" + two(seconds % 60) : minutes + ":" + two(seconds % 60)
     }
 
+    /// 10xer, with the preview holding the keys: Space plays or pauses, ← / → seek 5 s (30 with
+    /// Shift), PgUp / PgDn 30 s, 0 / Home the start, End the end, ↑ / ↓ and + / - the volume, m mutes.
+    function key(event) {
+        const shift = event.modifiers & Qt.ShiftModifier
+        const seek = (ms) => player.setPosition(Math.max(0, Math.min(player.duration, player.position + ms)))
+        const volume = (step) => AppSettings.mediaVolume = Math.max(0, Math.min(1, AppSettings.mediaVolume + step))
+        switch (event.key) {
+        case Qt.Key_Space: player.playing ? player.pause() : player.play(); return true
+        case Qt.Key_Left: seek(shift ? -30000 : -5000); return true
+        case Qt.Key_Right: seek(shift ? 30000 : 5000); return true
+        case Qt.Key_PageUp: seek(30000); return true
+        case Qt.Key_PageDown: seek(-30000); return true
+        case Qt.Key_Home:
+        case Qt.Key_0: player.setPosition(0); return true
+        case Qt.Key_End: player.setPosition(Math.max(0, player.duration - 1)); return true
+        case Qt.Key_Up: volume(0.1); return true
+        case Qt.Key_Down: volume(-0.1); return true
+        }
+        switch (event.text) {
+        case "+":
+        case "=": volume(0.1); return true
+        case "-": volume(-0.1); return true
+        case "m": player.audioOutput.muted = !player.audioOutput.muted; return true
+        }
+        return false
+    }
+
     MediaPlayer {
         id: player
         objectName: "mediaPlayer"

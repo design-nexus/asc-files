@@ -50,6 +50,18 @@ ColumnLayout {
         if ([Qt.Key_Shift, Qt.Key_Control, Qt.Key_Alt, Qt.Key_Meta].includes(event.key)) return false
         const text = (event.modifiers & Qt.ShiftModifier) ? event.text.toUpperCase() : event.text
         const give = () => { owning = false; released() }
+        // Sound and video: playback keys first; h still gives the keys back.
+        if ((content.preview.kind === "audio" || content.preview.kind === "video") && media.item && mods === Qt.NoModifier
+                && text !== "h" && text !== "i" && event.key !== Qt.Key_Escape && media.item.key(event)) {
+            return true
+        }
+        // An archive's tree: j / k move in it, l opens a folder, h goes up (at the top, back to the files).
+        if (content.preview.kind === "archive" && mods === Qt.NoModifier) {
+            if (text === "j" || event.key === Qt.Key_Down) { archiveView.move(1); return true }
+            if (text === "k" || event.key === Qt.Key_Up) { archiveView.move(-1); return true }
+            if (text === "l" || event.key === Qt.Key_Right || event.key === Qt.Key_Return) { archiveView.openCurrent(); return true }
+            if ((text === "h" || event.key === Qt.Key_Left) && !archiveView.atRoot) { archiveView.goUp(); return true }
+        }
         if (chordG) {
             chordG = false
             if (text === "g") toEnd(false)
@@ -223,6 +235,7 @@ ColumnLayout {
         }
         // An archive's contents, browsed without extracting them.
         ArchiveView {
+            id: archiveView
             anchors.fill: parent
             visible: content.preview.kind === "archive" && !content.preview.loading
             listing: content.preview.archive

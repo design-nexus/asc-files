@@ -41,6 +41,13 @@ ColumnLayout {
             trail = trail.slice(0, trail.length - 1)
         }
     }
+    readonly property bool atRoot: trail.length <= 1
+    /// 10xer's highlight in the tree: moved by `step` rows.
+    function move(step) {
+        if (rows.count === 0) return
+        rows.currentIndex = Math.max(0, Math.min(rows.count - 1, rows.currentIndex + step))
+    }
+    function openCurrent() { if (rows.currentIndex >= 0) open(shown[rows.currentIndex]) }
 
     // Why there is nothing to browse, when there isn't.
     Text {

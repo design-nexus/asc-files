@@ -554,8 +554,9 @@ nothing is left to dismiss). Later added: find highlights (the matched part of
 each name in the accent colour until Esc), the folder peek (i on a folder), 10xer's keys on search
 results and the other item lists (s's results show in the Search page rather than in place), and the
 preview taking the keys (l on a previewed file in the panel: j / k, paging, g g / G scroll it; h,
-Shift+Tab or Esc give them back; J / K scroll it from the files). Not built: the shortcut reference
-(F1, dropped by the user), and the per-kind preview keys legacy had for media and archive trees. Tested in `tst_window` (`tenxerMovesACursorApartFromTheSelection`).
+Shift+Tab or Esc give them back; J / K scroll it from the files). With the preview holding the keys, sound and
+video take Space, ← / → (Shift: 30 s), PgUp / PgDn, 0 / Home / End, ↑ / ↓, + / - and m, and an
+archive's tree j / k, l and h. Not built: the shortcut reference (F1, dropped by the user). Tested in `tst_window` (`tenxerMovesACursorApartFromTheSelection`).
 
 ## Smaller features (item 10)
 
