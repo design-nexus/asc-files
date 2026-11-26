@@ -62,6 +62,9 @@ public:
     /// Makes a new folder (or file) in `folder`'s folder under the first free default name and
     /// starts renaming it.
     Q_INVOKABLE void create(FolderModel *folder, bool isFolder);
+    /// Makes an empty file (or folder) named exactly `name` in `folder`'s folder; a name taken
+    /// or refused is said by `makeRefused`, the made item by `made`.
+    Q_INVOKABLE void createNamed(FolderModel *folder, const QString &name, bool isFolder);
     /// Puts a Trash entry back where it was deleted from (`file` is the item in the Trash).
     Q_INVOKABLE void restore(const QString &file);
     /// Deletes a Trash entry for good, by its `.trashinfo` (the window asks first).
@@ -100,6 +103,9 @@ public:
     static QList<QByteArray> clipboardPaths(bool *cut = nullptr);
 
 signals:
+    /// `createNamed` made `name` in `folder`.
+    void made(FolderModel *folder, const QString &name);
+    void makeRefused(const QString &why);
     void conflictsChanged();
     void clipboardChanged();
     void historyChanged();

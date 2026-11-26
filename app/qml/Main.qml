@@ -31,6 +31,24 @@ ApplicationWindow {
     required property var properties
     /// The user's custom actions and their runs (the app's).
     required property var actions
+    /// The folders opened, for 10xer's z / Z (none in tests).
+    property var visits: null
+    Connections {
+        target: window.browser
+        enabled: window.visits !== null && window.foremost
+        function onLocationChanged() {
+            if (window.browser.page === 0 && window.browser.location.startsWith("/"))
+                window.visits.record(window.browser.location)
+        }
+    }
+    /// Searches below the folder shown (10xer's s), in the Search page.
+    function searchHere(query) {
+        const here = window.browser.location
+        searchPage.origin = here
+        window.browser.goPage(5)
+        window.search.search(query, [here])
+        window.search.searchNow()
+    }
     /// Cloud accounts through Nyx Cloud (none in tests).
     property var cloud: null
     /// Servers through gvfs (none in tests).

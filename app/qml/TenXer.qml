@@ -25,6 +25,34 @@ Item {
     /// A folder to put the cursor on once it shows (the one left by going up).
     property string landOn: ""
 
+    // The footer prompt: what it is for, what it says is wrong, the folders it offers.
+    /// "find", "findBack", "filter", "search", "rename", "create", "move", "copy", "go", "jump",
+    /// "recent", or "" when none is open.
+    property string prompt: ""
+    property string promptError: ""
+    property int chosen: 0
+    /// What the prompt was opened on: the items to move or copy, the row to rename.
+    property var fixed: []
+    property int fixedRow: -1
+    property string findQuery: ""
+    property bool findBackward: false
+    readonly property bool picking: ["go", "move", "copy"].includes(prompt)
+    property var listed: []
+    readonly property var candidates: picking ? picker.folders.filter(path => acceptable(path)) : listed
+    readonly property string promptLabel: ({ find: "/", findBack: "?", filter: qsTr("filter ›"), search: qsTr("search ›"),
+                                             rename: qsTr("rename ›"), create: qsTr("create ›"), move: qsTr("move to ›"),
+                                             copy: qsTr("copy to ›"), go: qsTr("go ›"), jump: qsTr("jump ›"),
+                                             recent: qsTr("recent ›") })[prompt] || ""
+    readonly property string promptStatus: promptError.length > 0 ? promptError
+        : picking && picker.searching && candidates.length === 0 ? qsTr("Searching…")
+        : (picking || prompt === "jump" || prompt === "recent") && candidates.length === 0 && (picking ? picker.message : qsTr("No matching folders")).length > 0
+            ? (picking ? picker.message : qsTr("No matching folders"))
+        : candidates.length > 1 ? qsTr("%1 of %2").arg(chosen + 1).arg(candidates.length) : ""
+    /// The prompt opens with `text`, `from`–`to` of it selected.
+    signal promptOpened(string text, int from, int to)
+
+    FolderPicker { id: picker; visits: keys.window.visits }
+
     readonly property var chordOptions: chord === "g" ? [
         { key: "g", label: qsTr("first item") }, { key: "h", label: qsTr("Home") }, { key: "d", label: qsTr("Downloads") },
         { key: "k", label: qsTr("Documents") }, { key: "p", label: qsTr("Pictures") }, { key: "v", label: qsTr("Videos") },
@@ -47,6 +75,8 @@ Item {
 
     // Everything the mode holds goes when it is turned off.
     function reset() {
+        closePrompt()
+        findQuery = ""
         chord = ""
         visual = 0
         flash = ""
@@ -71,16 +101,28 @@ Item {
         function onGenerationChanged() {
             const view = keys.window.view
             if (!AppSettings.tenxer || !view || !view.cursorRow) return
-            if (keys.landOn.length > 0) {
-                const row = keys.window.folderModel.rowOfName(keys.landOn)
-                if (row >= 0) {
-                    view.setCursorRow(row)
-                    keys.landOn = ""
-                    return
-                }
-            }
+            if (keys.land()) return
             if (view.cursorRow() < 0 && view.rowCount() > 0) view.setCursorRow(0)
         }
+    }
+    /// Puts the cursor on `landOn` if it shows yet.
+    function land() {
+        const view = window.view
+        if (landOn.length === 0 || !view || !view.cursorRow) return false
+        const row = window.folderModel.rowOfName(landOn)
+        if (row < 0) return false
+        view.setCursorRow(row)
+        landOn = ""
+        return true
+    }
+    // An item made or renamed shows a moment later, however its row arrives.
+    Timer {
+        property int tries: 0
+        interval: 100
+        repeat: true
+        running: keys.landOn.length > 0
+        onRunningChanged: tries = 0
+        onTriggered: if (keys.land() || ++tries > 30) { keys.landOn = ""; stop() }
     }
 
     // Keys the mode takes from the window's shortcuts while a view has the keyboard.
@@ -124,6 +166,7 @@ Item {
         case Qt.Key_Return:
         case Qt.Key_Enter: openItem(view); return true
         case Qt.Key_Escape: stepBack(view); return true
+        case Qt.Key_F2: rename(view); return true
         case Qt.Key_Backspace: up(view); return true
         case Qt.Key_Delete: (event.modifiers & Qt.ShiftModifier) ? deleteForever(view) : trash(view); return true
         }
@@ -157,6 +200,18 @@ Item {
         case "t":
         case ",":
         case "c": chord = typed(event); return true
+        case "/": openPrompt(view, "find", ""); return true
+        case "?": openPrompt(view, "findBack", ""); return true
+        case "n": findNext(view, findBackward); return true
+        case "N": findNext(view, !findBackward); return true
+        case "f": openPrompt(view, "filter", view.folderModel.filter); return true
+        case "s": openPrompt(view, "search", ""); return true
+        case "z": openPrompt(view, "jump", ""); return true
+        case "Z": openPrompt(view, "recent", ""); return true
+        case "a": openPrompt(view, "create", ""); return true
+        case "r": rename(view); return true
+        case "M": sendTo(view, true); return true
+        case "C": sendTo(view, false); return true
         }
         // Other plain letters do nothing here (no typing to filter in this mode).
         return event.text.length === 1 && event.text > " "
@@ -330,6 +385,7 @@ Item {
             return
         }
         if (text === "+" || text === "-") { pin(view, text === "+"); return }
+        if (text === " ") { openPrompt(view, "go", ""); return }
         say(qsTr("Unknown chord"))
     }
     function pin(view, adding) {
@@ -370,5 +426,193 @@ Item {
         const paths = targets(view)
         if (paths.length === 0) { say(qsTr("Nothing to copy")); return }
         keys.window.ops.copyPathText(text === "c" ? paths : paths.map(path => path.substring(path.lastIndexOf("/") + 1)))
+    }
+
+    // Prompts. The bar shows one and sends its keys back here.
+    function openPrompt(view, kind, text) {
+        chord = ""
+        promptError = ""
+        chosen = 0
+        listed = []
+        prompt = kind
+        edited(text)
+        promptOpened(text, 0, text.length)
+    }
+    function closePrompt() {
+        picker.cancel()
+        prompt = ""
+        promptError = ""
+        listed = []
+        fixed = []
+        fixedRow = -1
+    }
+    /// Leaves the prompt, back to the files (the filter stays as typed).
+    function cancelPrompt() {
+        if (prompt === "filter") window.folderModel.filter = ""
+        closePrompt()
+        window.view.focusList()
+    }
+    function edited(text) {
+        promptError = ""
+        chosen = 0
+        const here = window.browser.page === 0 ? window.browser.location : ""
+        if (prompt === "filter") window.folderModel.filter = text
+        else if (prompt === "jump" && window.visits) listed = window.visits.jump(text, here)
+        else if (prompt === "recent" && window.visits) listed = window.visits.recent(text, here)
+        else if (picking) {
+            // Addresses are never searched or probed before Enter.
+            if (prompt === "go" && /^[a-z][a-z0-9+.-]*:|^\/\/|^\\\\|^[^\s\/]+@[^\s\/]+:/i.test(text)) picker.cancel()
+            else picker.search(text, here, window.folderModel.showHidden)
+        }
+    }
+    function choose(step) {
+        const count = candidates.length
+        if (count > 0) chosen = (chosen + step + count) % count
+    }
+    /// Tab: the chosen folder written into the prompt, to search inside it.
+    function written() {
+        const path = candidates[chosen]
+        if (path === undefined) return null
+        const here = window.browser.location
+        const home = keys.window.places.standardFolder("home")
+        const shown = path.startsWith(here + "/") ? "./" + path.substring(here.length + 1)
+                    : path.startsWith(home + "/") ? "~/" + path.substring(home.length + 1) : path
+        return shown.endsWith("/") ? shown : shown + "/"
+    }
+    // A folder a move or copy can go to: not where the items are, not one of them or inside one.
+    function acceptable(path) {
+        if (prompt !== "move" && prompt !== "copy") return true
+        for (const source of fixed) {
+            if (path === source || path.startsWith(source + "/")) return false
+        }
+        return !(prompt === "move" && fixed.length > 0 && path === fixed[0].substring(0, fixed[0].lastIndexOf("/")))
+    }
+    function submit(text) {
+        const view = window.view
+        const kind = prompt
+        if (kind === "find" || kind === "findBack") {
+            closePrompt()
+            view.focusList()
+            if (text.length === 0) return
+            findQuery = text
+            findBackward = kind === "findBack"
+            findNext(view, findBackward)
+        } else if (kind === "filter") {
+            closePrompt()
+            view.focusList()
+            if (view.rowCount() > 0) view.setCursorRow(0)
+        } else if (kind === "search") {
+            closePrompt()
+            if (text.trim().length > 0) window.searchHere(text)
+            else view.focusList()
+        } else if (kind === "jump" || kind === "recent") {
+            const path = candidates[chosen]
+            if (path === undefined) { promptError = qsTr("No matching folders"); return }
+            closePrompt()
+            view.browser.goPath(path)
+        } else if (kind === "go") {
+            const path = candidates[chosen]
+            closePrompt()
+            if (path !== undefined && picker.kind(picker.resolve(text, view.browser.location)) === "") view.browser.goPath(path)
+            else if (text.trim().length > 0) view.browser.goTyped(text.trim())
+            view.focusList()
+        } else if (kind === "move" || kind === "copy") {
+            submitTransfer(text, kind === "move")
+        } else if (kind === "rename") {
+            submitRename(text)
+        } else if (kind === "create") {
+            submitCreate(text)
+        }
+    }
+    function submitTransfer(text, move) {
+        if (text.trim().length === 0 && candidates.length === 0) { closePrompt(); window.view.focusList(); return }
+        const typed = picker.resolve(text, window.browser.location)
+        // A path typed out names the folder; else the one chosen.
+        let into = typed.length > 0 && picker.kind(typed) !== "" ? typed : candidates[chosen]
+        if (into === undefined) into = typed
+        if (picker.kind(into) === "") { promptError = qsTr("No such folder"); return }
+        if (picker.kind(into) !== "folder") { promptError = qsTr("Not a folder"); return }
+        if (move && fixed.length > 0 && into === fixed[0].substring(0, fixed[0].lastIndexOf("/"))) { promptError = qsTr("Already in this folder"); return }
+        for (const source of fixed) {
+            if (into === source || into.startsWith(source + "/")) { promptError = qsTr("Can’t put a folder inside itself"); return }
+        }
+        const paths = fixed
+        closePrompt()
+        window.ops.transferPaths(paths, into, move)
+        window.view.focusList()
+    }
+    function rename(view) {
+        const row = view.cursorRow()
+        if (row < 0) { say(qsTr("Nothing to rename")); return }
+        const path = view.folderModel.pathAt(row)
+        const name = path.substring(path.lastIndexOf("/") + 1)
+        openPrompt(view, "rename", name)
+        fixedRow = row
+        // A file's stem is selected, a folder's whole name.
+        const dot = view.folderModel.isFolder(row) ? -1 : name.lastIndexOf(".")
+        promptOpened(name, 0, dot > 0 ? dot : name.length)
+    }
+    function submitRename(text) {
+        const model = window.folderModel
+        const path = model.pathAt(fixedRow)
+        if (text === path.substring(path.lastIndexOf("/") + 1)) { closePrompt(); window.view.focusList(); return }
+        const why = nameError(text)
+        if (why.length > 0) { promptError = why; return }
+        model.rename(fixedRow, text)
+    }
+    function nameError(name) {
+        if (name.length === 0) return qsTr("Enter a name")
+        if (name === "." || name === "..") return qsTr("“%1” can’t be a name").arg(name)
+        if (name.includes("/")) return qsTr("Names can’t contain “/”")
+        return ""
+    }
+    function submitCreate(text) {
+        const folder = text.endsWith("/")
+        const name = folder ? text.substring(0, text.length - 1) : text
+        const why = nameError(name)
+        if (why.length > 0) { promptError = why; return }
+        window.ops.createNamed(window.folderModel, name, folder)
+    }
+    function sendTo(view, move) {
+        const paths = targets(view)
+        if (paths.length === 0) { say(move ? qsTr("Nothing to move") : qsTr("Nothing to copy")); return }
+        openPrompt(view, move ? "move" : "copy", "")
+        fixed = paths
+        edited("")
+    }
+    // / and ?: the next name holding the text, from the cursor, wrapping.
+    function findNext(view, backward) {
+        if (findQuery.length === 0) return
+        const count = view.rowCount()
+        const from = view.cursorRow()
+        const query = findQuery.toLowerCase()
+        for (let step = 1; step <= count; ++step) {
+            const row = ((from + (backward ? -step : step)) % count + count) % count
+            const path = view.folderModel.pathAt(row)
+            if (path.substring(path.lastIndexOf("/") + 1).toLowerCase().includes(query)) {
+                move(view, row)
+                return
+            }
+        }
+        say(qsTr("No matches for “%1”").arg(findQuery))
+    }
+    Connections {
+        target: keys.window.folderModel
+        function onRenamed(name) {
+            if (keys.prompt !== "rename") return
+            keys.closePrompt()
+            keys.window.view.focusList()
+        }
+        function onFailed(message) { if (keys.prompt === "rename") keys.promptError = message }
+    }
+    Connections {
+        target: keys.window.ops
+        function onMade(folder, name) {
+            if (keys.prompt !== "create") return
+            keys.closePrompt()
+            keys.landOn = name
+            keys.window.view.focusList()
+        }
+        function onMakeRefused(why) { if (keys.prompt === "create") keys.promptError = why }
     }
 }

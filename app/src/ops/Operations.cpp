@@ -344,6 +344,25 @@ void Operations::create(FolderModel *folder, bool isFolder) {
                     });
 }
 
+void Operations::createNamed(FolderModel *folder, const QString &name, bool isFolder) {
+    if (!folder || folder->rawFolder().isEmpty()) {
+        emit makeRefused(tr("Can’t create items here"));
+        return;
+    }
+    m_backend->call(QStringLiteral("ops.create"),
+                    {{"into", Wire::encode(folder->rawFolder())}, {"name", name}, {"kind", isFolder ? "folder" : "file"}, {"unique", false}}, this,
+                    [this, folder = QPointer<FolderModel>(folder)](const QJsonValue &result, const BackendError &error) {
+                        if (!error.isNull()) {
+                            emit makeRefused(error.message);
+                            return;
+                        }
+                        refreshHistory();
+                        if (folder) {
+                            emit made(folder, Wire::display(Wire::baseName(Wire::decode(result.toObject().value(QStringLiteral("path"))))));
+                        }
+                    });
+}
+
 void Operations::restore(const QString &file) {
     const QString label = tr("Restore");
     // A restore ignores where it is put; the Trash's record says.

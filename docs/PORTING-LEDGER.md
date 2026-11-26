@@ -538,5 +538,10 @@ shortcuts it reuses (Space, Backspace, Delete, Ctrl+B/D/F/U/R/N/A/V). Part 1 has
 the fill (outlined, Columns included), j/k/h/l and arrows (spatial in Icons), g g / G, paging, H / L,
 Space, v / V ranges that give back what they covered, Ctrl+A / Ctrl+R, Esc a step at a time, y / x / p
 / P / Y / X, d (d d confirms) / D, the g, t, comma and c chords with their panel, `.`, Q, and the footer's
-VISUAL / chord / 10X pills. Prompts (/ ? n N f s z Z a r M C g Space), the ; actions and the file
-chooser's rules follow. Tested in `tst_window` (`tenxerMovesACursorApartFromTheSelection`).
+VISUAL / chord / 10X pills. Part 2 adds the footer prompts: / ? and n N (find a name from the cursor;
+legacy's match highlights are not drawn), f (filter as typed), s (search below the folder, shown in the
+Search page rather than in place), z / Z (folders opened, `app/src/history/Visits`, kept in
+`$XDG_STATE_HOME/asc-files/visits.json`), a (exact name, trailing / for a folder), r / F2 (stem
+selected), M / C and g Space through the folder picker (`FolderPicker`, off the UI thread, search's
+terms, closer and more visited first, path-like text moves where it searches, Tab writes the choice).
+The ; actions and the file chooser's rules follow. Tested in `tst_window` (`tenxerMovesACursorApartFromTheSelection`).

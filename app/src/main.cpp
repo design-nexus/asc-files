@@ -3,6 +3,7 @@
 
 #include "app/Windows.h"
 #include "backend/BackendClient.h"
+#include "history/FolderPicker.h"
 #include "desktop/AppIcons.h"
 #include "desktop/DesktopBus.h"
 #include "desktop/Cloud.h"
@@ -58,6 +59,8 @@ int main(int argc, char *argv[]) {
                                                                   : BackendClient::defaultProgram());
     PlacesModel places;
     // The drives UDisks2 knows: plugged in, locked, ejectable.
+    // The folders opened, for 10xer's z / Z and ranking.
+    Visits visits;
     Disks disks;
     places.setDisks(&disks);
     // Servers (SFTP, SMB, …) through gvfs.
@@ -92,6 +95,7 @@ int main(int argc, char *argv[]) {
     AppSettings::registerType();
     Customizations::registerType();
     qmlRegisterType<CodeHighlighter>("AscFiles.System", 1, 0, "CodeHighlighter");
+    qmlRegisterType<FolderPicker>("AscFiles.System", 1, 0, "FolderPicker");
     qmlRegisterUncreatableType<Transfers>("AscFiles.System", 1, 0, "Transfers", QStringLiteral("The app makes the one Transfers."));
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
@@ -111,6 +115,7 @@ int main(int argc, char *argv[]) {
                               {QStringLiteral("disks"), QVariant::fromValue(&disks)},
                               {QStringLiteral("network"), QVariant::fromValue(&network)},
                               {QStringLiteral("cloud"), QVariant::fromValue(&cloud)},
+                              {QStringLiteral("visits"), QVariant::fromValue(&visits)},
                               {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
 
     // The desktop's file chooser: a process of its own, which xdg-desktop-portal starts; it shows a

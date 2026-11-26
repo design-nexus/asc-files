@@ -2,6 +2,7 @@
 #include "TestSupport.h"
 #include "app/Windows.h"
 #include "backend/BackendClient.h"
+#include "history/FolderPicker.h"
 #include "desktop/AppIcons.h"
 #include "desktop/DesktopApps.h"
 #include "models/ActionsModel.h"
@@ -26,6 +27,7 @@
 #include "thumbnails/Thumbnails.h"
 
 #include <QFile>
+#include <QFileInfo>
 #include <QQmlApplicationEngine>
 #include <QtQml/qqml.h>
 #include <QQmlExtensionPlugin>
@@ -52,6 +54,7 @@ private slots:
         AppSettings::registerType();
         Customizations::registerType();
         qmlRegisterType<CodeHighlighter>("AscFiles.System", 1, 0, "CodeHighlighter");
+        qmlRegisterType<FolderPicker>("AscFiles.System", 1, 0, "FolderPicker");
         qmlRegisterUncreatableType<Transfers>("AscFiles.System", 1, 0, "Transfers", QStringLiteral("The app makes the one Transfers."));
     }
 
@@ -375,6 +378,11 @@ private slots:
         list->forceActiveFocus();
         const auto cursor = [&] { return list->property("currentIndex").toInt(); };
         const auto press = [&](Qt::Key key, Qt::KeyboardModifiers modifiers = Qt::NoModifier) { QTest::keyClick(window, key, modifiers); };
+        const auto typeText = [&](const char *text) {
+            for (const char *c = text; *c; ++c) {
+                QTest::keyClick(window, *c);
+            }
+        };
         // The cursor starts on the first item; moving it selects nothing.
         QTRY_COMPARE(cursor(), 0);
         press(Qt::Key_J);
@@ -427,7 +435,60 @@ private slots:
         press(Qt::Key_H);
         QTRY_COMPARE(tabs.current()->location(), dir.path());
         QTRY_COMPARE(folders.pathAt(cursor()), dir.filePath("folder"));
+        // The footer's prompts: / finds a name from the cursor.
+        auto *prompt = window->findChild<QQuickItem *>(QStringLiteral("tenxerPrompt"));
+        QVERIFY(prompt);
+        press(Qt::Key_Slash);
+        QTRY_VERIFY(prompt->hasActiveFocus());
+        typeText("b.t");
+        press(Qt::Key_Return);
+        QTRY_COMPARE(folders.pathAt(cursor()), dir.filePath("b.txt"));
+        QVERIFY(list->hasActiveFocus());
+        // a makes an item by exactly the name typed; a trailing / makes a folder.
+        press(Qt::Key_A);
+        QTRY_VERIFY(prompt->hasActiveFocus());
+        typeText("new notes/");
+        press(Qt::Key_Return);
+        QTRY_VERIFY(QFileInfo(dir.filePath("new notes")).isDir());
+        QTRY_COMPARE(folders.pathAt(cursor()), dir.filePath("new notes"));
+        // A name taken keeps the prompt open, saying so.
+        press(Qt::Key_A);
+        QTRY_VERIFY(prompt->hasActiveFocus());
+        typeText("a.md");
+        press(Qt::Key_Return);
+        QTRY_VERIFY(!keys->property("promptError").toString().isEmpty());
+        press(Qt::Key_Escape);
+        QTRY_VERIFY(keys->property("prompt").toString().isEmpty());
+        // r renames the cursor's item.
+        list->forceActiveFocus();
+        press(Qt::Key_Slash);
+        typeText("a.md");
+        press(Qt::Key_Return);
+        QTRY_COMPARE(folders.pathAt(cursor()), dir.filePath("a.md"));
+        press(Qt::Key_R);
+        QTRY_VERIFY(prompt->hasActiveFocus());
+        // The stem is selected: typing replaces it and keeps ".md".
+        typeText("alpha");
+        press(Qt::Key_Return);
+        QTRY_VERIFY(QFile::exists(dir.filePath("alpha.md")));
+        // C copies the cursor's item into a folder picked by typing.
+        QTRY_VERIFY(list->hasActiveFocus());
+        QTRY_COMPARE(folders.pathAt(cursor()), dir.filePath("alpha.md"));
+        press(Qt::Key_C, Qt::ShiftModifier);
+        QTRY_VERIFY(prompt->hasActiveFocus());
+        typeText("notes");
+        QTRY_COMPARE(keys->property("candidates").toStringList().value(0), dir.filePath("new notes"));
+        press(Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(dir.filePath("new notes/alpha.md")), 10000);
+        // f filters as it is typed; Esc in the prompt clears it.
+        list->forceActiveFocus();
+        press(Qt::Key_F);
+        typeText("txt");
+        QTRY_COMPARE(list->property("count").toInt(), 2);
+        press(Qt::Key_Escape);
+        QTRY_COMPARE(list->property("count").toInt(), 5);
         // Ctrl+Shift+M leaves the mode.
+        list->forceActiveFocus();
         press(Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
         QTRY_VERIFY(!AppSettings::shared().tenxer());
     }
