@@ -190,6 +190,9 @@ what is running and waits for it a few seconds.
 |---|---|---|
 | `measure.start` | `path` | `{measure}` |
 | `measure.cancel` | `measure` | `null` |
+| `integrations.status` | `executable` (Files' own program) | `{chooser: {preferred, activatable}, fileManager: {default, hasService, hasInstallation}}`: whether Files is the desktop's file chooser (first in the active `portals.conf`; its activation files present) and file manager (the default folder handler; its FileManager1 activation) |
+| `integrations.chooser` | `executable`, `enable` | Makes Files the file chooser for this user (`{changed}`: the `portals.conf` written), or undoes it exactly (`{keptEdits}`: a configuration changed since keeps the changes, only Files taken out). The executable must be one no other user can replace |
+| `integrations.fileManager` | `executable`, `enable` | Makes Files the default folder handler with FileManager1 activation (`{previous}`, the handler before), or restores that one (else Nautilus where installed) and removes the activation (`{restored}`) |
 | `ops.chmod` | `path`, `bits` | `{mode}` |
 
 A measurement walks the folder `path` as legacy Files measured one: depth first, no link followed, every entry

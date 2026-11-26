@@ -1561,6 +1561,142 @@
           "type": "null"
         }
       },
+      "integrations.status": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "executable": {
+              "$ref": "#/$defs/path"
+            }
+          },
+          "required": [
+            "executable"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "chooser": {
+              "type": "object",
+              "properties": {
+                "preferred": {
+                  "type": "boolean"
+                },
+                "activatable": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "activatable",
+                "preferred"
+              ],
+              "additionalProperties": false
+            },
+            "fileManager": {
+              "type": "object",
+              "properties": {
+                "default": {
+                  "type": "boolean"
+                },
+                "hasService": {
+                  "type": "boolean"
+                },
+                "hasInstallation": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "default",
+                "hasInstallation",
+                "hasService"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "chooser",
+            "fileManager"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "integrations.chooser": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "executable": {
+              "$ref": "#/$defs/path"
+            },
+            "enable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enable",
+            "executable"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "changed": {
+              "$ref": "#/$defs/path"
+            },
+            "keptEdits": {
+              "type": "boolean"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "integrations.fileManager": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "executable": {
+              "$ref": "#/$defs/path"
+            },
+            "enable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enable",
+            "executable"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "previous": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "restored": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
       "ops.chmod": {
         "params": {
           "type": "object",

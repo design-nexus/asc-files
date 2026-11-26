@@ -483,4 +483,14 @@ way: a filter changed while a folder was opening was dropped, and Return didn't 
 Legacy's `portal/dbus/tests.rs` and `window_geometry` (Hyprland centring rules) are not ported yet;
 `portal_setup` (making Files the desktop's chooser) comes with Settings › Integrations.
 
+| `portal_setup/tests.rs` (24) | 13 (`integrations/tests.rs`), one new | the systemd refresh (5), Strata migration (1) and one-time offer (4) tests: those parts are not carried over (Files is new under its own names; no offer yet); `status_*`'s Omarchy shortcuts |
+
+Settings › Integrations makes Files the desktop's file chooser and default file manager for the user
+(`engine/src/integrations.rs`, legacy's `portal_setup` without its Strata and Omarchy parts; backend
+`integrations.*`): Files first for the FileChooser in the active `portals.conf` (copied to the user's
+when it is the system's), its portal description and bus activation, and for folders the
+`xdg-mime` default with FileManager1 activation; each undone exactly, keeping what the user changed
+since, and the folder handler before restored (else Nautilus). Only an executable no other user can
+replace is named for activation. Glib's KeyFile became a small line-keeping editor.
+
 The registration files (`packaging/dbus/`) are installed with packaging (item 12).

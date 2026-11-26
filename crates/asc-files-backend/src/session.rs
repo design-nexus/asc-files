@@ -403,6 +403,56 @@ impl Session {
                 self.action_queue.dismiss(job);
                 now(Value::Null)
             }
+            Call::IntegrationsStatus { executable } => {
+                use asc_files_engine::integrations as setup;
+                let context = setup::Context::from_environment().map_err(fault)?;
+                let chooser = setup::chooser_status(&context).map_err(fault)?;
+                let file_manager = setup::file_manager_status(
+                    &context,
+                    &std::fs::canonicalize(&executable).unwrap_or(executable),
+                    setup::default_folder_handler().as_deref(),
+                )
+                .map_err(fault)?;
+                now(json!({
+                    "chooser": {"preferred": chooser.preferred, "activatable": chooser.activatable},
+                    "fileManager": {"default": file_manager.default, "hasService": file_manager.has_service, "hasInstallation": file_manager.has_installation},
+                }))
+            }
+            Call::IntegrationsChooser { executable, enable } => {
+                use asc_files_engine::integrations as setup;
+                let context = setup::Context::from_environment().map_err(fault)?;
+                if enable {
+                    let changed = setup::install_chooser(&context, &executable).map_err(fault)?;
+                    now(json!({"changed": wire::path(&changed)}))
+                } else {
+                    let kept_edits = setup::uninstall_chooser(&context).map_err(fault)?;
+                    now(json!({"keptEdits": kept_edits}))
+                }
+            }
+            Call::IntegrationsFileManager { executable, enable } => {
+                use asc_files_engine::integrations as setup;
+                let context = setup::Context::from_environment().map_err(fault)?;
+                if enable {
+                    let previous =
+                        setup::default_folder_handler().filter(|id| id != setup::DESKTOP_ID);
+                    setup::install_file_manager(&context, &executable, previous.as_deref())
+                        .map_err(fault)?;
+                    setup::set_folder_handler(setup::DESKTOP_ID).map_err(fault)?;
+                    now(json!({"previous": previous}))
+                } else {
+                    let current = setup::default_folder_handler();
+                    let restored = setup::uninstall_file_manager(&context, |previous| {
+                        setup::restore_folder_handler(
+                            current.as_deref(),
+                            previous,
+                            setup::installed_nautilus,
+                            setup::set_folder_handler,
+                        )
+                    })
+                    .map_err(fault)?;
+                    now(json!({"restored": restored}))
+                }
+            }
             Call::Chmod { path, bits } => {
                 let bits = u32::try_from(bits).unwrap_or(u32::MAX);
                 if bits > 0o777 {
@@ -655,6 +705,7 @@ fn capabilities(undo: bool) -> Vec<&'static str> {
         "jobs.merge",
         "jobs.durable",
         "jobs.archives",
+        "integrations",
         "ops.rename",
         "ops.create",
         "search",
@@ -931,4 +982,9 @@ fn entry_json(entry: &trash::Entry) -> Value {
 
 fn id(job: JobId) -> u64 {
     job.0
+}
+
+/// A setup step's refusal, as the operation's failure.
+fn fault(message: String) -> Fault {
+    Fault::operation(&Error::new(ErrorKind::Failed, &message))
 }

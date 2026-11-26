@@ -31,6 +31,8 @@ ApplicationWindow {
     required property var properties
     /// The user's custom actions and their runs (the app's).
     required property var actions
+    /// Settings › Integrations (none in tests).
+    property var integrations: null
     /// A file chooser's request (another program asked Files to choose), or null.
     property var chooser: null
     /// Actions offered for what was right-clicked last, by placement.
@@ -638,6 +640,10 @@ ApplicationWindow {
         onGiven: (archive, folder, password) => window.ops.extract(archive, folder, password)
     }
     Connections {
+        target: window.integrations
+        function onNotice(message) { notice.show(message) }
+    }
+    Connections {
         target: window.ops
         enabled: window.foremost
         function onPasswordWanted(archive, folder, incorrect) { passwordDialog.ask(archive, folder, incorrect) }
@@ -684,6 +690,7 @@ ApplicationWindow {
         search: window.search
         actions: window.actions
         currentFolder: window.inFolder ? window.browser.location : ""
+        integrations: window.integrations
     }
 
     // A drop taken in this window: asked about when it crosses drives (as Settings says), and the

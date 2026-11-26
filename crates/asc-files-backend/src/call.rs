@@ -56,6 +56,18 @@ impl OptionsPatch {
 }
 
 pub enum Call {
+    /// Whether Files is the desktop's file chooser and file manager.
+    IntegrationsStatus {
+        executable: PathBuf,
+    },
+    IntegrationsChooser {
+        executable: PathBuf,
+        enable: bool,
+    },
+    IntegrationsFileManager {
+        executable: PathBuf,
+        enable: bool,
+    },
     Initialize {
         protocol_version: Option<u64>,
     },
@@ -385,6 +397,17 @@ fn call(method: &str, params: &Params) -> Result<Call, Fault> {
         },
         "actions.dismiss" => Call::ActionsDismiss {
             job: params.u64("job")?,
+        },
+        "integrations.status" => Call::IntegrationsStatus {
+            executable: params.path("executable")?,
+        },
+        "integrations.chooser" => Call::IntegrationsChooser {
+            executable: params.path("executable")?,
+            enable: params.required("enable", Params::bool_of)?,
+        },
+        "integrations.fileManager" => Call::IntegrationsFileManager {
+            executable: params.path("executable")?,
+            enable: params.required("enable", Params::bool_of)?,
         },
         "ops.chmod" => Call::Chmod {
             path: params.path("path")?,

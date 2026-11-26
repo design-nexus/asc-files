@@ -8,6 +8,9 @@ use serde_json::{Value, json};
 
 pub const METHODS: &[&str] = &[
     "initialize",
+    "integrations.chooser",
+    "integrations.fileManager",
+    "integrations.status",
     "shutdown",
     "list.open",
     "list.window",
@@ -55,8 +58,11 @@ pub const METHODS: &[&str] = &[
 pub fn valid() -> Vec<Value> {
     let params = [
         json!({"protocolVersion": 2}),
+        json!({"executable": "/usr/bin/asc-files", "enable": true}),
+        json!({"executable": "/usr/bin/asc-files", "enable": false}),
+        json!({"executable": "/usr/bin/asc-files"}),
         json!({}),
-        json!({"path": "/a", "showHidden": true, "sort": {"key": "size", "descending": true, "foldersFirst": false}, "filter": "rep"}),
+        json!({"path": "/a", "showHidden": true, "sort": {"key": "size", "descending": true, "foldersFirst": false}, "filter": "rep", "globs": ["*.txt"]}),
         json!({"listing": 1, "start": 0, "count": 10}),
         json!({"listing": 1, "showHidden": false, "sort": {"key": "modified"}}),
         json!({"listing": 1}),

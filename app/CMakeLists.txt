@@ -40,6 +40,7 @@ qt_add_library(asc_files_core STATIC
     src/desktop/AppIcons.cpp src/desktop/AppIcons.h
     src/desktop/DesktopApps.cpp src/desktop/DesktopApps.h
     src/desktop/DesktopBus.cpp src/desktop/DesktopBus.h
+    src/desktop/Integrations.cpp src/desktop/Integrations.h
     src/portal/Chooser.cpp src/portal/Chooser.h
     src/portal/ChooserService.cpp src/portal/ChooserService.h
     src/settings/AppSettings.cpp src/settings/AppSettings.h

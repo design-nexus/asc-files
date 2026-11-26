@@ -19,6 +19,8 @@ Popup {
     required property var search
     /// The user's custom actions.
     required property var actions
+    /// Files as the desktop's file chooser and file manager (none in tests).
+    property var integrations: null
     /// The folder the window shows, offered as the start folder.
     property string currentFolder
     property int page: 0
@@ -32,6 +34,7 @@ Popup {
         { title: qsTr("Actions"), detail: qsTr("Your own commands for files") },
         { title: qsTr("Previews"), detail: qsTr("Preview style, thumbnails") },
         { title: qsTr("Appearance"), detail: qsTr("Theme, accent, text size") },
+        { title: qsTr("Integrations"), detail: qsTr("File chooser, file manager") },
         { title: qsTr("About"), detail: qsTr("Version, diagnostics") }
     ]
     readonly property var viewOptions: [
@@ -148,7 +151,7 @@ Popup {
                 Loader {
                     x: 28
                     width: scroll.availableWidth - 56
-                    sourceComponent: [general, browsing, sidebar, searching, transfers, actionsPage, previews, appearance, about][dialog.page]
+                    sourceComponent: [general, browsing, sidebar, searching, transfers, actionsPage, previews, appearance, integrationsPage, about][dialog.page]
                 }
             }
         }
@@ -620,6 +623,34 @@ Popup {
                                  .arg(Math.round(dialog.theme.textScale * 100))
                                  .arg(dialog.theme.density === "compact" ? qsTr("compact")
                                       : dialog.theme.density === "relaxed" ? qsTr("relaxed") : qsTr("comfortable"))
+                }
+            }
+        }
+    }
+
+    Component {
+        id: integrationsPage
+        PageBody {
+            Component.onCompleted: if (dialog.integrations) dialog.integrations.refresh()
+            SettingsGroup {
+                SettingRow {
+                    divided: false
+                    title: qsTr("Choose files for other apps")
+                    description: qsTr("Open and save files from other apps in Files instead of the desktop's own chooser.")
+                    ToggleSwitch {
+                        enabled: dialog.integrations !== null && !dialog.integrations.busy
+                        checked: dialog.integrations !== null && dialog.integrations.chooser
+                        onToggled: dialog.integrations.setChooser(checked)
+                    }
+                }
+                SettingRow {
+                    title: qsTr("Default file manager")
+                    description: qsTr("Open folders, and “Show in folder” from other apps, in Files. Turning it off gives folders back to the file manager before.")
+                    ToggleSwitch {
+                        enabled: dialog.integrations !== null && !dialog.integrations.busy
+                        checked: dialog.integrations !== null && dialog.integrations.fileManager
+                        onToggled: dialog.integrations.setFileManager(checked)
+                    }
                 }
             }
         }

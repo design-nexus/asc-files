@@ -5,6 +5,7 @@
 #include "backend/BackendClient.h"
 #include "desktop/AppIcons.h"
 #include "desktop/DesktopBus.h"
+#include "desktop/Integrations.h"
 #include "portal/ChooserService.h"
 #include "desktop/DesktopApps.h"
 #include "models/ActionsModel.h"
@@ -66,6 +67,8 @@ int main(int argc, char *argv[]) {
     DesktopApps apps;
     // The user's custom actions and their runs.
     ActionsModel actions(&backend);
+    // Settings › Integrations: Files as the desktop's file chooser and file manager.
+    Integrations integrations(&backend);
     AppIconProvider::useDesktopTheme();
     QObject::connect(&backend, &BackendClient::failed, &app, [](const QString &why) {
         qCritical().noquote() << why;
@@ -91,6 +94,7 @@ int main(int argc, char *argv[]) {
                               {QStringLiteral("ops"), QVariant::fromValue(&ops)},
                               {QStringLiteral("apps"), QVariant::fromValue(&apps)},
                               {QStringLiteral("actions"), QVariant::fromValue(&actions)},
+                              {QStringLiteral("integrations"), QVariant::fromValue(&integrations)},
                               {QStringLiteral("backend"), QVariant::fromValue(&backend)}});
 
     // The desktop's file chooser: a process of its own, which xdg-desktop-portal starts; it shows a

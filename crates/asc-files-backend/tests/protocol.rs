@@ -4,6 +4,7 @@
 use std::{
     fs,
     io::{BufRead, BufReader, Write},
+    os::unix::fs::PermissionsExt,
     process::{Child, ChildStdin, Command, Stdio},
     sync::mpsc,
     time::{Duration, Instant},
@@ -680,6 +681,66 @@ fn an_archive_is_made_and_extracted_with_its_password() {
         &mut notes,
     );
     assert!(refused["error"].is_object(), "{refused}");
+}
+
+#[test]
+fn files_is_made_the_file_chooser_and_put_back() {
+    let mut backend = Backend::start();
+    let mut notes = Vec::new();
+    let data = std::env::var("XDG_DATA_HOME").unwrap();
+    assert!(
+        data.contains("asc-files-test-home"),
+        "refusing to touch a real desktop: {data}"
+    );
+    backend.call("initialize", json!({}), &mut notes);
+    let root = tempfile::tempdir_in(&data).unwrap();
+    let executable = root.path().join("bin/asc-files");
+    fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    fs::write(&executable, "binary").unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let status = backend.call(
+        "integrations.status",
+        json!({"executable": executable}),
+        &mut notes,
+    );
+    assert_eq!(status["result"]["chooser"]["preferred"], false, "{status}");
+    let enabled = backend.call(
+        "integrations.chooser",
+        json!({"executable": executable, "enable": true}),
+        &mut notes,
+    );
+    if enabled["error"].is_object() {
+        // Where tests run as root over another user's checkout, activation refuses the program.
+        eprintln!("skipped: {enabled}");
+        return;
+    }
+    let status = backend.call(
+        "integrations.status",
+        json!({"executable": executable}),
+        &mut notes,
+    );
+    assert_eq!(
+        status["result"]["chooser"],
+        json!({"preferred": true, "activatable": true}),
+        "{status}"
+    );
+    let disabled = backend.call(
+        "integrations.chooser",
+        json!({"executable": executable, "enable": false}),
+        &mut notes,
+    );
+    assert_eq!(disabled["result"]["keptEdits"], false, "{disabled}");
+    let status = backend.call(
+        "integrations.status",
+        json!({"executable": executable}),
+        &mut notes,
+    );
+    assert_eq!(
+        status["result"]["chooser"],
+        json!({"preferred": false, "activatable": false}),
+        "{status}"
+    );
 }
 
 #[test]
