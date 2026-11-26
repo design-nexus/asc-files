@@ -787,7 +787,8 @@ ApplicationWindow {
     ConfirmDialog { id: confirm }
     // 10xer mode's keys, which the views send their keys to first while it is on.
     readonly property var tenxer: tenxerKeys
-    TenXer { id: tenxerKeys; window: window; confirm: confirm; compress: compressDialog; openWith: openWithDialog }
+    TenXer { id: tenxerKeys; window: window; confirm: confirm; compress: compressDialog; openWith: openWithDialog; peek: folderPeek }
+    FolderPeek { id: folderPeek; objectName: "folderPeek"; showHidden: window.folderModel ? window.folderModel.showHidden : false }
     Shortcut {
         sequence: "Ctrl+Shift+M"
         context: Qt.WindowShortcut

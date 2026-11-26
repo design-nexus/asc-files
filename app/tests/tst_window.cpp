@@ -546,6 +546,29 @@ private slots:
         QTRY_COMPARE(keys->property("candidates").toStringList().value(0), dir.filePath("new notes"));
         press(Qt::Key_Return);
         QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(dir.filePath("new notes/alpha.md")), 10000);
+        // i on a folder peeks into it without going in; i again closes the peek.
+        list->forceActiveFocus();
+        press(Qt::Key_Slash);
+        typeText("notes");
+        press(Qt::Key_Return);
+        QTRY_COMPARE(folders.pathAt(cursor()), dir.filePath("new notes"));
+        auto *peek = window->findChild<QObject *>(QStringLiteral("folderPeek"));
+        QVERIFY(peek);
+        press(Qt::Key_I);
+        QTRY_VERIFY(peek->property("opened").toBool());
+        QCOMPARE(tabs.current()->location(), dir.path());
+        QVERIFY(list->hasActiveFocus());
+        auto *peeked = window->findChild<QQuickItem *>(QStringLiteral("folderPeekEntries"));
+        QVERIFY(peeked);
+        QTRY_COMPARE(peeked->property("count").toInt(), 1);
+        press(Qt::Key_I);
+        QTRY_VERIFY(!peek->property("opened").toBool());
+        // Esc closes it too, before any other step.
+        press(Qt::Key_I);
+        QTRY_VERIFY(peek->property("opened").toBool());
+        press(Qt::Key_Escape);
+        QTRY_VERIFY(!peek->property("opened").toBool());
+        press(Qt::Key_Escape); // the find marks
         // f filters as it is typed; Esc in the prompt clears it.
         list->forceActiveFocus();
         press(Qt::Key_F);

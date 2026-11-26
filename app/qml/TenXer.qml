@@ -15,6 +15,8 @@ Item {
     required property var confirm
     required property var compress
     required property var openWith
+    /// The folder peek (i on a folder in List and Icons).
+    required property var peek
     /// What `;` was pressed on: its actions run on these.
     property var actionTargets: []
     /// The actions offered for them, those at the menu's top first, ten at most.
@@ -86,6 +88,7 @@ Item {
 
     // Everything the mode holds goes when it is turned off.
     function reset() {
+        peek.close()
         closePrompt()
         findQuery = ""
         found = ""
@@ -108,7 +111,10 @@ Item {
     }
     Connections {
         target: keys.window.folderModel
-        function onFolderChanged() { keys.visual = 0 }
+        function onFolderChanged() {
+            keys.visual = 0
+            keys.peek.close()
+        }
         // The cursor starts on the first item, or the folder just left.
         function onGenerationChanged() {
             const view = keys.window.view
@@ -192,7 +198,7 @@ Item {
         case "H": keys.window.browser.back(); return true
         case "L": keys.window.browser.forward(); return true
         case "o": openItem(view); return true
-        case "i": peek(view); return true
+        case "i": peekAt(view); return true
         case " ": space(view); return true
         case "v": startVisual(view, 1); return true
         case "V": startVisual(view, -1); return true
@@ -287,6 +293,8 @@ Item {
     function move(view, to) {
         const count = view.rowCount()
         if (count === 0) return
+        // The peek is about the item the cursor was on.
+        if (peek.opened) peek.close()
         const row = Math.max(0, Math.min(count - 1, to))
         view.setCursorRow(row)
         if (visual !== 0) walk(view, row)
@@ -324,6 +332,7 @@ Item {
     }
     // Esc: one step back per press.
     function stepBack(view) {
+        if (peek.opened) { peek.close(); return }
         if (visual !== 0) { visual = 0; return }
         if (found.length > 0) { found = ""; return }
         if (view.folderModel.filter.length > 0) { view.folderModel.filter = ""; return }
@@ -369,9 +378,19 @@ Item {
         }
         else view.activate(cursor)
     }
-    function peek(view) {
-        if (view.cursorRow() < 0) return
-        keys.window.previewOpen = !keys.window.previewOpen
+    function peekAt(view) {
+        const cursor = view.cursorRow()
+        if (cursor < 0) return
+        if (!isFolderAt(view, cursor)) {
+            keys.window.previewOpen = !keys.window.previewOpen
+            return
+        }
+        // Columns: the folder opens in the next column.
+        if (view.mode === 2) { openFolder(view, cursor); return }
+        if (peek.opened) { peek.close(); return }
+        const item = view.current.itemAtIndex(cursor)
+        const at = item ? item.mapToItem(peek.parent, 40, item.height) : Qt.point(peek.parent.width / 3, peek.parent.height / 3)
+        peek.show(view.folderModel.pathAt(cursor), at)
     }
 
     // Verbs take the fill, or the cursor's item when nothing is filled.

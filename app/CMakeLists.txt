@@ -121,6 +121,7 @@ qt_add_qml_module(asc_files_qml
         qml/components/QuestionDialog.qml
         qml/components/TenXerBar.qml
         qml/components/ClipBadge.qml
+        qml/components/FolderPeek.qml
         qml/components/TenXerCursor.qml
         qml/components/NameEditor.qml
         qml/components/OpenWithDialog.qml
