@@ -52,8 +52,10 @@ int main(int argc, char *argv[]) {
     QGuiApplication::setDesktopFileName(QStringLiteral("asc-files"));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
+    QGuiApplication::setApplicationVersion(AppSettings::shared().about().value(QStringLiteral("version")).toString());
     QCommandLineParser parser;
     parser.addHelpOption();
+    parser.addVersionOption();
     parser.addOptions({{QStringLiteral("backend"), QStringLiteral("The backend program to run."), QStringLiteral("path")},
                        {QStringLiteral("chooser"), QStringLiteral("Serve the desktop's file chooser (xdg-desktop-portal starts it so).")}});
     parser.addPositionalArgument(QStringLiteral("folder"), QStringLiteral("The folder to open (Home by default)."));

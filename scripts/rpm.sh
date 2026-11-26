@@ -2,6 +2,7 @@
 # Builds the RPMs: a source tarball of HEAD, a tarball of the vendored crates, then rpmbuild.
 # Run on Fedora (CI runs it in fedora:43); the packages land in dist/.
 set -euo pipefail
+shopt -s inherit_errexit
 cd "$(dirname "$0")/.."
 version=$(sed -n 's/^Version: *//p' packaging/rpm/asc-files.spec)
 name=asc-files-$version
@@ -13,7 +14,8 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 git archive --format=tar HEAD | tar -x -C "$work"
 (cd "$work" && cargo vendor --locked --versioned-dirs vendor >/dev/null)
-tar -C "$work" --transform "s|^|$name/|" -czf "$dist/sources/$name-vendor.tar.gz" vendor
+# Unpacked inside the source folder (%autosetup -a 1).
+tar -C "$work" -czf "$dist/sources/$name-vendor.tar.gz" vendor
 rpmbuild -ba packaging/rpm/asc-files.spec \
     --define "_sourcedir $dist/sources" \
     --define "_topdir $dist/rpmbuild"

@@ -52,3 +52,34 @@ jobs:
         run: scripts/app.sh build
       - name: App tests (against the real backend, private home)
         run: scripts/app.sh test
+
+  rpm:
+    runs-on: ubuntu-latest
+    container: fedora:43
+    steps:
+      - name: Tools
+        run: >
+          dnf install -y --setopt=install_weak_deps=False git rpm-build cargo rust cmake ninja-build gcc-c++
+          glib2-devel qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel qt6-qttools-devel
+          qt6-linguist kf6-syntax-highlighting-devel desktop-file-utils appstream
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Build the RPMs (offline, from the sources and vendored crates)
+        run: |
+          git config --global --add safe.directory "$PWD"
+          scripts/rpm.sh
+      - name: Install them, and check what they installed
+        run: |
+          dnf install -y dist/asc-files-0*.x86_64.rpm dist/asc-files-rar-*.x86_64.rpm
+          test -x /usr/bin/asc-files
+          for helper in asc-files-backend asc-files-docs asc-files-render asc-files-rar; do
+            test -x /usr/libexec/asc-files/$helper
+          done
+          desktop-file-validate /usr/share/applications/asc-files.desktop
+          /usr/libexec/asc-files/asc-files-backend --version || true
+          QT_QPA_PLATFORM=offscreen /usr/bin/asc-files --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpms
+          path: dist/*.rpm
