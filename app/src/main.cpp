@@ -33,6 +33,7 @@
 #include <QDBusConnection>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QTranslator>
 #include <QtQml/qqml.h>
 #include <QQmlExtensionPlugin>
 #include <QQuickStyle>
@@ -97,6 +98,13 @@ int main(int argc, char *argv[]) {
     qmlRegisterType<CodeHighlighter>("AscFiles.System", 1, 0, "CodeHighlighter");
     qmlRegisterType<FolderPicker>("AscFiles.System", 1, 0, "FolderPicker");
     qmlRegisterUncreatableType<Transfers>("AscFiles.System", 1, 0, "Transfers", QStringLiteral("The app makes the one Transfers."));
+    // English plural forms, and the user's language where Files has it.
+    QTranslator plurals;
+    if (plurals.load(QLocale(), QStringLiteral("asc-files"), QStringLiteral("_"), QStringLiteral(":/i18n"))) {
+        app.installTranslator(&plurals);
+    } else if (plurals.load(QStringLiteral(":/i18n/asc-files_en"))) {
+        app.installTranslator(&plurals);
+    }
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
     engine.addImageProvider(QStringLiteral("preview"), new PreviewImageProvider);

@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui DBus Qml Quick QuickControls2 Multimedia Test)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui DBus Qml Quick QuickControls2 Multimedia Test LinguistTools)
 # Previews' code colours (KDE's syntax definitions).
 find_package(KF6SyntaxHighlighting REQUIRED)
 # GIO, for network locations through gvfs.
@@ -143,12 +143,20 @@ qt_add_executable(asc-files src/main.cpp)
 add_dependencies(asc-files asc-files-render)
 target_link_libraries(asc-files PRIVATE asc_files_core asc_files_qmlplugin Qt6::Qml Qt6::Quick Qt6::QuickControls2)
 
+# Translations. English is the source, and its file holds only plural forms ("1 item", "2 items");
+# `cmake --build . --target update_translations` refreshes it from the sources.
+qt_add_translations(TARGETS asc-files
+    SOURCE_TARGETS asc_files_core asc_files_qml asc-files
+    PLURALS_TS_FILE i18n/asc-files_en.ts
+    RESOURCE_PREFIX /i18n
+    LUPDATE_OPTIONS -no-obsolete)
+
 # Tests run against the real backend: ASC_FILES_BACKEND names it (scripts/app.sh builds it).
 enable_testing()
 set(ASC_FILES_BACKEND "" CACHE FILEPATH "The asc-files-backend binary the tests run")
 set(ASC_FILES_DOCS "" CACHE FILEPATH "The asc-files-docs document reader the tests run")
 set(ASC_FILES_RAR "" CACHE FILEPATH "The asc-files-rar RAR reader the tests run")
-foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search systemtheme appsettings desktopapps properties actions customizations codehighlighter filemanager1 portal placement disks network cloud history)
+foreach(test wire backendclient foldermodel jobmodel browser places itemlists transfers thumbnails operations preview search systemtheme appsettings desktopapps properties actions customizations codehighlighter filemanager1 portal placement disks network cloud history translations)
     qt_add_executable(tst_${test} tests/tst_${test}.cpp)
     target_link_libraries(tst_${test} PRIVATE asc_files_core Qt6::Test)
     # The repository, for fixtures the Rust crates keep.
@@ -157,6 +165,9 @@ foreach(test wire backendclient foldermodel jobmodel browser places itemlists tr
     set_tests_properties(${test} PROPERTIES ENVIRONMENT "ASC_FILES_BACKEND=${ASC_FILES_BACKEND};ASC_FILES_DOCS=${ASC_FILES_DOCS};ASC_FILES_RAR=${ASC_FILES_RAR};ASC_FILES_RENDER=$<TARGET_FILE:asc-files-render>;QT_QPA_PLATFORM=offscreen")
     add_dependencies(tst_${test} asc-files-render)
 endforeach()
+# The plural forms built for English.
+target_compile_definitions(tst_translations PRIVATE ASC_FILES_QM_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_dependencies(tst_translations asc-files)
 # The window loads with the models and logs no QML warning.
 # The media player loads a sound (Qt Multimedia, as the app at run time).
 qt_add_executable(tst_mediaview tests/tst_mediaview.cpp)

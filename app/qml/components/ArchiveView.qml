@@ -176,10 +176,10 @@ ColumnLayout {
             }
             const parts = []
             if (files > 0) {
-                parts.push(qsTr("%n file(s)", "", files))
+                parts.push(qsTr("%n files", "", files))
             }
             if (folders > 0) {
-                parts.push(qsTr("%n folder(s)", "", folders))
+                parts.push(qsTr("%n folders", "", folders))
             }
             return parts.join(", ")
         }
