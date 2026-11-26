@@ -79,7 +79,7 @@ namespace {
 enum class Source { None, Picture, Video, Pdf, Cover, RarCover };
 
 /// Files that carry their own cover, read by the document reader.
-const QList<QByteArray> covered{"cbz", "epub", "3mf", "fcstd"};
+const QList<QByteArray> covered{"cbz", "epub", "3mf", "fcstd", "appimage"};
 
 Source sourceOf(const QString &name) {
     static const QList<QByteArray> formats = QImageReader::supportedImageFormats();
@@ -112,9 +112,10 @@ bool canMake(const QString &name) { return sourceOf(name) != Source::None; }
 QImage thumbnail(const QByteArray &path, int size) {
     struct stat st {};
     const Source source = sourceOf(QFile::decodeName(path));
-    // Regular local files only, never through a link or a device or pipe. A video's frame is
-    // read without reading it all, so its size doesn't count.
-    if (::lstat(path.constData(), &st) != 0 || !S_ISREG(st.st_mode) || (source != Source::Video && st.st_size > MaxSourceBytes)) {
+    // Regular local files only, never through a link or a device or pipe. A video's frame and an
+    // AppImage's icon are read without reading it all, so their size doesn't count.
+    const bool partly = source == Source::Video || QFile::decodeName(path).endsWith(QLatin1String(".appimage"), Qt::CaseInsensitive);
+    if (::lstat(path.constData(), &st) != 0 || !S_ISREG(st.st_mode) || (!partly && st.st_size > MaxSourceBytes)) {
         return {};
     }
     const qint64 mtime = st.st_mtime;

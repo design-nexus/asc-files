@@ -562,3 +562,11 @@ through Qt's translations (`app/i18n`, docs/TRANSLATIONS.md), accessible names a
 `tst_window`), and the update check (`app/src/desktop/Updates`, Settings › About › Updates). Legacy
 replaced its own binary from a release; Files only says a newer version is out, since a package
 manager installs it (the update itself comes with item 12's packages).
+
+## Engine gaps (item 11)
+
+AppImage icons: the document reader (`asc-files-docs cover appimage`) reads the SquashFS image after
+the ELF runtime in place with `backhand` (gzip, zstd, lz4) instead of legacy's `unsquashfs`, which the
+sandbox could not reach on NixOS and would have been another runtime dependency; `.DirIcon`, else the
+`.desktop` entry's icon, PNG or SVG. Legacy's 5 AppImage tests ported (the unsquashfs listing parser's
+became three over real images made by `backhand`'s writer).

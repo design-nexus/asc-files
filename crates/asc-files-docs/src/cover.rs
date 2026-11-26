@@ -17,6 +17,7 @@ pub(crate) enum CoverFormat {
     Epub,
     ThreeMf,
     FreeCad,
+    AppImage,
 }
 
 impl CoverFormat {
@@ -26,6 +27,7 @@ impl CoverFormat {
             "epub" => Some(Self::Epub),
             "3mf" => Some(Self::ThreeMf),
             "fcstd" => Some(Self::FreeCad),
+            "appimage" => Some(Self::AppImage),
             _ => None,
         }
     }
@@ -96,6 +98,10 @@ pub(crate) fn thumbnail(input: &Path, format: CoverFormat) -> Result<Vec<u8>, St
 }
 
 pub(crate) fn render(input: &Path, format: CoverFormat, edge: i32) -> Result<Vec<u8>, String> {
+    // An AppImage is often large; only its icon is read.
+    if format == CoverFormat::AppImage {
+        return crate::appimage::render(input, edge);
+    }
     if fs::metadata(input).map_err(|e| e.to_string())?.len() > MAX_INPUT_BYTES {
         return Err("Cover archive exceeds the input size limit".into());
     }
@@ -314,7 +320,7 @@ fn model_thumbnail(
 }
 
 /// `bytes`, a picture, decoded within the pixel limit and scaled to at most `edge` a side, as a PNG.
-fn render_image(bytes: &[u8], edge: i32) -> Result<Vec<u8>, String> {
+pub(crate) fn render_image(bytes: &[u8], edge: i32) -> Result<Vec<u8>, String> {
     let reader = || -> Result<_, String> {
         let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
             .with_guessed_format()
