@@ -204,9 +204,17 @@ private slots:
         QTRY_COMPARE(other->location(), dir.filePath("folder"));
         QTRY_VERIFY(window->findChild<QQuickItem *>(QStringLiteral("rightPane")));
         QTRY_VERIFY(folders.rowOfName("b.txt") >= 0);
-        folders.select(folders.rowOfName("b.txt"));
-        // F5 works once the window sees the selection (its shortcut is enabled by it).
-        QTRY_VERIFY(window->property("selectionCount").toInt() > 0);
+        // F5 works once the window sees the selection (its shortcut is enabled by it). The first
+        // pane may still reload as the second opens, which clears a selection made meanwhile, so
+        // it is made again until it holds.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            [&] {
+                if (window->property("selectionCount").toInt() == 0) {
+                    folders.select(folders.rowOfName("b.txt"));
+                }
+                return window->property("selectionCount").toInt() > 0;
+            }(),
+            10000);
         QTest::keyClick(window, Qt::Key_F5);
         QTRY_VERIFY2_WITH_TIMEOUT(QFile::exists(dir.filePath("folder/b.txt")),
                                   qPrintable(QStringLiteral("selected %1, right pane active %2")
