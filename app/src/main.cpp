@@ -35,6 +35,8 @@
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QTranslator>
+#include <QFileInfo>
+#include <QUrl>
 #include <QtQml/qqml.h>
 #include <QQmlExtensionPlugin>
 #include <QQuickStyle>
@@ -164,7 +166,17 @@ int main(int argc, char *argv[]) {
     QStringList folders;
     QStringList addresses;
     for (const QString &argument : parser.positionalArguments()) {
-        (Network::isAddress(argument) ? addresses : folders).append(argument);
+        if (Network::isAddress(argument)) {
+            addresses.append(argument);
+            continue;
+        }
+        // As a launcher passes them (Exec=asc-files %U): file:// URIs; a file opens its folder.
+        const QUrl url(argument);
+        QString path = url.isLocalFile() ? url.toLocalFile() : argument;
+        if (QFileInfo(path).isFile()) {
+            path = QFileInfo(path).absolutePath();
+        }
+        folders.append(path);
     }
     // One Files per session: a later launch hands its folders to the one running.
     if (!DesktopBus::claim(&windows, folders)) {

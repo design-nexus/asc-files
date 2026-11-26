@@ -61,11 +61,18 @@ qt_add_library(asc_files_core STATIC
 target_include_directories(asc_files_core PUBLIC src)
 target_link_libraries(asc_files_core PUBLIC Qt6::Core Qt6::DBus Qt6::Network Qt6::Gui Qt6::Quick KF6::SyntaxHighlighting PkgConfig::GIO)
 # What About shows: the version, and the commit built (when built from a checkout).
-execute_process(COMMAND git rev-parse --short HEAD WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-                OUTPUT_VARIABLE ASC_FILES_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+# A package passes its own (-DASC_FILES_COMMIT=…).
+if(NOT ASC_FILES_COMMIT)
+    execute_process(COMMAND git rev-parse --short HEAD WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                    OUTPUT_VARIABLE ASC_FILES_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+endif()
 if(NOT ASC_FILES_COMMIT)
     set(ASC_FILES_COMMIT "unknown")
 endif()
+include(GNUInstallDirs)
+# Where an installed Files keeps its helpers (backend, renderer, document and RAR readers).
+set(ASC_FILES_LIBEXEC_DIR "${CMAKE_INSTALL_FULL_LIBEXECDIR}/asc-files")
+target_compile_definitions(asc_files_core PRIVATE ASC_FILES_LIBEXEC_DIR="${ASC_FILES_LIBEXEC_DIR}")
 target_compile_definitions(asc_files_core PRIVATE ASC_FILES_VERSION="${PROJECT_VERSION}" ASC_FILES_COMMIT="${ASC_FILES_COMMIT}")
 target_compile_options(asc_files_core PRIVATE -Wall -Wextra -Werror=return-type)
 
@@ -152,6 +159,8 @@ qt_add_translations(TARGETS asc-files
     RESOURCE_PREFIX /i18n
     LUPDATE_OPTIONS -no-obsolete)
 
+option(ASC_FILES_BUILD_TESTS "Build the tests (a package needs none)" ON)
+if(ASC_FILES_BUILD_TESTS)
 # Tests run against the real backend: ASC_FILES_BACKEND names it (scripts/app.sh builds it).
 enable_testing()
 set(ASC_FILES_BACKEND "" CACHE FILEPATH "The asc-files-backend binary the tests run")
@@ -180,3 +189,29 @@ qt_add_executable(tst_window tests/tst_window.cpp)
 target_link_libraries(tst_window PRIVATE asc_files_core Qt6::Test Qt6::Qml Qt6::Quick Qt6::QuickControls2 asc_files_qmlplugin)
 add_test(NAME window COMMAND tst_window)
 set_tests_properties(window PROPERTIES ENVIRONMENT "ASC_FILES_BACKEND=${ASC_FILES_BACKEND};ASC_FILES_DOCS=${ASC_FILES_DOCS};ASC_FILES_RAR=${ASC_FILES_RAR};ASC_FILES_RENDER=$<TARGET_FILE:asc-files-render>;QT_QPA_PLATFORM=offscreen")
+endif()
+
+# Installing. The Rust helpers are built by cargo; ASC_FILES_HELPERS_DIR names where they are
+# (target/release), and the RAR reader, separately licensed, installs as its own component.
+set(ASC_FILES_HELPERS_DIR "" CACHE PATH "Where cargo built asc-files-backend, asc-files-docs and asc-files-rar")
+install(TARGETS asc-files RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS asc-files-render RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/asc-files)
+if(ASC_FILES_HELPERS_DIR)
+    install(PROGRAMS ${ASC_FILES_HELPERS_DIR}/asc-files-backend ${ASC_FILES_HELPERS_DIR}/asc-files-docs
+            DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/asc-files)
+    install(PROGRAMS ${ASC_FILES_HELPERS_DIR}/asc-files-rar
+            DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/asc-files COMPONENT rar EXCLUDE_FROM_ALL)
+endif()
+set(ASC_FILES_PACKAGING ${CMAKE_CURRENT_SOURCE_DIR}/../packaging)
+install(FILES ${ASC_FILES_PACKAGING}/desktop/asc-files.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES ${ASC_FILES_PACKAGING}/desktop/asc-files.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+install(FILES ${ASC_FILES_PACKAGING}/desktop/io.github.design_nexus.ascendant.Files.metainfo.xml
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+# The file chooser: offered to the portal, chosen in portals.conf (Settings › Integrations writes it).
+# "Show in folder" (FileManager1) is the user's choice in Settings, so its service is not installed
+# here, where it would clash with another file manager's.
+configure_file(${ASC_FILES_PACKAGING}/dbus/org.freedesktop.impl.portal.desktop.asc_files.service.in
+               ${CMAKE_CURRENT_BINARY_DIR}/org.freedesktop.impl.portal.desktop.asc_files.service @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.freedesktop.impl.portal.desktop.asc_files.service
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/services)
+install(FILES ${ASC_FILES_PACKAGING}/dbus/asc_files.portal DESTINATION ${CMAKE_INSTALL_DATADIR}/xdg-desktop-portal/portals)

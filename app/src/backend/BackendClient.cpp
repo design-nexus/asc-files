@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "BackendClient.h"
 
+#include "../app/Helpers.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -55,6 +57,9 @@ QString BackendClient::defaultProgram() {
     const QString beside = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("asc-files-backend"));
     if (QFileInfo(beside).isExecutable()) {
         return beside;
+    }
+    if (const QString installed = Helpers::installed(QStringLiteral("asc-files-backend")); !installed.isEmpty()) {
+        return installed;
     }
     const QString onPath = QStandardPaths::findExecutable(QStringLiteral("asc-files-backend"));
     return onPath.isEmpty() ? QStringLiteral("asc-files-backend") : onPath;

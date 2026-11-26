@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "Sandbox.h"
 
+#include "../app/Helpers.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -127,7 +129,12 @@ QString renderer() {
         return QFileInfo(beside).canonicalFilePath();
     }
     const QString fromEnvironment = qEnvironmentVariable("ASC_FILES_RENDER");
-    return fromEnvironment.isEmpty() ? program(QStringLiteral("asc-files-render")) : fromEnvironment;
+    if (!fromEnvironment.isEmpty()) {
+        return fromEnvironment;
+    }
+    // Where an installed Files keeps it, else on the PATH.
+    const QString installed = Helpers::installed(QStringLiteral("asc-files-render"));
+    return installed.isEmpty() ? program(QStringLiteral("asc-files-render")) : installed;
 }
 
 QString rarReader() {
@@ -136,7 +143,12 @@ QString rarReader() {
         return QFileInfo(beside).canonicalFilePath();
     }
     const QString fromEnvironment = qEnvironmentVariable("ASC_FILES_RAR");
-    return fromEnvironment.isEmpty() ? program(QStringLiteral("asc-files-rar")) : fromEnvironment;
+    if (!fromEnvironment.isEmpty()) {
+        return fromEnvironment;
+    }
+    // Where an installed Files keeps it, else on the PATH.
+    const QString installed = Helpers::installed(QStringLiteral("asc-files-rar"));
+    return installed.isEmpty() ? program(QStringLiteral("asc-files-rar")) : installed;
 }
 
 QString documentReader() {
@@ -145,7 +157,12 @@ QString documentReader() {
         return QFileInfo(beside).canonicalFilePath();
     }
     const QString fromEnvironment = qEnvironmentVariable("ASC_FILES_DOCS");
-    return fromEnvironment.isEmpty() ? program(QStringLiteral("asc-files-docs")) : fromEnvironment;
+    if (!fromEnvironment.isEmpty()) {
+        return fromEnvironment;
+    }
+    // Where an installed Files keeps it, else on the PATH.
+    const QString installed = Helpers::installed(QStringLiteral("asc-files-docs"));
+    return installed.isEmpty() ? program(QStringLiteral("asc-files-docs")) : installed;
 }
 
 void run(const QString &program, const QStringList &args, const QByteArray &file, QObject *context,

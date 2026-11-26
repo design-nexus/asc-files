@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Files
+GenericName=File Manager
+Comment=Browse and organize your files
+Exec=asc-files %U
+Icon=asc-files
+Terminal=false
+StartupNotify=true
+StartupWMClass=asc-files
+Categories=System;FileTools;FileManager;Core;Qt;
+Keywords=folder;manager;explore;disk;filesystem;
+MimeType=inode/directory;
