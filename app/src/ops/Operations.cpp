@@ -233,6 +233,23 @@ void Operations::resolve(const QList<int> &choices) {
     Pending pending = std::exchange(m_pending, {});
     m_conflicts.clear();
     emit conflictsChanged();
+    // The second question: each merged folder's own clashes.
+    if (!pending.inner.isEmpty()) {
+        if (choices.size() != pending.inner.size()) {
+            return; // Cancelled.
+        }
+        static const char *const answers[] = {"replace", "keepBoth", "skip", "keepBoth"};
+        for (int i = 0; i < choices.size(); ++i) {
+            const auto &[merge, path] = pending.inner.at(i);
+            QJsonObject item = pending.merges.at(merge);
+            QJsonObject picked = item.value(QStringLiteral("choices")).toObject();
+            picked.insert(path, QString::fromLatin1(answers[qBound(0, choices.at(i), 3)]));
+            item.insert(QStringLiteral("choices"), picked);
+            pending.merges[merge] = item;
+        }
+        startPending(pending);
+        return;
+    }
     if (choices.size() != pending.clashes.size()) {
         return; // Cancelled.
     }
@@ -251,17 +268,72 @@ void Operations::resolve(const QList<int> &choices) {
             pending.items.append(QJsonObject{{"source", source}, {"action", cut ? "move" : "copy"}, {"conflict", "keepBoth"}, {"name", name}});
             break;
         case Merge:
-            pending.items.append(QJsonObject{{"source", source}, {"action", "merge"}, {"move", cut}, {"name", name}, {"otherwise", "keepBoth"}});
+            pending.merges.append(QJsonObject{{"source", source}, {"action", "merge"}, {"move", cut}, {"name", name}, {"otherwise", "keepBoth"}});
             break;
         default:
             break;
         }
     }
+    pending.clashes.clear();
+    askInside(pending);
+}
+
+void Operations::askInside(Pending pending) {
+    if (pending.merges.isEmpty()) {
+        startPending(pending);
+        return;
+    }
+    QJsonArray sources;
+    for (const QJsonObject &merge : std::as_const(pending.merges)) {
+        sources.append(merge.value(QStringLiteral("source")));
+    }
+    m_backend->call(QStringLiteral("jobs.clashes"), {{"into", Wire::encode(pending.into)}, {"sources", sources}}, this,
+                    [this, pending](const QJsonValue &result, const BackendError &error) mutable {
+                        if (!error.isNull()) {
+                            emit notice(error.message);
+                            return;
+                        }
+                        QVariantList conflicts;
+                        const QJsonArray items = result.toObject().value(QStringLiteral("items")).toArray();
+                        for (int merge = 0; merge < items.size() && merge < pending.merges.size(); ++merge) {
+                            const QJsonObject item = items.at(merge).toObject();
+                            const QString folder = Wire::display(Wire::baseName(Wire::decode(item.value(QStringLiteral("source")))));
+                            for (const QJsonValue &value : item.value(QStringLiteral("clashes")).toArray()) {
+                                const QJsonObject clash = value.toObject();
+                                const QJsonValue path = clash.value(QStringLiteral("path"));
+                                // Choices are named by text; a path that isn't keeps both.
+                                if (!path.isString()) {
+                                    continue;
+                                }
+                                const QString inside = path.toString();
+                                conflicts.append(QVariantMap{{QStringLiteral("index"), int(pending.inner.size())},
+                                                             {QStringLiteral("name"), inside.section(u'/', -1)},
+                                                             {QStringLiteral("folder"), inside.contains(u'/') ? folder + u'/' + inside.section(u'/', 0, -2) : folder},
+                                                             {QStringLiteral("incoming"), sideMap(clash.value(QStringLiteral("incoming")))},
+                                                             {QStringLiteral("existing"), sideMap(clash.value(QStringLiteral("existing")))},
+                                                             {QStringLiteral("canMerge"), false}});
+                                pending.inner.append({merge, inside});
+                            }
+                        }
+                        if (conflicts.isEmpty()) {
+                            startPending(pending);
+                            return;
+                        }
+                        m_pending = pending;
+                        m_conflicts = conflicts;
+                        emit conflictsChanged();
+                    });
+}
+
+void Operations::startPending(Pending pending) {
+    for (const QJsonObject &merge : std::as_const(pending.merges)) {
+        pending.items.append(merge);
+    }
     // The numbered ones last, once the names they give way to are taken.
     for (const QJsonValue &item : std::as_const(pending.numbered)) {
         pending.items.append(item);
     }
-    startBatch(pending.into, pending.items, cut, pending.fromClipboard);
+    startBatch(pending.into, pending.items, pending.cut, pending.fromClipboard);
 }
 
 void Operations::startBatch(const QByteArray &into, const QJsonArray &items, bool cut, bool fromClipboard) {

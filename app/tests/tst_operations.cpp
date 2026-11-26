@@ -111,6 +111,51 @@ private slots:
         QTRY_VERIFY(!QFile::exists(dir.filePath("to/new.txt")));
     }
 
+    // Merging a folder asks next about what clashes inside it, each answered on its own.
+    void aMergedFolderAsksAboutItsOwnClashes() {
+        QTemporaryDir dir;
+        for (const char *path : {"from/photos/2024", "to/photos/2024"}) {
+            QDir().mkpath(dir.filePath(path));
+        }
+        write(dir.filePath("from/photos/new.jpg"), "new");
+        write(dir.filePath("from/photos/2024/keep.jpg"), "incoming");
+        write(dir.filePath("from/photos/2024/over.jpg"), "incoming");
+        write(dir.filePath("to/photos/2024/keep.jpg"), "existing");
+        write(dir.filePath("to/photos/2024/over.jpg"), "existing");
+        BackendClient backend(TestSupport::backend());
+        backend.start();
+        JobModel jobs(&backend);
+        Operations ops(&backend, &jobs);
+        FolderModel from(&backend), to(&backend);
+        QVERIFY(openAll(from, dir.filePath("from")));
+        QVERIFY(openAll(to, dir.filePath("to")));
+        from.selectAll();
+        ops.copy(&from, false);
+
+        QSignalSpy asked(&ops, &Operations::conflictsChanged);
+        ops.paste(&to);
+        QVERIFY(asked.wait(10000));
+        QCOMPARE(ops.conflicts().size(), 1);
+        QVERIFY(ops.conflicts().first().toMap().value("canMerge").toBool());
+        asked.clear();
+        ops.resolve({Operations::Merge});
+        // The folder's own clashes, by where they are in it; none can merge.
+        QTRY_COMPARE_WITH_TIMEOUT(ops.conflicts().size(), 2, 10000);
+        QStringList where;
+        for (const QVariant &conflict : ops.conflicts()) {
+            where.append(conflict.toMap().value("folder").toString() + u'/' + conflict.toMap().value("name").toString());
+            QVERIFY(!conflict.toMap().value("canMerge").toBool());
+        }
+        QCOMPARE(where, (QStringList{"photos/2024/keep.jpg", "photos/2024/over.jpg"}));
+        QSignalSpy finished(&jobs, &JobModel::finished);
+        ops.resolve({Operations::Skip, Operations::Replace});
+        QVERIFY(finished.wait(20000));
+        QCOMPARE(read(dir.filePath("to/photos/new.jpg")), QByteArray("new"));
+        QCOMPARE(read(dir.filePath("to/photos/2024/keep.jpg")), QByteArray("existing"));
+        QCOMPARE(read(dir.filePath("to/photos/2024/over.jpg")), QByteArray("incoming"));
+        QVERIFY(!QFile::exists(dir.filePath("to/photos/2024/keep (1).jpg")));
+    }
+
     void twoItemsOnOneNameKeepTheOneThatNeedsNoFix() {
         // Both land on "same.txt" (the second's own name; in a real FAT paste, a:b and a_b).
         QTemporaryDir dir;

@@ -65,8 +65,11 @@ impl MergePlan {
 /// An incoming item whose name is taken inside the merged folder.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Clashing {
-    /// Relative to the merged folder.
+    /// Relative to the merged folder, by the incoming names: what a plan's choices name.
     pub path: PathBuf,
+    /// Where it meets what is there: relative to the folder merged into, by the names its drive
+    /// stores (`nested_/a_.txt` for `nested?/a:.txt` on a FAT stick).
+    pub stored: PathBuf,
     pub incoming: Side,
     pub existing: Side,
 }
@@ -363,7 +366,9 @@ fn merge_folder(
                 continue;
             }
         };
-        let existing = match fs::symlink_metadata(target.join(&name)) {
+        // What holds the name the drive would store it under (a FAT stick keeps `a:b` as `a_b`).
+        let stored = stored_name(target, &name, incoming_meta.is_dir());
+        let existing = match fs::symlink_metadata(target.join(&stored)) {
             Ok(existing) => Some(existing),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => {
@@ -375,8 +380,8 @@ fn merge_folder(
             None => None,
             Some(existing) if existing.is_dir() && incoming_meta.is_dir() => {
                 merge_folder(
-                    (&incoming, &target.join(&name)),
-                    (&relative, &shown.join(&name)),
+                    (&incoming, &target.join(&stored)),
+                    (&relative, &shown.join(&stored)),
                     plan,
                     (names, moving, cancel, progress),
                     merged,
@@ -467,7 +472,8 @@ fn merge_via_tree(
 ) -> Result<(), Error> {
     let target = into.join(name);
     let mut replaced = std::collections::HashMap::new();
-    let mut keeping_both = std::collections::HashSet::new();
+    // By where they land, what the incoming item kept beside it was.
+    let mut keeping_both = std::collections::HashMap::new();
     // Where the drive has no Trash, originals wait in one hidden folder in the target, pinned by
     // identity, and are deleted once their replacements are on the drive (legacy `merge_aside`).
     let mut aside: Option<merge_aside::MergeAside> = None;
@@ -475,11 +481,39 @@ fn merge_via_tree(
     let settle = ops::Settle::open(into)?;
     // Against the folder merged into, which under a given name is not the source's own name.
     let mut found = Vec::new();
-    find_clashes(source, &target, Path::new(""), &mut found)?;
-    for clash in found {
+    // Folders that merge, by where they are in the target: where they are in the source.
+    let mut merging_folders = std::collections::HashMap::new();
+    find_clashes(
+        source,
+        &target,
+        (Path::new(""), Path::new("")),
+        (&mut found, &mut merging_folders),
+    )?;
+    // Items that land on one stored name (`a:.txt` and `a?.txt` on a FAT stick): the one whose
+    // own name needs no fix keeps it, else the first; the copy numbers the others beside it, and
+    // where such a number is taken already, that is what their choice meets.
+    found.sort_by_key(|clash| {
+        (
+            clash.stored.clone(),
+            clash.path.file_name() != clash.stored.file_name(),
+            clash.path.clone(),
+        )
+    });
+    let mut aliases = std::collections::HashMap::<PathBuf, usize>::new();
+    for mut clash in found {
+        let count = aliases.entry(clash.stored.clone()).or_default();
+        *count += 1;
+        if *count > 1 {
+            let numbered = numbered(&clash.stored, *count - 1);
+            match fs::symlink_metadata(target.join(&numbered)) {
+                Ok(existing) if !existing.is_dir() => clash.stored = numbered,
+                // Free (or a folder): the copy numbers it as it goes.
+                _ => continue,
+            }
+        }
         match plan.choice(&clash.path) {
             Clash::Replace if !clash.existing.is_folder => {
-                let at = target.join(&clash.path);
+                let at = target.join(&clash.stored);
                 let original = match crate::trash::put(&at) {
                     Ok(trashed) => Ok(Original::Trashed(trashed)),
                     Err(error) if error.kind() == ErrorKind::NotSupported => {
@@ -502,7 +536,7 @@ fn merge_via_tree(
                 };
                 match original {
                     Ok(original) => {
-                        replaced.insert(clash.path, original);
+                        replaced.insert(clash.stored, original);
                     }
                     // Nothing is merged: every original set aside so far goes back first.
                     Err(error) => {
@@ -525,7 +559,7 @@ fn merge_via_tree(
                 }
             }
             _ => {
-                keeping_both.insert(clash.path);
+                keeping_both.insert(clash.stored, clash.path);
             }
         }
     }
@@ -618,9 +652,18 @@ fn merge_via_tree(
         };
         let (from, conflict) = if sources.contains(path) {
             (source.join(path), Conflict::Fail)
-        } else if let Some(asked) = unnumbered(path).filter(|asked| keeping_both.contains(asked)) {
+        } else if let Some(asked) = unnumbered(path).and_then(|kept| keeping_both.get(&kept)) {
             (source.join(asked), Conflict::KeepBoth)
         } else if let Some(asked) = renamed_from() {
+            (source.join(asked), Conflict::Fail)
+        } else if let Some(asked) = path
+            .parent()
+            .and_then(|parent| merging_folders.get(parent))
+            .zip(path.file_name())
+            .map(|(folder, name)| folder.join(name))
+            .filter(|asked| sources.contains(asked))
+        {
+            // In a folder merged under the name its drive stores (`nested_` for `nested?`).
             (source.join(asked), Conflict::Fail)
         } else {
             continue;
@@ -691,6 +734,16 @@ fn merge_via_tree(
 
 /// The path a name numbered to keep both stood for: `a (2).txt` for `a.txt`, `photos (1)` for
 /// `photos`.
+/// `path` with " (n)" before its extension, as the copy numbers a name kept beside another.
+fn numbered(path: &Path, n: usize) -> PathBuf {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let (stem, extension) = match name.rfind('.') {
+        Some(dot) if dot > 0 => (&name[..dot], &name[dot..]),
+        _ => (&name[..], ""),
+    };
+    path.with_file_name(format!("{stem} ({n}){extension}"))
+}
+
 fn unnumbered(path: &Path) -> Option<PathBuf> {
     let name = path.file_name()?.to_str()?;
     let (stem, extension) = match name.rfind('.') {
@@ -780,18 +833,32 @@ pub fn clashes(source: &Path, into: &Path) -> Result<Vec<Clashing>, Error> {
     let mut found = Vec::new();
     match fs::symlink_metadata(&target) {
         Ok(existing) if existing.is_dir() => {
-            find_clashes(source, &target, Path::new(""), &mut found)?;
+            find_clashes(
+                source,
+                &target,
+                (Path::new(""), Path::new("")),
+                (&mut found, &mut Default::default()),
+            )?;
         }
         Ok(_) | Err(_) => {}
     }
     Ok(found)
 }
 
+/// The name `folder`'s drive stores `name` under: its own, or the one it is fixed to.
+fn stored_name(folder: &Path, name: &std::ffi::OsStr, is_directory: bool) -> OsString {
+    crate::adapters::local_operations::typed_names::stored_in(folder, name, is_directory)
+        .unwrap_or_else(|| name.to_os_string())
+}
+
 fn find_clashes(
     source: &Path,
     target: &Path,
-    relative: &Path,
-    found: &mut Vec<Clashing>,
+    (relative, stored_relative): (&Path, &Path),
+    (found, folders): (
+        &mut Vec<Clashing>,
+        &mut std::collections::HashMap<PathBuf, PathBuf>,
+    ),
 ) -> Result<(), Error> {
     let mut entries = fs::read_dir(source)
         .map_err(crate::error::os_io_error)?
@@ -799,22 +866,26 @@ fn find_clashes(
         .collect::<Vec<_>>();
     entries.sort();
     for name in entries {
-        let (Ok(incoming), Ok(existing)) = (
-            fs::symlink_metadata(source.join(&name)),
-            fs::symlink_metadata(target.join(&name)),
-        ) else {
+        let Ok(incoming) = fs::symlink_metadata(source.join(&name)) else {
+            continue;
+        };
+        // By the name the drive would store it under, as the merge will meet it.
+        let stored = stored_name(target, &name, incoming.is_dir());
+        let Ok(existing) = fs::symlink_metadata(target.join(&stored)) else {
             continue;
         };
         if incoming.is_dir() && existing.is_dir() {
+            folders.insert(stored_relative.join(&stored), relative.join(&name));
             find_clashes(
                 &source.join(&name),
-                &target.join(&name),
-                &relative.join(&name),
-                found,
+                &target.join(&stored),
+                (&relative.join(&name), &stored_relative.join(&stored)),
+                (found, folders),
             )?;
         } else {
             found.push(Clashing {
                 path: relative.join(&name),
+                stored: stored_relative.join(&stored),
                 incoming: Side::of(&incoming),
                 existing: Side::of(&existing),
             });

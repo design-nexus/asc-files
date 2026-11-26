@@ -582,3 +582,13 @@ thumbnail. `raw/tests.rs` covers byte orders, sub-IFDs, orientation, RAF, CR3 an
 front-left view, one palette, clear background). Legacy's model tests about parsing, limits and drawing
 are ported (8, with one new over a drawn cube); those about its preview pane's views, progress stages
 and messages are not (Files previews models through their thumbnails).
+
+Merges meet clashes by stored names: `merge::clashes`, the item-by-item merge and the tree merge look an
+incoming item up by the name the destination's drive stores (`nested?/a:.txt` meets `nested_/a_.txt`
+on a FAT stick); items landing on one stored name keep legacy's rule (the one needing no fix keeps it,
+the others are numbered, and a numbered name already taken is what their choice meets), and undo maps
+what landed back through merged folders' stored names. Legacy's
+`fat_merge_overwrites_the_names_it_plans_and_keeps_the_names_that_need_no_fix`, ignored until now for
+this gap, passes. Choosing Merge in the paste prompt now asks next about each merged folder's own
+clashes (Replace, Keep Both or Skip each, or for the rest), sent as the merge's `choices`; a clash at a
+path that isn't UTF-8 keeps both, since choices are named by text.

@@ -135,7 +135,14 @@ private:
         QList<QJsonObject> clashes;
         /// Items numbered beside a name another item keeps; started after the rest.
         QJsonArray numbered;
+        /// Folders the user chose to merge, whose own clashes are asked about next.
+        QList<QJsonObject> merges;
+        /// Per clash inside them: which merge, and its path there (as `jobs.clashes` gives it).
+        QList<QPair<int, QString>> inner;
     };
+    /// Asks what the merges in `pending` meet inside, or starts the batch when nothing.
+    void askInside(Pending pending);
+    void startPending(Pending pending);
     void startBatch(const QByteArray &into, const QJsonArray &items, bool cut, bool fromClipboard);
     void undoNow(bool overwrite);
     QList<QByteArray> selectedPaths(FolderModel *folder) const;

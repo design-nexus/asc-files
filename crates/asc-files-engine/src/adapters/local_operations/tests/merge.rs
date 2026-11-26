@@ -1381,8 +1381,6 @@ fn a_staging_failure_aborts_the_merge_and_reports_only_what_was_staged()
 }
 
 #[test]
-#[ignore = "planned by the client now: jobs.plan gives the stored name, which the conflict prompt \
-            passes on; a merge's clashes inside the folder are still found by source name (jobs.clashes)"]
 fn fat_merge_overwrites_the_names_it_plans_and_keeps_the_names_that_need_no_fix()
 -> Result<(), Box<dyn Error>> {
     let _serial = serial()?;
