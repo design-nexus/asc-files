@@ -576,3 +576,9 @@ embedded (TIFF IFDs and sub-IFDs for CR2, NEF, ARW, DNG, ORF, PEF, RW2…; RAF's
 box), decodes it within the pixel limit and turns it upright by IFD0's orientation. Legacy ran dcraw,
 ImageMagick or gdk-pixbuf instead; nothing is demosaiced now, so a RAW without a preview has no
 thumbnail. `raw/tests.rs` covers byte orders, sub-IFDs, orientation, RAF, CR3 and malformed files.
+
+3D model thumbnails: an STL, or a 3MF without a picture of itself, is drawn by the document reader
+(`crates/asc-files-docs/src/model.rs`): legacy's parsers, limits and rasteriser, for thumbnails only (one
+front-left view, one palette, clear background). Legacy's model tests about parsing, limits and drawing
+are ported (8, with one new over a drawn cube); those about its preview pane's views, progress stages
+and messages are not (Files previews models through their thumbnails).

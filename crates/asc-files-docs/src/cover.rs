@@ -19,6 +19,7 @@ pub(crate) enum CoverFormat {
     FreeCad,
     AppImage,
     Raw,
+    Stl,
 }
 
 impl CoverFormat {
@@ -30,6 +31,7 @@ impl CoverFormat {
             "fcstd" => Some(Self::FreeCad),
             "appimage" => Some(Self::AppImage),
             "raw" => Some(Self::Raw),
+            "stl" => Some(Self::Stl),
             _ => None,
         }
     }
@@ -108,6 +110,10 @@ pub(crate) fn render(input: &Path, format: CoverFormat, edge: i32) -> Result<Vec
     if format == CoverFormat::Raw {
         return crate::raw::render(input, edge);
     }
+    // An STL drawn (it carries no picture).
+    if format == CoverFormat::Stl {
+        return crate::model::render_stl(input, edge);
+    }
     if fs::metadata(input).map_err(|e| e.to_string())?.len() > MAX_INPUT_BYTES {
         return Err("Cover archive exceeds the input size limit".into());
     }
@@ -117,7 +123,14 @@ pub(crate) fn render(input: &Path, format: CoverFormat, edge: i32) -> Result<Vec
         return Err("Cover archive entry limit exceeded".into());
     }
     let name = if matches!(format, CoverFormat::ThreeMf | CoverFormat::FreeCad) {
-        model_thumbnail(&mut archive, format)?
+        match model_thumbnail(&mut archive, format) {
+            Ok(name) => name,
+            // A 3MF without one picture of itself is drawn from its geometry.
+            Err(_) if format == CoverFormat::ThreeMf => {
+                return crate::model::render_3mf(&mut archive, edge);
+            }
+            Err(error) => return Err(error),
+        }
     } else if format == CoverFormat::Cbz {
         let mut first = None::<String>;
         for i in 0..archive.len() {

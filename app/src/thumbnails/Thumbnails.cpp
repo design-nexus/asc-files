@@ -79,7 +79,7 @@ namespace {
 enum class Source { None, Picture, Video, Pdf, Cover, RarCover };
 
 /// Files that carry their own cover, read by the document reader.
-const QList<QByteArray> covered{"cbz", "epub", "3mf", "fcstd", "appimage"};
+const QList<QByteArray> covered{"cbz", "epub", "3mf", "fcstd", "appimage", "stl"};
 /// Camera RAWs: their own JPEG preview, which the document reader finds (format "raw").
 const QList<QByteArray> cameraRaws{"cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "dng", "orf", "pef", "rw2",
                                    "raf", "rwl", "srw", "3fr", "erf", "kdc", "mrw", "mos", "iiq", "raw"};
