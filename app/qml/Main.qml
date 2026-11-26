@@ -155,7 +155,8 @@ ApplicationWindow {
                 id: searchField
                 objectName: "searchField"
                 // 10xer searches with s; Ctrl+K still shows the field.
-                visible: !AppSettings.tenxer || activeFocus || text.length > 0
+                visible: !AppSettings.tenxer || window.searchWanted || text.length > 0
+                onActiveFocusChanged: if (!activeFocus) window.searchWanted = false
                 Layout.fillWidth: true
                 Layout.maximumWidth: 352
                 Layout.minimumWidth: 120
@@ -1383,7 +1384,9 @@ ApplicationWindow {
         enabled: window.inFolder && window.selectionCount === 1
         onActivated: propertiesDialog.show(window.folderModel.selectedPaths()[0])
     }
-    Shortcut { sequence: "Ctrl+K"; onActivated: { searchField.forceActiveFocus(); searchField.selectAll() } }
+    // Shown for Ctrl+K while 10xer hides it.
+    property bool searchWanted: false
+    Shortcut { sequence: "Ctrl+K"; onActivated: { window.searchWanted = true; searchField.forceActiveFocus(); searchField.selectAll() } }
     Shortcut { sequence: "Ctrl+1"; onActivated: window.tabBrowser.view = 0 }
     Shortcut { sequence: "Ctrl+2"; onActivated: window.tabBrowser.view = 1 }
     Shortcut { sequence: "Ctrl+3"; onActivated: window.tabBrowser.view = 2 }
